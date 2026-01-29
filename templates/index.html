@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Webcam Stream</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f0f0;
+        }
+        h1 {
+            color: #333;
+        }
+        #video-container {
+            max-width: 640px;
+            width: 100%;
+            margin-top: 20px;
+        }
+        #webcam-stream {
+            width: 100%;
+            height: auto;
+            border: 3px solid #333;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Webcam Stream</h1>
+    <div id="video-container">
+        <img id="webcam-stream" src="{{ url_for('video_feed') }}" alt="Webcam Stream">
+    </div>
+</body>
+</html>
