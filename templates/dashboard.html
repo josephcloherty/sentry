@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SENTRY Control Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            color: #e2e8f0;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+
+        .dashboard {
+            width: 100%;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            padding: 1.5rem;
+        }
+
+        .dashboard-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 2px solid #334155;
+        }
+
+        .dashboard-header h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #60a5fa 0%, #a78bfa 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            border-radius: 0.5rem;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            background: #10b981;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .main-menu {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 3rem;
+            justify-content: center;
+            max-width: 1200px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        .menu-section h3 {
+            font-size: 1.25rem;
+            margin-bottom: 1.5rem;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .camera-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .camera-btn {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1rem;
+            padding: 2rem;
+            background: rgba(51, 65, 85, 0.5);
+            border: 2px solid var(--btn-color);
+            border-radius: 1rem;
+            color: #e2e8f0;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            backdrop-filter: blur(10px);
+        }
+
+        .camera-btn:hover {
+            transform: translateY(-5px);
+            background: rgba(51, 65, 85, 0.8);
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3),
+                        0 0 20px var(--btn-color);
+        }
+
+        .camera-icon {
+            width: 48px;
+            height: 48px;
+        }
+
+        .camera-view {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            animation: slideIn 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .camera-view.maximized {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            padding: 1.5rem;
+            background: #0f172a;
+            z-index: 1000;
+        }
+
+        .camera-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 1.5rem;
+            background: rgba(51, 65, 85, 0.5);
+            border-radius: 0.75rem;
+            backdrop-filter: blur(10px);
+        }
+
+        .camera-controls {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .control-btn {
+            padding: 0.5rem 1rem;
+            background: rgba(51, 65, 85, 0.8);
+            border: 1px solid #475569;
+            border-radius: 0.5rem;
+            color: #e2e8f0;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 1.2rem;
+            min-width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .control-btn:hover {
+            background: rgba(71, 85, 105, 0.8);
+            border-color: #64748b;
+        }
+
+        .close-btn:hover {
+            background: rgba(239, 68, 68, 0.2);
+            border-color: #ef4444;
+            color: #ef4444;
+        }
+
+        .video-container {
+            flex: 1;
+            background: #000;
+            border-radius: 0.75rem;
+            border: 3px solid;
+            overflow: hidden;
+            position: relative;
+            min-height: 400px;
+        }
+
+        .video-placeholder {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 1rem;
+            color: #64748b;
+        }
+
+        .video-placeholder svg {
+            width: 64px;
+            height: 64px;
+            opacity: 0.3;
+        }
+
+        .video-placeholder p {
+            font-size: 1.25rem;
+            font-weight: 500;
+        }
+
+        .video-placeholder small {
+            font-size: 0.875rem;
+            color: #475569;
+        }
+
+        .function-buttons {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1rem;
+        }
+
+        .function-btn {
+            padding: 1rem 1.5rem;
+            background: rgba(51, 65, 85, 0.5);
+            border: 2px solid var(--btn-color);
+            border-radius: 0.75rem;
+            color: #e2e8f0;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            backdrop-filter: blur(10px);
+            min-height: 50px;
+        }
+
+        .function-btn:hover {
+            background: rgba(51, 65, 85, 0.8);
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.2),
+                        0 0 15px var(--btn-color);
+        }
+
+        .function-btn:active {
+            transform: translateY(0);
+        }
+
+        .function-btn.toggle-btn.active {
+            background: rgba(16, 185, 129, 0.3);
+            border-color: #10b981;
+        }
+
+        .function-btn.toggle-btn.active:hover {
+            background: rgba(16, 185, 129, 0.5);
+            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.2),
+                        0 0 15px #10b981;
+        }
+
+        .function-btn.empty-btn {
+            opacity: 0.3;
+            cursor: default;
+        }
+
+        .function-btn.empty-btn:hover {
+            transform: none;
+            box-shadow: none;
+            background: rgba(51, 65, 85, 0.5);
+        }
+
+        .map-view {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            animation: slideIn 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .map-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 1.5rem;
+            background: rgba(51, 65, 85, 0.5);
+            border-radius: 0.75rem;
+            backdrop-filter: blur(10px);
+        }
+
+        .map-container {
+            flex: 1;
+            background: #000;
+            border-radius: 0.75rem;
+            border: 3px solid #f59e0b;
+            overflow: hidden;
+            position: relative;
+            min-height: 400px;
+        }
+
+        .map-placeholder {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 1rem;
+            color: #64748b;
+        }
+
+        .map-placeholder svg {
+            width: 64px;
+            height: 64px;
+            opacity: 0.3;
+        }
+
+        .map-placeholder p {
+            font-size: 1.25rem;
+            font-weight: 500;
+        }
+
+        .map-placeholder small {
+            font-size: 0.875rem;
+            color: #475569;
+        }
+
+        @media (max-width: 768px) {
+            .camera-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .function-buttons {
+                grid-template-columns: 1fr;
+            }
+
+            .dashboard-header h1 {
+                font-size: 1.5rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script>
+        // Camera configurations
+        const cameras = [
+            { id: 'pilot', name: 'Pilot Camera', color: '#3b82f6' },
+            { id: 'ir', name: 'IR Camera', color: '#8b5cf6' },
+            { id: 'highres', name: 'High Resolution Camera', color: '#10b981' }
+        ];
+
+        // Camera-specific functions
+        const cameraFunctions = {
+            pilot: [
+                { name: '', action: 'pilot_function_1' },
+                { name: '', action: 'pilot_function_2' },
+                { name: '', action: 'pilot_function_3' }
+            ],
+            ir: [
+                { name: 'IR Illuminators', action: 'ir_illuminators', isToggle: true },
+                { name: '', action: 'ir_function_2' },
+                { name: '', action: 'ir_function_3' }
+            ],
+            highres: [
+                { name: '', action: 'highres_function_1' },
+                { name: '', action: 'highres_function_2' },
+                { name: '', action: 'highres_function_3' }
+            ]
+        };
+
+        // State management
+        let state = {
+            activeCamera: null,
+            cameraSize: 'normal',
+            showMap: false,
+            irIlluminatorsOn: false
+        };
+
+        // Function to call Python backend
+        async function callPythonFunction(functionName) {
+            console.log('Calling Python function: ' + functionName);
+            
+            try {
+                const response = await fetch('/api/camera-control', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        function: functionName,
+                        timestamp: new Date().toISOString()
+                    })
+                });
+                
+                if (!response.ok) {
+                    console.error('Python function call failed');
+                }
+            } catch (error) {
+                console.error('Error calling Python function:', error);
+                console.log('Would call: ' + functionName);
+            }
+        }
+
+        // Icon helpers (SVG)
+        function getCameraIcon() {
+            return '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"></path><circle cx="12" cy="13" r="3"></circle></svg>';
+        }
+
+        function getMapIcon() {
+            return '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"></path><circle cx="12" cy="10" r="3"></circle></svg>';
+        }
+
+        function getMaximizeIcon() {
+            return '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>';
+        }
+
+        function getCloseIcon() {
+            return '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
+        }
+
+        // Render functions
+        function renderMainMenu() {
+            return `
+                <div class="dashboard">
+                    <header class="dashboard-header">
+                        <h1>SENTRY Control Dashboard</h1>
+                        <div class="status-indicator">
+                            <div class="status-dot"></div>
+                            <span>System Active</span>
+                        </div>
+                    </header>
+
+                    <div class="main-menu">
+                        <div class="menu-section">
+                            <h3>Camera Systems</h3>
+                            <div class="camera-grid">
+                                ${cameras.map(camera => `
+                                    <button class="camera-btn" style="--btn-color: ${camera.color}" data-camera="${camera.id}">
+                                        ${getCameraIcon()}
+                                        <span>${camera.name}</span>
+                                    </button>
+                                `).join('')}
+                            </div>
+                        </div>
+
+                        <div class="menu-section">
+                            <h3>Navigation</h3>
+                            <button class="camera-btn" style="--btn-color: #f59e0b" id="gps-btn">
+                                ${getMapIcon()}
+                                <span>View GPS Location</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderCameraView() {
+            const camera = cameras.find(c => c.id === state.activeCamera);
+            const functions = cameraFunctions[state.activeCamera] || [];
+            
+            return `
+                <div class="dashboard">
+                    <header class="dashboard-header">
+                        <h1>SENTRY Control Dashboard</h1>
+                        <div class="status-indicator">
+                            <div class="status-dot"></div>
+                            <span>System Active</span>
+                        </div>
+                    </header>
+
+                    <div class="camera-view ${state.cameraSize}">
+                        <div class="camera-header">
+                            <h2>${camera.name}</h2>
+                            <div class="camera-controls">
+                                ${state.cameraSize !== 'maximized' ? `
+                                    <button class="control-btn" id="maximize-btn" title="Fullscreen">
+                                        ${getMaximizeIcon()}
+                                    </button>
+                                ` : ''}
+                                <button class="control-btn close-btn" id="close-btn" title="Close">
+                                    ${getCloseIcon()}
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="video-container" style="border-color: ${camera.color}">
+                            <div class="video-placeholder" id="${camera.id}-video-feed">
+                                ${getCameraIcon()}
+                                <p>Waiting for video stream...</p>
+                                <small>ID: ${camera.id}-video-feed</small>
+                            </div>
+                        </div>
+
+                        <div class="function-buttons">
+                            ${functions.map((func, index) => {
+                                if (func.isToggle && func.name === 'IR Illuminators') {
+                                    return `
+                                        <button class="function-btn toggle-btn ${state.irIlluminatorsOn ? 'active' : ''}" 
+                                                style="--btn-color: ${camera.color}" 
+                                                data-action="${func.action}" 
+                                                data-toggle="true">
+                                            ${func.name}: ${state.irIlluminatorsOn ? 'ON' : 'OFF'}
+                                        </button>
+                                    `;
+                                } else if (func.name === '') {
+                                    return `
+                                        <button class="function-btn empty-btn" 
+                                                style="--btn-color: ${camera.color}" 
+                                                data-action="${func.action}">
+                                            &nbsp;
+                                        </button>
+                                    `;
+                                } else {
+                                    return `
+                                        <button class="function-btn" 
+                                                style="--btn-color: ${camera.color}" 
+                                                data-action="${func.action}">
+                                            ${func.name}
+                                        </button>
+                                    `;
+                                }
+                            }).join('')}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderMapView() {
+            return `
+                <div class="dashboard">
+                    <header class="dashboard-header">
+                        <h1>SENTRY Control Dashboard</h1>
+                        <div class="status-indicator">
+                            <div class="status-dot"></div>
+                            <span>System Active</span>
+                        </div>
+                    </header>
+
+                    <div class="map-view">
+                        <div class="map-header">
+                            <h2>GPS Location</h2>
+                            <button class="control-btn close-btn" id="close-map-btn">
+                                ${getCloseIcon()}
+                            </button>
+                        </div>
+                        <div class="map-container" id="gps-map">
+                            <div class="map-placeholder">
+                                ${getMapIcon()}
+                                <p>GPS Map View</p>
+                                <small>Map integration ready</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function render() {
+            const root = document.getElementById('root');
+            
+            if (!state.activeCamera && !state.showMap) {
+                root.innerHTML = renderMainMenu();
+            } else if (state.activeCamera) {
+                root.innerHTML = renderCameraView();
+            } else if (state.showMap) {
+                root.innerHTML = renderMapView();
+            }
+            
+            attachEventListeners();
+        }
+
+        function attachEventListeners() {
+            // Camera buttons
+            document.querySelectorAll('[data-camera]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    state.activeCamera = btn.dataset.camera;
+                    state.cameraSize = 'normal';
+                    render();
+                });
+            });
+
+            // GPS button
+            const gpsBtn = document.getElementById('gps-btn');
+            if (gpsBtn) {
+                gpsBtn.addEventListener('click', () => {
+                    state.showMap = true;
+                    render();
+                });
+            }
+
+            // Maximize button - triggers fullscreen
+            const maximizeBtn = document.getElementById('maximize-btn');
+            if (maximizeBtn) {
+                maximizeBtn.addEventListener('click', () => {
+                    state.cameraSize = 'maximized';
+                    const dashboard = document.querySelector('.dashboard');
+                    if (dashboard.requestFullscreen) {
+                        dashboard.requestFullscreen();
+                    } else if (dashboard.webkitRequestFullscreen) {
+                        dashboard.webkitRequestFullscreen();
+                    }
+                    render();
+                });
+            }
+
+            // Close button
+            const closeBtn = document.getElementById('close-btn');
+            if (closeBtn) {
+                closeBtn.addEventListener('click', () => {
+                    if (document.fullscreenElement) {
+                        document.exitFullscreen();
+                    }
+                    state.activeCamera = null;
+                    state.cameraSize = 'normal';
+                    render();
+                });
+            }
+
+            // Close map button
+            const closeMapBtn = document.getElementById('close-map-btn');
+            if (closeMapBtn) {
+                closeMapBtn.addEventListener('click', () => {
+                    state.showMap = false;
+                    render();
+                });
+            }
+
+            // Function buttons
+            document.querySelectorAll('[data-action]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    if (btn.dataset.toggle === 'true') {
+                        state.irIlluminatorsOn = !state.irIlluminatorsOn;
+                        callPythonFunction(btn.dataset.action + '_' + (state.irIlluminatorsOn ? 'on' : 'off'));
+                        render();
+                    } else {
+                        callPythonFunction(btn.dataset.action);
+                    }
+                });
+            });
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            render();
+        });
+
+        render();
+    </script>
+</body>
+</html>
