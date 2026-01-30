@@ -11,12 +11,12 @@ import math
 import threading
 import queue
 import argparse
+import subprocess
 from collections import deque
 
 import cv2
 import numpy as np
 import socketio
-import av
 
 # Configuration
 DEFAULT_HOST = '192.168.1.100'  # Change to your Raspberry Pi IP
@@ -395,7 +395,7 @@ def telemetry_receiver(host):
 
 
 def video_receiver(host):
-    """Receive and decode H.264 video stream"""
+    """Receive and decode H.264 video stream using ffmpeg"""
     print(f"Connecting to video stream at {host}:{VIDEO_PORT}...")
     
     try:
@@ -404,93 +404,134 @@ def video_receiver(host):
         # Connect to TCP video server
         sock = sock_module.socket(sock_module.AF_INET, sock_module.SOCK_STREAM)
         sock.setsockopt(sock_module.IPPROTO_TCP, sock_module.TCP_NODELAY, 1)
+        sock.setsockopt(sock_module.SOL_SOCKET, sock_module.SO_RCVBUF, 65536)
+        sock.settimeout(5.0)
         sock.connect((host, VIDEO_PORT))
+        sock.settimeout(None)
         
-        print("Video stream connected")
+        print("Video stream connected, decoding with ffmpeg...")
         
-        # Create PyAV codec for H.264 decoding
-        codec = av.CodecContext.create('h264', 'r')
-        codec.thread_count = 1  # Single thread for lower latency
-        codec.thread_type = 'NONE'
-        codec.options = {
-            'flags': 'low_delay',
-            'flags2': 'fast'
-        }
+        # Start ffmpeg process to decode H.264 to raw BGR24 frames
+        ffmpeg_cmd = [
+            'ffmpeg',
+            '-i', 'pipe:',
+            '-f', 'rawvideo',
+            '-pix_fmt', 'bgr24',
+            '-s', f'{FRAME_SIZE[0]}x{FRAME_SIZE[1]}',
+            '-r', '30',
+            '-fflags', 'nobuffer',
+            'pipe:'
+        ]
+        
+        process = subprocess.Popen(
+            ffmpeg_cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            bufsize=0
+        )
         
         # Create window
         cv2.namedWindow('Low-Latency Stream', cv2.WINDOW_NORMAL)
+        cv2.resizeWindow('Low-Latency Stream', FRAME_SIZE[0], FRAME_SIZE[1])
         
         frame_times = deque(maxlen=30)
         last_fps_update = time.time()
         fps = 0
+        frame_count = 0
+        frame_size = FRAME_SIZE[0] * FRAME_SIZE[1] * 3  # BGR24
         
-        buffer = b''
+        def feed_ffmpeg():
+            """Feed H.264 data from socket to ffmpeg stdin"""
+            try:
+                while True:
+                    chunk = sock.recv(65536)
+                    if not chunk:
+                        print("Server closed connection")
+                        break
+                    try:
+                        process.stdin.write(chunk)
+                        process.stdin.flush()
+                    except Exception as e:
+                        print(f"Error feeding ffmpeg: {e}")
+                        break
+            except Exception as e:
+                print(f"Socket error: {e}")
+            finally:
+                try:
+                    process.stdin.close()
+                except:
+                    pass
         
+        # Start thread to feed ffmpeg
+        feed_thread = threading.Thread(target=feed_ffmpeg, daemon=True)
+        feed_thread.start()
+        
+        # Read decoded frames from ffmpeg
         while True:
             frame_start = time.time()
             
-            # Receive data from socket
-            try:
-                chunk = sock.recv(65536)
-                if not chunk:
-                    print("Connection closed by server")
-                    break
-                
-                buffer += chunk
-                
-            except Exception as e:
-                print(f"Receive error: {e}")
+            # Read raw frame data
+            frame_data = process.stdout.read(frame_size)
+            if len(frame_data) < frame_size:
+                print(f"Incomplete frame (got {len(frame_data)} bytes, expected {frame_size})")
                 break
             
-            # Try to decode frames from buffer
-            try:
-                packets = codec.parse(buffer)
-                buffer = b''
+            # Convert bytes to numpy array
+            img = np.frombuffer(frame_data, dtype=np.uint8).reshape((FRAME_SIZE[1], FRAME_SIZE[0], 3))
+            
+            # Make a copy to avoid issues
+            img = img.copy()
+            
+            # Calculate latency
+            latency_ms = (time.time() - frame_start) * 1000
+            
+            # Get latest telemetry
+            with telemetry_lock:
+                data_copy = latest_telemetry.copy()
+            
+            # Apply overlays
+            img = apply_overlays(img, data_copy, latency_ms)
+            
+            # Calculate FPS
+            frame_times.append(time.time())
+            if time.time() - last_fps_update > 1.0:
+                if len(frame_times) > 1:
+                    fps = len(frame_times) / (frame_times[-1] - frame_times[0])
+                last_fps_update = time.time()
+            
+            # Add FPS counter
+            cv2.putText(img, f"FPS: {fps:.1f}", (10, FRAME_SIZE[1] - 10),
+                       cv2.FONT_HERSHEY_DUPLEX, 0.4, (255, 255, 255), 1)
+            
+            # Display
+            cv2.imshow('Low-Latency Stream', img)
+            frame_count += 1
+            
+            # Handle key press
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord('q'):
+                print(f"User quit (frames decoded: {frame_count})")
+                break
+            elif key == ord('o'):
+                global overlay_enabled
+                overlay_enabled = not overlay_enabled
+                print(f"Overlay: {'enabled' if overlay_enabled else 'disabled'}")
+        
+        print(f"Stream ended. Total frames decoded: {frame_count}")
+        
+        # Cleanup
+        try:
+            process.terminate()
+            process.wait(timeout=5)
+        except:
+            process.kill()
                 
-                for packet in packets:
-                    frames = codec.decode(packet)
-                    
-                    for av_frame in frames:
-                        # Convert to numpy array (BGR for OpenCV)
-                        img = av_frame.to_ndarray(format='bgr24')
-                        
-                        # Calculate latency (simplified - actual would need timestamps)
-                        latency_ms = (time.time() - frame_start) * 1000
-                        
-                        # Get latest telemetry
-                        with telemetry_lock:
-                            data = latest_telemetry.copy()
-                        
-                        # Apply overlays
-                        img = apply_overlays(img, data, latency_ms)
-                        
-                        # Calculate FPS
-                        frame_times.append(time.time())
-                        if time.time() - last_fps_update > 1.0:
-                            if len(frame_times) > 1:
-                                fps = len(frame_times) / (frame_times[-1] - frame_times[0])
-                            last_fps_update = time.time()
-                        
-                        # Add FPS counter
-                        cv2.putText(img, f"FPS: {fps:.1f}", (10, FRAME_SIZE[1] - 10),
-                                   cv2.FONT_HERSHEY_DUPLEX, 0.4, (255, 255, 255), 1)
-                        
-                        # Display
-                        cv2.imshow('Low-Latency Stream', img)
-                        
-                        # Handle key press
-                        key = cv2.waitKey(1) & 0xFF
-                        if key == ord('q'):
-                            return
-                        elif key == ord('o'):
-                            global overlay_enabled
-                            overlay_enabled = not overlay_enabled
-                            print(f"Overlay: {'enabled' if overlay_enabled else 'disabled'}")
-                        
-            except Exception as e:
-                # Decoding error, continue receiving
-                pass
-                
+    except FileNotFoundError:
+        print("ERROR: ffmpeg not found. Please install ffmpeg:")
+        print("  macOS: brew install ffmpeg")
+        print("  Ubuntu: sudo apt install ffmpeg")
+        print("  Raspberry Pi: sudo apt install ffmpeg")
     except Exception as e:
         print(f"Video connection error: {e}")
         import traceback

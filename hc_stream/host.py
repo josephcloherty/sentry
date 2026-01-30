@@ -11,6 +11,7 @@ import math
 import json
 import sys
 import os
+import threading
 
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -50,12 +51,23 @@ telemetry = {
 class TcpStreamOutput(FileOutput):
     """Custom output that streams H.264 directly to TCP socket"""
     def __init__(self, sock):
-        super().__init__(sock.makefile('wb'))
         self.sock = sock
+        self.file = sock.makefile('wb', buffering=0)  # Unbuffered
         
     def outputframe(self, frame, keyframe=True, timestamp=None):
-        # Add timestamp to frame metadata if needed
-        super().outputframe(frame, keyframe, timestamp)
+        """Write frame data directly to socket"""
+        try:
+            self.file.write(frame.getbuffer())
+            self.file.flush()
+        except Exception as e:
+            print(f"Error writing to socket: {e}")
+    
+    def close(self):
+        """Close the file and socket"""
+        try:
+            self.file.close()
+        except:
+            pass
 
 
 def get_cpu_stats():
@@ -155,6 +167,7 @@ async def handle_video_client(reader, writer):
         
         # Set TCP_NODELAY to disable Nagle's algorithm (reduce latency)
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)
         
         # Start encoding and streaming
         output = TcpStreamOutput(sock)
@@ -187,6 +200,9 @@ async def start_video_server():
     
     addr = server.sockets[0].getsockname()
     print(f"Video server listening on {addr[0]}:{addr[1]}")
+    
+    async with server:
+        await server.serve_forever()
     
     async with server:
         await server.serve_forever()

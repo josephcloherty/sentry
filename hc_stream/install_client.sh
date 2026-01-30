@@ -12,8 +12,27 @@ if ! command -v pip3 &> /dev/null; then
     exit 1
 fi
 
+echo "Installing ffmpeg..."
+# Check OS and install ffmpeg accordingly
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    # macOS
+    if command -v brew &> /dev/null; then
+        brew install ffmpeg
+    else
+        echo "Homebrew not found. Please install Homebrew first: https://brew.sh"
+        exit 1
+    fi
+elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    # Linux
+    sudo apt update
+    sudo apt install -y ffmpeg
+else
+    echo "Unsupported OS. Please install ffmpeg manually."
+fi
+
+echo ""
 echo "Installing Python packages..."
-pip3 install opencv-python numpy av python-socketio
+pip3 install opencv-python numpy python-socketio
 
 echo ""
 echo "Installation complete!"
