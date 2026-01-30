@@ -1,9 +1,10 @@
 import cv2
-from flask import Flask, Response, stream_with_context, render_template
+from flask import Flask, Response, stream_with_context, render_template, request, jsonify
 from picamera2 import Picamera2
 import numpy as np
 import time
 import math
+from attitude import draw_attitude_indicator
 from mavlink_data import get_mavlink_data
 from cpu_stats import get_cpu_stats
 from compass import draw_compass
@@ -39,6 +40,7 @@ def track_latency(start=None):
 frame_size = (640, 480)
 
 app = Flask(__name__)
+overlay_enabled = True
 picam2 = Picamera2()
 picam2.configure(picam2.create_preview_configuration(main={"format": 'RGB888', "size": frame_size}))
 picam2.start()
@@ -49,71 +51,89 @@ def gen_frames():
     while True:
         start = track_latency()
         frame = picam2.capture_array()
+        
+        # Always fetch data (non-blocking), but only display if overlay enabled
         data = get_mavlink_data(master, telemetry)
-        compass_size = 120
-        draw_compass(frame, data['yaw'], 0, frame_size[1]-compass_size-10, compass_size)
         now = time.time()
-        last_print = 0
-        if now - last_print >= 0.1:
+
+        if overlay_enabled:
+           # Draw Compass
+            compass_size = 120
+            draw_compass(frame, data['yaw'], 0, frame_size[1]-compass_size-10, compass_size)
+            
+           # Draw Attitude Inicator
+            attitude_size = 120
+            draw_attitude_indicator(frame, data['roll'], data['pitch'], x=frame_size[0]-attitude_size-10, y=frame_size[1]-attitude_size-10, size=attitude_size)
+
+           # Telemetry Overlay 
+            last_print = 0
+            if now - last_print >= 0.1:
+                font = cv2.FONT_HERSHEY_DUPLEX
+                font_scale = 0.4
+                thickness = 1
+                
+                text = f"Roll: {data['roll']:.1f}"
+                text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
+                cv2.putText(frame, text, (frame_size[0] - text_size[0] - 10, 15), font, font_scale, (255, 255, 255), thickness)
+                
+                text = f"Pitch: {data['pitch']:.1f}"
+                text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
+                cv2.putText(frame, text, (frame_size[0] - text_size[0] - 10, 35), font, font_scale, (255, 255, 255), thickness)
+                
+                text = f"Yaw: {data['yaw']:.1f}"
+                text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
+                cv2.putText(frame, text, (frame_size[0] - text_size[0] - 10, 55), font, font_scale, (255, 255, 255), thickness)
+                
+                text = f"Lat: {data['lat']:.6f}"
+                text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
+                cv2.putText(frame, text, (frame_size[0] - text_size[0] - 10, 75), font, font_scale, (255, 255, 255), thickness)
+                
+                text = f"Lon: {data['lon']:.6f}"
+                text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
+                cv2.putText(frame, text, (frame_size[0] - text_size[0] - 10, 95), font, font_scale, (255, 255, 255), thickness)
+                
+                text = f"Alt: {data['alt']:.1f}m"
+                text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
+                cv2.putText(frame, text, (frame_size[0] - text_size[0] - 10, 115), font, font_scale, (255, 255, 255), thickness)
+                
+                last_print = now  
+
+            # CPU Stats 
+            temp, cpu = get_cpu_stats()
             font = cv2.FONT_HERSHEY_DUPLEX
             font_scale = 0.4
             thickness = 1
             
-            text = f"Roll: {data['roll']:.1f}"
-            text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
-            cv2.putText(frame, text, (frame_size[0] - text_size[0] - 10, 15), font, font_scale, (255, 255, 255), thickness)
+            if temp is not None:
+                temp_text = f"CPU: {temp:.1f}C"
+                text_size = cv2.getTextSize(temp_text, font, font_scale, thickness)[0]
+                cv2.putText(frame, temp_text, (10, 15), font, font_scale, (255, 255, 255), thickness)
+            if cpu is not None:
+                cpu_text = f"Usage: {cpu}%"
+                text_size = cv2.getTextSize(cpu_text, font, font_scale, thickness)[0]
+                cv2.putText(frame, cpu_text, (10, 35), font, font_scale, (255, 255, 255), thickness)
             
-            text = f"Pitch: {data['pitch']:.1f}"
-            text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
-            cv2.putText(frame, text, (frame_size[0] - text_size[0] - 10, 35), font, font_scale, (255, 255, 255), thickness)
-            
-            text = f"Yaw: {data['yaw']:.1f}"
-            text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
-            cv2.putText(frame, text, (frame_size[0] - text_size[0] - 10, 55), font, font_scale, (255, 255, 255), thickness)
-            
-            text = f"Lat: {data['lat']:.6f}"
-            text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
-            cv2.putText(frame, text, (frame_size[0] - text_size[0] - 10, 75), font, font_scale, (255, 255, 255), thickness)
-            
-            text = f"Lon: {data['lon']:.6f}"
-            text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
-            cv2.putText(frame, text, (frame_size[0] - text_size[0] - 10, 95), font, font_scale, (255, 255, 255), thickness)
-            
-            text = f"Alt: {data['alt']:.1f}m"
-            text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
-            cv2.putText(frame, text, (frame_size[0] - text_size[0] - 10, 115), font, font_scale, (255, 255, 255), thickness)
-            
-            last_print = now  
-
-        # CPU Stats 
-        temp, cpu = get_cpu_stats()
-        font = cv2.FONT_HERSHEY_DUPLEX
-        font_scale = 0.4
-        thickness = 1
+            # Latency Tracking (before encoding to include it in the overlay)
+            lat_before_text = track_latency(start)
+            font = cv2.FONT_HERSHEY_DUPLEX
+            font_scale = 0.4
+            thickness = 1
+            latency_text = f"Latency: {lat_before_text}"
+            text_size = cv2.getTextSize(latency_text, font, font_scale, thickness)[0]
+            cv2.putText(frame, latency_text, (10, 55), font, font_scale, (255, 255, 255), thickness)
         
-        if temp is not None:
-            temp_text = f"CPU: {temp:.1f}C"
-            text_size = cv2.getTextSize(temp_text, font, font_scale, thickness)[0]
-            cv2.putText(frame, temp_text, (10, 15), font, font_scale, (255, 255, 255), thickness)
-        if cpu is not None:
-            cpu_text = f"Usage: {cpu}%"
-            text_size = cv2.getTextSize(cpu_text, font, font_scale, thickness)[0]
-            cv2.putText(frame, cpu_text, (10, 35), font, font_scale, (255, 255, 255), thickness)
-        
-        # Latency Tracking (before encoding to include it in the overlay)
-        lat_before_text = track_latency(start)
-        font = cv2.FONT_HERSHEY_DUPLEX
-        font_scale = 0.4
-        thickness = 1
-        latency_text = f"Latency: {lat_before_text}"
-        text_size = cv2.getTextSize(latency_text, font, font_scale, thickness)[0]
-        cv2.putText(frame, latency_text, (10, 55), font, font_scale, (255, 255, 255), thickness)
+        else:
+            # Only show latency when overlay is disabled (raw stream)
+            lat_text = track_latency(start)
+            font = cv2.FONT_HERSHEY_DUPLEX
+            font_scale = 0.4
+            thickness = 1
+            latency_text = f"Latency: {lat_text}"
+            text_size = cv2.getTextSize(latency_text, font, font_scale, thickness)[0]
+            cv2.putText(frame, latency_text, (10, 15), font, font_scale, (255, 255, 255), thickness)
         
         # Encoding
         ret, buffer = cv2.imencode('.jpg', frame)
-        
-        # Calculate total latency including encoding
-        lat = track_latency(start)
         frame = buffer.tobytes()
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
@@ -122,6 +142,13 @@ def gen_frames():
 @app.route('/')
 def index():
     return render_template('index.html')
+
+@app.route('/set_overlay', methods=['POST'])
+def set_overlay():
+    global overlay_enabled
+    data = request.get_json()
+    overlay_enabled = data.get('overlay', True)
+    return jsonify({'status': 'success', 'overlay': overlay_enabled})
 
 @app.route('/video_feed')
 def video_feed():
