@@ -12,6 +12,9 @@ JPEG_QUALITY = 75  # 0-95, lower = faster but lower quality
 
 print("Connecting to MAVLink...")
 mav = mavutil.mavlink_connection('udp:127.0.0.1:14550')
+print("Awaiting MAVLink heartbeat...")
+mav.wait_heartbeat()
+print("MAVLink heartbeat received.")
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
@@ -20,6 +23,7 @@ cam.configure(cam.create_preview_configuration(main={"format": 'XRGB8888', "size
 cam.start()
 
 async def stream(ws):
+    print("Client connected to video stream.")
     while True:
         frame = cam.capture_array()
         ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
@@ -27,17 +31,53 @@ async def stream(ws):
         await asyncio.sleep(1.0 / VIDEO_FPS)
 
 async def mavlink_broadcast():
+    # Store latest messages
+    latest_msgs = {}
+    mavlink_connected = False
+    
+    async def read_mavlink():
+        while True:
+            msg = await asyncio.to_thread(mav.recv_match, blocking=False)
+            if msg:
+                latest_msgs[msg.get_type()] = msg
+                nonlocal mavlink_connected
+                if not mavlink_connected:
+                    mavlink_connected = True
+                    print("MAVLink connection established.")
+            await asyncio.sleep(0.001)
+    
+    # Start mavlink reader
+    asyncio.create_task(read_mavlink())
+    
+    # Broadcast at 10Hz
     while True:
-        msg = await asyncio.to_thread(mav.recv_match, type='ATTITUDE', blocking=True)
-        if msg:
-            roll = math.degrees(msg.roll)
-            pitch = math.degrees(msg.pitch)
-            yaw = math.degrees(msg.yaw)
-            data = f"{roll:.2f},{pitch:.2f},{yaw:.2f}".encode()
-            sock.sendto(data, ('<broadcast>', 5000))
+        att_msg = latest_msgs.get('ATTITUDE')
+        gps_msg = latest_msgs.get('GLOBAL_POSITION_INT')
+        batt_msg = latest_msgs.get('BATTERY_STATUS')
+        vfr_msg = latest_msgs.get('VFR_HUD')
+        
+        roll = math.degrees(att_msg.roll) if att_msg else 0
+        pitch = math.degrees(att_msg.pitch) if att_msg else 0
+        yaw = math.degrees(att_msg.yaw) if att_msg else 0
+        
+        lat = gps_msg.lat / 1e7 if gps_msg else 0
+        lon = gps_msg.lon / 1e7 if gps_msg else 0
+        alt = gps_msg.alt / 1000 if gps_msg else 0
+        
+        battery = batt_msg.voltages[0] / 1000 if batt_msg else 0
+        battery_remaining = batt_msg.battery_remaining if batt_msg else 0
+        
+        ground_speed = vfr_msg.groundspeed if vfr_msg else 0
+        throttle = vfr_msg.throttle if vfr_msg else 0
+        
+        data = f"{roll:.4f},{pitch:.4f},{yaw:.2f},{lat:.6f},{lon:.6f},{alt:.1f},{battery:.2f},{battery_remaining:.0f},{ground_speed:.1f},{throttle:.0f}".encode()
+        sock.sendto(data, ('<broadcast>', 5000))
+        
+        await asyncio.sleep(0.1)  # 10Hz (100ms)
 
 async def main():
     async with websockets.serve(stream, '0.0.0.0', 8765):
+        print("Server running and ready for connections.")
         asyncio.create_task(mavlink_broadcast())
         await asyncio.Future()
 
