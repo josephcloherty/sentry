@@ -27,31 +27,44 @@ async def stream(ws):
         await asyncio.sleep(1.0 / VIDEO_FPS)
 
 async def mavlink_broadcast():
+    # Store latest messages
+    latest_msgs = {}
+    
+    async def read_mavlink():
+        while True:
+            msg = await asyncio.to_thread(mav.recv_match, blocking=False)
+            if msg:
+                latest_msgs[msg.get_type()] = msg
+            await asyncio.sleep(0.001)
+    
+    # Start mavlink reader
+    asyncio.create_task(read_mavlink())
+    
+    # Broadcast at 10Hz
     while True:
-        # Get ATTITUDE data
-        att_msg = await asyncio.to_thread(mav.recv_match, type='ATTITUDE', blocking=True)
-        gps_msg = mav.recv_match(type='GLOBAL_POSITION_INT', blocking=False)
-        batt_msg = mav.recv_match(type='BATTERY_STATUS', blocking=False)
-        vfr_msg = mav.recv_match(type='VFR_HUD', blocking=False)
+        att_msg = latest_msgs.get('ATTITUDE')
+        gps_msg = latest_msgs.get('GLOBAL_POSITION_INT')
+        batt_msg = latest_msgs.get('BATTERY_STATUS')
+        vfr_msg = latest_msgs.get('VFR_HUD')
         
-        if att_msg:
-            roll = math.degrees(att_msg.roll)
-            pitch = math.degrees(att_msg.pitch)
-            yaw = math.degrees(att_msg.yaw)
-            
-            # Default values if messages not available
-            lat = gps_msg.lat / 1e7 if gps_msg else 0
-            lon = gps_msg.lon / 1e7 if gps_msg else 0
-            alt = gps_msg.alt / 1000 if gps_msg else 0
-            
-            battery = batt_msg.voltages[0] / 1000 if batt_msg else 0
-            battery_remaining = batt_msg.battery_remaining if batt_msg else 0
-            
-            ground_speed = vfr_msg.groundspeed if vfr_msg else 0
-            throttle = vfr_msg.throttle if vfr_msg else 0
-            
-            data = f"{roll:.2f},{pitch:.2f},{yaw:.2f},{lat:.6f},{lon:.6f},{alt:.1f},{battery:.2f},{battery_remaining:.0f},{ground_speed:.1f},{throttle:.0f}".encode()
-            sock.sendto(data, ('<broadcast>', 5000))
+        roll = math.degrees(att_msg.roll) if att_msg else 0
+        pitch = math.degrees(att_msg.pitch) if att_msg else 0
+        yaw = math.degrees(att_msg.yaw) if att_msg else 0
+        
+        lat = gps_msg.lat / 1e7 if gps_msg else 0
+        lon = gps_msg.lon / 1e7 if gps_msg else 0
+        alt = gps_msg.alt / 1000 if gps_msg else 0
+        
+        battery = batt_msg.voltages[0] / 1000 if batt_msg else 0
+        battery_remaining = batt_msg.battery_remaining if batt_msg else 0
+        
+        ground_speed = vfr_msg.groundspeed if vfr_msg else 0
+        throttle = vfr_msg.throttle if vfr_msg else 0
+        
+        data = f"{roll:.4f},{pitch:.4f},{yaw:.2f},{lat:.6f},{lon:.6f},{alt:.1f},{battery:.2f},{battery_remaining:.0f},{ground_speed:.1f},{throttle:.0f}".encode()
+        sock.sendto(data, ('<broadcast>', 5000))
+        
+        await asyncio.sleep(0.1)  # 10Hz (100ms)
 
 async def main():
     async with websockets.serve(stream, '0.0.0.0', 8765):

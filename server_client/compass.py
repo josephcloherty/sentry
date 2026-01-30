@@ -55,7 +55,7 @@ def draw_compass(img, yaw, x, y, size):
     text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)[0]
     text_x = c_bg[0] - text_size[0] // 2
     cv2.putText(bg, text, (text_x, size-5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, 
-                (255, 255, 255, 255), 1, lineType=cv2.LINE_AA)
+                (255, 255, 255, 255), 1)
     
     # Extract RGB and alpha channels
     overlay_rgb = bg[:, :, :3]
