@@ -43,8 +43,8 @@ def _create_static_overlay(size):
     cv2.circle(overlay, c, r-2, (255, 255, 255, 255), 2, lineType=cv2.LINE_AA)
     
     # Aircraft symbol (fixed yellow chevron in center)
-    wing_width = size // 4
-    wing_height = size // 20
+    wing_width = size // 5
+    wing_height = size // 25
     nose_height = size // 15
     
     # Left wing

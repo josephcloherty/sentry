@@ -96,6 +96,18 @@ def gen_frames():
                 text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
                 cv2.putText(frame, text, (frame_size[0] - text_size[0] - 10, 115), font, font_scale, (255, 255, 255), thickness)
                 
+                text = f"Battery: {data['battery']:.2f}V ({data['battery_remaining']}%)"
+                text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
+                cv2.putText(frame, text, (frame_size[0] - text_size[0] - 10, 135), font, font_scale, (255, 255, 255), thickness)
+
+                text = f"GS: {data['ground_speed']:.1f}m/s"
+                text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
+                cv2.putText(frame, text, (frame_size[0] - text_size[0] - 10, 155), font, font_scale, (255, 255, 255), thickness)
+
+                text = f"Throttle: {data['throttle']}%"
+                text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
+                cv2.putText(frame, text, (frame_size[0] - text_size[0] - 10, 175), font, font_scale, (255, 255, 255), thickness)
+
                 last_print = now  
 
             # CPU Stats 

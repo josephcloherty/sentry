@@ -10,9 +10,12 @@ def _create_compass_background(size):
     c = (size//2, size//2)
     r = size // 3
     
-    # Circle
-    cv2.circle(bg, c, r, (255, 255, 255, 255), 1, lineType=cv2.LINE_AA)
-    cv2.circle(bg, c, r//20, (255, 255, 255, 255), 1, lineType=cv2.LINE_AA)
+    # Draw white circle background
+    cv2.circle(bg, c, r, (255, 255, 255, 255), -1, lineType=cv2.LINE_AA)  # White filled circle
+    
+    # Circle outline
+    cv2.circle(bg, c, r, (0, 0, 0, 255), 1, lineType=cv2.LINE_AA)  # Black circle outline
+    cv2.circle(bg, c, r//20, (0, 0, 0, 255), 1, lineType=cv2.LINE_AA)  # Black center circle
     
     # Cardinal directions
     for angle, label in [(0, 'N'), (90, 'E'), (180, 'S'), (270, 'W')]:
@@ -21,7 +24,7 @@ def _create_compass_background(size):
         ty = int(c[1] - r * 0.8 * math.cos(rad))
         text_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_DUPLEX, 0.3, 1)[0]
         cv2.putText(bg, label, (tx - text_size[0]//2, ty + text_size[1]//2), 
-                    cv2.FONT_HERSHEY_DUPLEX, 0.3, (255, 255, 255, 255), 1, lineType=cv2.LINE_AA)
+                    cv2.FONT_HERSHEY_DUPLEX, 0.3, (0, 0, 0, 255), 1, lineType=cv2.LINE_AA)  # Black text
     
     return bg
 
@@ -45,7 +48,7 @@ def draw_compass(img, yaw, x, y, size):
     cv2.arrowedLine(bg, c_bg, (nx, ny), (0, 0, 200, 255), 2, tipLength=0.2, line_type=cv2.LINE_AA)
     
     # Center dot
-    cv2.circle(bg, c_bg, r//20, (255, 255, 255, 255), -1, lineType=cv2.LINE_AA)
+    cv2.circle(bg, c_bg, r//20, (0, 0, 0, 255), -1, lineType=cv2.LINE_AA)  # Black center dot
     
     # Yaw text
     text = f"{yaw:.1f} deg"
