@@ -51,23 +51,20 @@ telemetry = {
 class TcpStreamOutput(FileOutput):
     """Custom output that streams H.264 directly to TCP socket"""
     def __init__(self, sock):
+        # Don't call parent init - we'll write directly
         self.sock = sock
-        self.file = sock.makefile('wb', buffering=0)  # Unbuffered
         
     def outputframe(self, frame, keyframe=True, timestamp=None):
         """Write frame data directly to socket"""
         try:
-            self.file.write(frame.getbuffer())
-            self.file.flush()
+            # Write the raw H.264 bytes to socket
+            self.sock.sendall(bytes(frame))
+        except (BrokenPipeError, ConnectionResetError):
+            # Client disconnected
+            raise
         except Exception as e:
             print(f"Error writing to socket: {e}")
-    
-    def close(self):
-        """Close the file and socket"""
-        try:
-            self.file.close()
-        except:
-            pass
+            raise
 
 
 def get_cpu_stats():
@@ -140,13 +137,16 @@ def update_telemetry(master):
                                        msg.chan7_raw, msg.chan8_raw)
 
 
-async def handle_video_client(reader, writer):
-    """Handle H.264 video streaming to a client"""
-    client_addr = writer.get_extra_info('peername')
-    print(f"Video client connected: {client_addr}")
+def handle_video_client(sock, addr, picam2_instance=None):
+    """Handle H.264 video streaming to a client (runs in thread)"""
+    print(f"Video client connected: {addr}")
     
     try:
-        # Initialize Picamera2 with low-latency configuration
+        # Set TCP_NODELAY to disable Nagle's algorithm (reduce latency)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)
+        
+        # Create new Picamera2 instance for this client
         picam2 = Picamera2()
         config = picam2.create_video_configuration(
             main={"size": (VIDEO_WIDTH, VIDEO_HEIGHT), "format": "YUV420"},
@@ -162,47 +162,61 @@ async def handle_video_client(reader, writer):
         encoder.framerate = VIDEO_FPS
         encoder.intra_period = 15  # Keyframe every 0.5s at 30fps
         
-        # Get socket from StreamWriter
-        sock = writer.transport.get_extra_info('socket')
-        
-        # Set TCP_NODELAY to disable Nagle's algorithm (reduce latency)
-        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)
-        
-        # Start encoding and streaming
+        # Start encoding and streaming to socket
         output = TcpStreamOutput(sock)
         picam2.start_recording(encoder, output)
         
-        print(f"Streaming H.264 to {client_addr}")
+        print(f"Streaming H.264 to {addr}")
         
-        # Keep connection alive while streaming
+        # Keep streaming until client disconnects
         while True:
-            await asyncio.sleep(1)
+            time.sleep(0.1)
             
+    except (BrokenPipeError, ConnectionResetError):
+        print(f"Client disconnected: {addr}")
     except Exception as e:
-        print(f"Video streaming error: {e}")
+        print(f"Video streaming error for {addr}: {e}")
     finally:
         try:
             picam2.stop_recording()
             picam2.close()
         except:
             pass
-        writer.close()
-        await writer.wait_closed()
-        print(f"Video client disconnected: {client_addr}")
+        try:
+            sock.close()
+        except:
+            pass
+        print(f"Video client closed: {addr}")
 
 
-async def start_video_server():
-    """Start TCP server for H.264 video streaming"""
-    server = await asyncio.start_server(
-        handle_video_client, '0.0.0.0', VIDEO_PORT
-    )
+def start_video_server_thread():
+    """Start TCP server for H.264 video streaming in a thread"""
+    def video_server():
+        server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server_sock.bind(('0.0.0.0', VIDEO_PORT))
+        server_sock.listen(5)
+        
+        print(f"Video server listening on 0.0.0.0:{VIDEO_PORT}")
+        
+        try:
+            while True:
+                client_sock, addr = server_sock.accept()
+                # Handle each client in a separate thread
+                client_thread = threading.Thread(
+                    target=handle_video_client, 
+                    args=(client_sock, addr),
+                    daemon=True
+                )
+                client_thread.start()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            server_sock.close()
     
-    addr = server.sockets[0].getsockname()
-    print(f"Video server listening on {addr[0]}:{addr[1]}")
-    
-    async with server:
-        await server.serve_forever()
+    server_thread = threading.Thread(target=video_server, daemon=True)
+    server_thread.start()
+    return server_thread
     
     async with server:
         await server.serve_forever()
@@ -286,6 +300,7 @@ async def main():
     
     # Connect to MAVLink
     print("Connecting to mavlink-router...")
+    master = None
     try:
         master = mavutil.mavlink_connection('udpin:localhost:14550')
         print("Waiting for heartbeat...")
@@ -303,7 +318,6 @@ async def main():
     except Exception as e:
         print(f"MAVLink connection error: {e}")
         print("Continuing without MAVLink (telemetry will be zero)")
-        master = None
     
     print("\nStarting servers...")
     print(f"  Video (H.264): TCP port {VIDEO_PORT}")
@@ -311,12 +325,12 @@ async def main():
     print(f"  Telemetry rate: {TELEMETRY_RATE} Hz")
     print("\nPress Ctrl+C to stop")
     
-    # Start both servers concurrently
+    # Start video server in background thread
+    start_video_server_thread()
+    
+    # Start telemetry server (async)
     try:
-        await asyncio.gather(
-            start_video_server(),
-            start_telemetry_server(master)
-        )
+        await start_telemetry_server(master)
     except KeyboardInterrupt:
         print("\nShutting down...")
 
