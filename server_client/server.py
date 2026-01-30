@@ -12,6 +12,9 @@ JPEG_QUALITY = 75  # 0-95, lower = faster but lower quality
 
 print("Connecting to MAVLink...")
 mav = mavutil.mavlink_connection('udp:127.0.0.1:14550')
+print("Awaiting MAVLink heartbeat...")
+mav.wait_heartbeat()
+print("MAVLink heartbeat received.")
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
@@ -20,6 +23,7 @@ cam.configure(cam.create_preview_configuration(main={"format": 'XRGB8888', "size
 cam.start()
 
 async def stream(ws):
+    print("Client connected to video stream.")
     while True:
         frame = cam.capture_array()
         ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
@@ -29,12 +33,17 @@ async def stream(ws):
 async def mavlink_broadcast():
     # Store latest messages
     latest_msgs = {}
+    mavlink_connected = False
     
     async def read_mavlink():
         while True:
             msg = await asyncio.to_thread(mav.recv_match, blocking=False)
             if msg:
                 latest_msgs[msg.get_type()] = msg
+                nonlocal mavlink_connected
+                if not mavlink_connected:
+                    mavlink_connected = True
+                    print("MAVLink connection established.")
             await asyncio.sleep(0.001)
     
     # Start mavlink reader
@@ -68,6 +77,7 @@ async def mavlink_broadcast():
 
 async def main():
     async with websockets.serve(stream, '0.0.0.0', 8765):
+        print("Server running and ready for connections.")
         asyncio.create_task(mavlink_broadcast())
         await asyncio.Future()
 

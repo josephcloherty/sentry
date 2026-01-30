@@ -16,6 +16,7 @@ mavlink_data = {"roll": 0, "pitch": 0, "yaw": 0, "lat": 0, "lon": 0, "alt": 0, "
 async def receive_video():
     global frame
     async with websockets.connect('ws://100.112.223.17:8765') as ws:
+        print("Connected to video server.")
         while True:
             data = await ws.recv()
             frame = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
