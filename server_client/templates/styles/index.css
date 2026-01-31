@@ -1,0 +1,49 @@
+body {
+    font-family: Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: auto;
+    width: 100%;
+    margin: 0;
+    background-color: #f0f0f0;
+}
+
+#video-container_cam0,
+#video-container_cam1 {
+    max-width: 640px;
+    width: 100%;
+    margin-top: 20px;
+    border: 2px solid #333;
+}
+
+#stream_cam0,
+#stream_cam1 {
+    width: 100%;
+    height: auto;
+}
+
+#banner {
+    display: flex;
+    align-items: center;
+    width: 100vw;
+    padding: 15px 30px;
+    background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+#banner img {
+    height: 50px;
+    width: auto;
+    margin-right: 15px;
+    margin-left: 15px;
+}
+
+#banner h1 {
+    color: #ffffff;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    font-size: 20px;
+    font-weight: 400;
+    letter-spacing: 0.5px;
+}
