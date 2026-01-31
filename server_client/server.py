@@ -40,7 +40,7 @@ async def stream_cam1(ws):
     print("Client connected to video stream (cam1).")
     while True:
         frame = cam1.capture_array()
-        mono_frame = frame[:, :, 0] 
+        mono_frame = frame[0:VIDEO_HEIGHT, 0:VIDEO_WIDTH] 
         ret, buffer = cv2.imencode('.jpg', mono_frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
         await ws.send(buffer.tobytes())
         await asyncio.sleep(1.0 / VIDEO_FPS)
