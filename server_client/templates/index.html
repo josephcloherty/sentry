@@ -8,15 +8,106 @@
 </head>
 <body>
     <div id="banner">
-        <img src="/images/Argus_Dark.png" alt="Argus Dynamics Logo">
-        <h1>SENTRY Dashboard</h1>
+        <div class="banner-left">
+            <img src="/images/Argus_Dark.png" alt="Argus Dynamics Logo">
+            <h1>SENTRY UAS Dashboard</h1>
+        </div>
+        <div class="banner-right">
+            <div class="main-status">
+                <span class="status-dot {{ 'on' if main_online else 'off' }}"></span>
+                <span>System Status</span>
+            </div>
+            <div id="banner-slot"></div>
+        </div>
     </div>
-    
-    <div id="video-container_cam0">
-        <img id="stream_cam0" src="{{ url_for('video_feed_cam0') }}">
+
+    <div class="grid">
+        <div class="card" data-card data-card-id="cam0">
+            <div class="card-header" data-header>
+                <span class="status-dot {{ 'on' if cam0_online else 'off' }}"></span>
+                <h2>Pilot Camera</h2>
+                <button class="minimize" data-minimize>Minimize</button>
+            </div>
+            <div class="media">
+                <img id="stream_cam0" src="{{ url_for('video_feed_cam0') }}">
+            </div>
+            <div class="desc">Front facing camera for BVLOS piloting</div>
+        </div>
+
+        <div class="card" data-card data-card-id="cam1">
+            <div class="card-header" data-header>
+                <span class="status-dot {{ 'on' if cam1_online else 'off' }}"></span>
+                <h2>Landing Camera</h2>
+                <button class="minimize" data-minimize>Minimize</button>
+            </div>
+            <div class="media">
+                <img id="stream_cam1" src="{{ url_for('video_feed_cam1') }}">
+            </div>
+            <div class="desc">Infrared camera for landing assistance</div>
+        </div>
+
+        <div class="card" data-card data-card-id="hq">
+            <div class="card-header" data-header>
+                <span class="status-dot {{ 'on' if hq_online else 'off' }}"></span>
+                <h2>High Quality Camera</h2>
+                <button class="minimize" data-minimize>Minimize</button>
+            </div>
+            <div class="media empty">
+                <div class="placeholder">EMPTY</div>
+            </div>
+            <div class="desc">High Quality camera for detailed imaging (Gimbal)</div>
+        </div>
+
+        <div class="card" data-card data-card-id="hq">
+            <div class="card-header" data-header>
+                <span class="status-dot {{ 'on' if hq_online else 'off' }}"></span>
+                <h2>High Quality Camera</h2>
+                <button class="minimize" data-minimize>Minimize</button>
+            </div>
+            <div class="media empty">
+                <div class="placeholder">EMPTY</div>
+            </div>
+            <div class="desc">High Quality camera for detailed imaging (Gimbal)</div>
+        </div>
     </div>
-    <div id="video-container_cam1">
-        <img id="stream_cam1" src="{{ url_for('video_feed_cam1') }}">
-    </div>
+
+    <script>
+        const bannerSlot = document.getElementById('banner-slot');
+        const clearExpanded = () => {
+            bannerSlot.innerHTML = '';
+            document.querySelectorAll('.card.expanded').forEach(c => c.classList.remove('expanded'));
+            document.body.classList.remove('expanded');
+            document.exitFullscreen?.().catch(() => {});
+        };
+
+        // Handle minimize button clicks first with capturing phase
+        document.addEventListener('click', e => {
+            if (e.target.closest('[data-minimize]')) {
+                e.preventDefault();
+                e.stopPropagation();
+                clearExpanded();
+                return;
+            }
+        }, true);
+
+        document.querySelectorAll('[data-card]').forEach(card => {
+            const header = card.querySelector('[data-header]');
+            card.addEventListener('click', e => {
+                if (!card.classList.contains('expanded')) {
+                    clearExpanded();
+                    card.classList.add('expanded');
+                    document.body.classList.add('expanded');
+                    const headerClone = header.cloneNode(true);
+                    headerClone.classList.add('in-banner');
+                    bannerSlot.appendChild(headerClone);
+                    document.documentElement.requestFullscreen?.().catch(() => {});
+                }
+            });
+        });
+        document.querySelector('#banner img').addEventListener('click', e => {
+            e.stopPropagation();
+            location.reload();
+        });
+    </script>
 </body>
 </html>
