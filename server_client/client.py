@@ -10,9 +10,13 @@ sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind(('', 5000))
 sock.setblocking(False)
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='templates', static_url_path='')
 frame_cam0 = None
 frame_cam1 = None
+main_online = True
+cam0_online = True
+cam1_online = True
+hq_online = False
 mavlink_data = {"roll": 0, "pitch": 0, "yaw": 0, "lat": 0, "lon": 0, "alt": 0, "battery": 0, "battery_remaining": 0, "ground_speed": 0, "throttle": 0}
 
 async def receive_video_cam0():
@@ -124,7 +128,13 @@ def gen_frames_cam1():
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    return render_template(
+        'index.html',
+        main_online=main_online,
+        cam0_online=cam0_online,
+        cam1_online=cam1_online,
+        hq_online=hq_online,
+    )
 
 @app.route('/video_feed_cam0')
 def video_feed_cam0():
