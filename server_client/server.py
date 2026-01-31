@@ -25,7 +25,7 @@ cam0.configure(cam0.create_preview_configuration(main={"format": 'XRGB8888', "si
 cam0.start()
 
 cam1 = Picamera2(1)
-cam1.configure(cam1.create_preview_configuration(main={"format": 'XBGR8888', "size": (VIDEO_WIDTH, VIDEO_HEIGHT)}))
+cam1.configure(cam1.create_preview_configuration(main={"format": 'YUV420', "size": (VIDEO_WIDTH, VIDEO_HEIGHT)}))
 cam1.start()
 
 async def stream_cam0(ws):
@@ -40,7 +40,8 @@ async def stream_cam1(ws):
     print("Client connected to video stream (cam1).")
     while True:
         frame = cam1.capture_array()
-        ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+        mono_frame = frame[:, :, 0] 
+        ret, buffer = cv2.imencode('.jpg', mono_frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
         await ws.send(buffer.tobytes())
         await asyncio.sleep(1.0 / VIDEO_FPS)
 
