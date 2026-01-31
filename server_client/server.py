@@ -25,7 +25,7 @@ cam0.configure(cam0.create_preview_configuration(main={"format": 'XRGB8888', "si
 cam0.start()
 
 cam1 = Picamera2(1)
-cam1.configure(cam1.create_preview_configuration(main={"format": 'XRGB8888', "size": (VIDEO_WIDTH, VIDEO_HEIGHT)}))
+cam1.configure(cam1.create_preview_configuration(main={"format": 'MONO8', "size": (VIDEO_WIDTH, VIDEO_HEIGHT)}))
 cam1.start()
 
 async def stream_cam0(ws):
