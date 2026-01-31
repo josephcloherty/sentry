@@ -11,14 +11,14 @@
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            height: 100vh;
+            height: 200vh;
             margin: 0;
             background-color: #f0f0f0;
         }
         h1 {
             color: #333;
         }
-        #video-container {
+        #video-container_cam0, #video-container_cam1 {
             max-width: 640px;
             width: 100%;
             margin-top: 20px;
@@ -32,8 +32,10 @@
 </head>
 <body>
     <h1>Webcam Stream</h1>
-    <div id="video-container">
+    <div id="video-container_cam0">
         <img id="stream_cam0" src="{{ url_for('video_feed_cam0') }}">
+    </div>
+    <div id="video-container_cam1">
         <img id="stream_cam1" src="{{ url_for('video_feed_cam1') }}">
     </div>
 </body>
