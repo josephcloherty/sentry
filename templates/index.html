@@ -3,105 +3,110 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Webcam Stream</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-            margin: 0;
-            background-color: #f0f0f0;
-        }
-        h1 {
-            color: #333;
-        }
-        #controls {
-            margin-top: 10px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        .switch {
-            position: relative;
-            display: inline-block;
-            width: 60px;
-            height: 34px;
-        }
-        .switch input {
-            opacity: 0;
-            width: 0;
-            height: 0;
-        }
-        .slider {
-            position: absolute;
-            cursor: pointer;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background-color: #ccc;
-            transition: 0.4s;
-            border-radius: 34px;
-        }
-        .slider:before {
-            position: absolute;
-            content: "";
-            height: 26px;
-            width: 26px;
-            left: 4px;
-            bottom: 4px;
-            background-color: white;
-            transition: 0.4s;
-            border-radius: 50%;
-        }
-        input:checked + .slider {
-            background-color: #2196F3;
-        }
-        input:checked + .slider:before {
-            transform: translateX(26px);
-        }
-        #video-container {
-            max-width: 640px;
-            width: 100%;
-            margin-top: 20px;
-        }
-        #webcam-stream {
-            width: 100%;
-            height: auto;
-        }
-    </style>
+    <title>Argus Dynamics - SENTRY Dashboard</title>
+    <link rel="stylesheet" href="/styles/index.css">
 </head>
 <body>
-    <h1>Webcam Stream</h1>
-    <div id="controls">
-        <label for="overlay-toggle">Show Overlay:</label>
-        <label class="switch">
-            <input type="checkbox" id="overlay-toggle" checked>
-            <span class="slider"></span>
-        </label>
+    <div id="banner">
+        <div class="banner-left">
+            <img src="/images/Argus_Dark.png" alt="Argus Dynamics Logo">
+            <h1>SENTRY UAS Dashboard</h1>
+        </div>
+        <div class="banner-right">
+            <div class="main-status">
+                <span class="status-dot {{ 'on' if main_online else 'off' }}"></span>
+                <span>System Status</span>
+            </div>
+            <div id="banner-slot"></div>
+        </div>
     </div>
-    <div id="video-container">
-        <img id="webcam-stream" src="{{ url_for('video_feed') }}" alt="Webcam Stream">
+
+    <div class="grid">
+        <div class="card" data-card data-card-id="cam0">
+            <div class="card-header" data-header>
+                <span class="status-dot {{ 'on' if cam0_online else 'off' }}"></span>
+                <h2>Pilot Camera</h2>
+                <button class="minimize" data-minimize>Minimize</button>
+            </div>
+            <div class="media">
+                <img id="stream_cam0" src="{{ url_for('video_feed_cam0') }}">
+            </div>
+            <div class="desc">Front facing camera for BVLOS piloting</div>
+        </div>
+
+        <div class="card" data-card data-card-id="cam1">
+            <div class="card-header" data-header>
+                <span class="status-dot {{ 'on' if cam1_online else 'off' }}"></span>
+                <h2>Landing Camera</h2>
+                <button class="minimize" data-minimize>Minimize</button>
+            </div>
+            <div class="media">
+                <img id="stream_cam1" src="{{ url_for('video_feed_cam1') }}">
+            </div>
+            <div class="desc">Infrared camera for landing assistance</div>
+        </div>
+
+        <div class="card" data-card data-card-id="hq">
+            <div class="card-header" data-header>
+                <span class="status-dot {{ 'on' if hq_online else 'off' }}"></span>
+                <h2>High Quality Camera</h2>
+                <button class="minimize" data-minimize>Minimize</button>
+            </div>
+            <div class="media empty">
+                <div class="placeholder">EMPTY</div>
+            </div>
+            <div class="desc">High Quality camera for detailed imaging (Gimbal)</div>
+        </div>
+
+        <div class="card" data-card data-card-id="hq">
+            <div class="card-header" data-header>
+                <span class="status-dot {{ 'on' if hq_online else 'off' }}"></span>
+                <h2>High Quality Camera</h2>
+                <button class="minimize" data-minimize>Minimize</button>
+            </div>
+            <div class="media empty">
+                <div class="placeholder">EMPTY</div>
+            </div>
+            <div class="desc">High Quality camera for detailed imaging (Gimbal)</div>
+        </div>
     </div>
+
     <script>
-        const toggleSwitch = document.getElementById('overlay-toggle');
-        const stream = document.getElementById('webcam-stream');
-        
-        toggleSwitch.addEventListener('change', function() {
-            const overlayEnabled = this.checked;
-            fetch('/set_overlay', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ overlay: overlayEnabled })
+        const bannerSlot = document.getElementById('banner-slot');
+        const clearExpanded = () => {
+            bannerSlot.innerHTML = '';
+            document.querySelectorAll('.card.expanded').forEach(c => c.classList.remove('expanded'));
+            document.body.classList.remove('expanded');
+            document.exitFullscreen?.().catch(() => {});
+        };
+
+        // Handle minimize button clicks first with capturing phase
+        document.addEventListener('click', e => {
+            if (e.target.closest('[data-minimize]')) {
+                e.preventDefault();
+                e.stopPropagation();
+                clearExpanded();
+                return;
+            }
+        }, true);
+
+        document.querySelectorAll('[data-card]').forEach(card => {
+            const header = card.querySelector('[data-header]');
+            card.addEventListener('click', e => {
+                if (!card.classList.contains('expanded')) {
+                    clearExpanded();
+                    card.classList.add('expanded');
+                    document.body.classList.add('expanded');
+                    const headerClone = header.cloneNode(true);
+                    headerClone.classList.add('in-banner');
+                    bannerSlot.appendChild(headerClone);
+                    document.documentElement.requestFullscreen?.().catch(() => {});
+                }
             });
-            
-            // Reload the stream
-            stream.src = stream.src.split('?')[0] + '?t=' + new Date().getTime();
+        });
+        document.querySelector('#banner img').addEventListener('click', e => {
+            e.stopPropagation();
+            location.reload();
         });
     </script>
 </body>

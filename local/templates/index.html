@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Webcam Stream</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f0f0;
+        }
+        h1 {
+            color: #333;
+        }
+        #controls {
+            margin-top: 10px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 60px;
+            height: 34px;
+        }
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: 0.4s;
+            border-radius: 34px;
+        }
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 26px;
+            width: 26px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: 0.4s;
+            border-radius: 50%;
+        }
+        input:checked + .slider {
+            background-color: #2196F3;
+        }
+        input:checked + .slider:before {
+            transform: translateX(26px);
+        }
+        #video-container {
+            max-width: 640px;
+            width: 100%;
+            margin-top: 20px;
+        }
+        #webcam-stream {
+            width: 100%;
+            height: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>Webcam Stream</h1>
+    <div id="controls">
+        <label for="overlay-toggle">Show Overlay:</label>
+        <label class="switch">
+            <input type="checkbox" id="overlay-toggle" checked>
+            <span class="slider"></span>
+        </label>
+    </div>
+    <div id="video-container">
+        <img id="webcam-stream" src="{{ url_for('video_feed') }}" alt="Webcam Stream">
+    </div>
+    <script>
+        const toggleSwitch = document.getElementById('overlay-toggle');
+        const stream = document.getElementById('webcam-stream');
+        
+        toggleSwitch.addEventListener('change', function() {
+            const overlayEnabled = this.checked;
+            fetch('/set_overlay', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ overlay: overlayEnabled })
+            });
+            
+            // Reload the stream
+            stream.src = stream.src.split('?')[0] + '?t=' + new Date().getTime();
+        });
+    </script>
+</body>
+</html>
