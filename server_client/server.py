@@ -9,6 +9,8 @@ VIDEO_FPS = 15
 VIDEO_WIDTH = 640
 VIDEO_HEIGHT = 480
 JPEG_QUALITY = 75  # 0-95, lower = faster but lower quality
+VIDEO_PORT_1 = 8765
+VIDEO_PORT_2 = 8766
 
 print("Connecting to MAVLink...")
 mav = mavutil.mavlink_connection('udp:127.0.0.1:14550')
@@ -18,14 +20,26 @@ print("MAVLink heartbeat received.")
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
-cam = Picamera2()
-cam.configure(cam.create_preview_configuration(main={"format": 'XRGB8888', "size": (VIDEO_WIDTH, VIDEO_HEIGHT)}))
-cam.start()
+cam0 = Picamera2(0)
+cam0.configure(cam0.create_preview_configuration(main={"format": 'XRGB8888', "size": (VIDEO_WIDTH, VIDEO_HEIGHT)}))
+cam0.start()
 
-async def stream(ws):
-    print("Client connected to video stream.")
+cam1 = Picamera2(1)
+cam1.configure(cam1.create_preview_configuration(main={"format": 'XRGB8888', "size": (VIDEO_WIDTH, VIDEO_HEIGHT)}))
+cam1.start()
+
+async def stream_cam0(ws):
+    print("Client connected to video stream (cam0).")
     while True:
-        frame = cam.capture_array()
+        frame = cam0.capture_array()
+        ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+        await ws.send(buffer.tobytes())
+        await asyncio.sleep(1.0 / VIDEO_FPS)
+
+async def stream_cam1(ws):
+    print("Client connected to video stream (cam1).")
+    while True:
+        frame = cam1.capture_array()
         ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
         await ws.send(buffer.tobytes())
         await asyncio.sleep(1.0 / VIDEO_FPS)
@@ -44,7 +58,7 @@ async def mavlink_broadcast():
                 if not mavlink_connected:
                     mavlink_connected = True
                     print("MAVLink connection established.")
-            await asyncio.sleep(0.001)
+            await asyncio.sleep(0.01)
     
     # Start mavlink reader
     asyncio.create_task(read_mavlink())
@@ -76,8 +90,9 @@ async def mavlink_broadcast():
         await asyncio.sleep(0.1)  # 10Hz (100ms)
 
 async def main():
-    async with websockets.serve(stream, '0.0.0.0', 8765):
-        print("Server running and ready for connections.")
+    async with websockets.serve(stream_cam0, '0.0.0.0', VIDEO_PORT_1), \
+            websockets.serve(stream_cam1, '0.0.0.0', VIDEO_PORT_2):
+        print(f"Server running and ready for connections on ports {VIDEO_PORT_1} and {VIDEO_PORT_2}.")
         asyncio.create_task(mavlink_broadcast())
         await asyncio.Future()
 
