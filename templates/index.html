@@ -188,52 +188,10 @@
                 .catch(err => console.error('Failed to fetch status:', err));
         }
         
-        // Update status every 2 seconds
-        setInterval(updateStatusDots, 2000);
+        // Update status using configurable interval
+        const STATUS_UPDATE_INTERVAL = {{ status_update_interval_ms }};
+        setInterval(updateStatusDots, STATUS_UPDATE_INTERVAL);
         updateStatusDots(); // Initial update
-        
-        // ===== MAP MARKER UPDATE FUNCTION =====
-        function updateMapMarker() {
-            // Get the map iframe
-            const mapCard = document.querySelector('[data-card-id="map"]');
-            const iframe = mapCard?.querySelector('iframe');
-            if (!iframe) return;
-            
-            const mapWin = iframe.contentWindow;
-            if (!mapWin) return;
-            
-            // Check if we have telemetry data with valid GPS
-            if (!telemetryData || telemetryData.lat === 0 || telemetryData.lon === 0) {
-                return;
-            }
-            
-            const lat = telemetryData.lat;
-            const lon = telemetryData.lon;
-            const yaw = telemetryData.yaw || 0;
-            
-            // Update marker using the exposed function in the iframe
-            try {
-                if (typeof mapWin.updateSentryMarker === 'function') {
-                    mapWin.updateSentryMarker(lat, lon, yaw);
-                    console.log(`[Map] Updated marker: lat=${lat.toFixed(6)}, lon=${lon.toFixed(6)}, yaw=${yaw.toFixed(1)}°`);
-                } else {
-                    // Fallback: try to find the marker element directly
-                    const doc = iframe.contentDocument || mapWin.document;
-                    if (doc) {
-                        const markerIcon = doc.querySelector('.sentry-marker-icon');
-                        if (markerIcon) {
-                            markerIcon.style.transform = `translate(-50%, -50%) rotate(${yaw}deg)`;
-                            console.log(`[Map] Updated marker rotation: yaw=${yaw.toFixed(1)}°`);
-                        }
-                    }
-                }
-            } catch (e) {
-                console.error('Failed to update map marker:', e);
-            }
-        }
-        
-        // Update map marker every 5 seconds
-        setInterval(updateMapMarker, 5000);
         
         const updateMapControls = () => {
             const mapCard = document.querySelector('[data-card-id="map"]');

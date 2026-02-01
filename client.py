@@ -13,6 +13,10 @@ import secrets
 import time
 import json
 
+# ===== Configuration Variables =====
+STATUS_UPDATE_INTERVAL_MS = 2000   # How often to poll connection status (milliseconds)
+STATUS_TIMEOUT = 3.0               # Seconds before marking a connection as offline
+
 # Legacy UDP socket (for backward compatibility)
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind(('', 5000))
@@ -23,7 +27,6 @@ frame_cam0 = None
 frame_cam1 = None
 
 # Connection status tracking
-STATUS_TIMEOUT = 3.0  # Seconds before marking a connection as offline
 last_cam0_time = 0
 last_cam1_time = 0
 last_mav_time = 0
@@ -278,12 +281,11 @@ def api_status():
         'hq_online': hq_online
     })
 
-@app.route('/')
-def index():
-    # Generate map
+def generate_map_html():
+    """Generate map HTML with current telemetry data."""
     geojson_data, bounds = load_geodata()
-    GPS_Location = [mavlink_data['lat'] if mavlink_data['lat'] != 0 else 53.406049,#18.3002,
-                    mavlink_data['lon'] if mavlink_data['lon'] != 0 else -2.968585]#-64.8252]
+    GPS_Location = [mavlink_data['lat'] if mavlink_data['lat'] != 0 else 53.406049,
+                    mavlink_data['lon'] if mavlink_data['lon'] != 0 else -2.968585]
     yaw = mavlink_data['yaw']
     
     m = folium.Map(
@@ -395,6 +397,10 @@ def index():
     """
     m.get_root().html.add_child(folium.Element(reset_button))
     
+    return m._repr_html_()
+
+@app.route('/')
+def index():
     update_connection_status()  # Update status before rendering
     return render_template(
         'index.html',
@@ -403,7 +409,8 @@ def index():
         cam1_online=cam1_online,
         hq_online=hq_online,
         map_online=get_map_online(),
-        map_html=m._repr_html_()
+        map_html=generate_map_html(),
+        status_update_interval_ms=STATUS_UPDATE_INTERVAL_MS
     )
 
 @app.route('/video_feed_cam0')
