@@ -82,10 +82,18 @@
             const apply = () => {
                 const doc = iframe.contentDocument || iframe.contentWindow?.document;
                 if (!doc) return;
-                const hide = !mapCard.classList.contains('expanded');
-                doc.querySelectorAll('.leaflet-control, #reset-btn').forEach(el => {
-                    el.style.display = hide ? 'none' : '';
+                const isExpanded = mapCard.classList.contains('expanded');
+                
+                // Hide leaflet controls when not expanded
+                doc.querySelectorAll('.leaflet-control').forEach(el => {
+                    el.style.display = isExpanded ? '' : 'none';
                 });
+                
+                // Show/hide reset button
+                const resetBtn = doc.getElementById('reset-btn');
+                if (resetBtn) {
+                    resetBtn.style.display = isExpanded ? 'block' : 'none';
+                }
             };
 
             if (iframe.contentDocument?.readyState === 'complete') {

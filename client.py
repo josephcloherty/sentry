@@ -1,5 +1,5 @@
 import asyncio, cv2, numpy as np, websockets
-from flask import Flask, render_template, Response
+from flask import Flask, render_template, Response, jsonify
 from threading import Thread
 import socket
 from compass import draw_compass
@@ -142,6 +142,10 @@ def gen_frames_cam1():
         ret, jpeg = cv2.imencode('.jpg', f, [cv2.IMWRITE_JPEG_QUALITY, 90])
         yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + jpeg.tobytes() + b'\r\n')
 
+@app.route('/telemetry')
+def telemetry():
+    return jsonify(mavlink_data)
+
 @app.route('/')
 def index():
     # Generate map
@@ -174,7 +178,6 @@ def index():
             width: 50px;
             height: 50px;
             transform: translate(-50%, -50%) rotate({yaw}deg);
-            transform-origin: center center;
         ">
             <img src="/images/sentry_icon_white.png" style="width: 50px; height: 50px; display: block;" />
         </div>
@@ -190,7 +193,7 @@ def index():
     if bounds is not None:
         bounds_js = f"[[{bounds[1]}, {bounds[0]}], [{bounds[3]}, {bounds[2]}]]"
     reset_button = f"""
-    <div id="reset-btn" style="position: fixed; top: 80px; right: 10px; z-index: 1000;">
+    <div id="reset-btn" style="position: fixed; top: 15px; right: 15px; z-index: 1000; display: none;">
         <button onclick="resetView()" style="
             padding: 10px 15px;
             background: white;
