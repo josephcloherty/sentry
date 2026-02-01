@@ -14,8 +14,8 @@ import time
 import json
 
 # ===== Configuration Variables =====
-MAP_UPDATE_INTERVAL_MS = 5000      # How often to regenerate map (milliseconds)
-STATUS_UPDATE_INTERVAL_MS = 2000   # How often to poll connection status (milliseconds)
+MAP_UPDATE_INTERVAL_MS = 1000      # How often to regenerate map (milliseconds)
+STATUS_UPDATE_INTERVAL_MS = 50000   # How often to poll connection status (milliseconds)
 STATUS_TIMEOUT = 3.0               # Seconds before marking a connection as offline
 
 # Legacy UDP socket (for backward compatibility)
