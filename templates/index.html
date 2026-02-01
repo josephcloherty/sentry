@@ -4,10 +4,39 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Argus Dynamics - SENTRY Dashboard</title>
-    <link rel="icon" type="image/x-icon" href="/images/Argus_Light.ico" >
+    <link rel="icon" type="image/x-icon" href="/images/Argus_Light.ico" media="(prefers-color-scheme: light)">
+    <link rel="icon" type="image/x-icon" href="/images/Argus_Dark.ico" media="(prefers-color-scheme: dark)">
     <link rel="stylesheet" href="/styles/index.css">
 </head>
 <body>
+    <!-- Login Modal -->
+    <div id="loginModal" class="login-modal hidden">
+        <div class="login-container">
+            <div class="login-header">
+                <div class="login-logo-container">
+                    <img src="images/Argus_Light.png" alt="Argus Dynamics Logo" class="login-logo">
+                </div>
+                <h1>SENTRY UAS Dashboard</h1>
+                <p>Please log in to continue</p>
+            </div>
+            <form id="loginForm" class="login-form">
+                <div class="form-group">
+                    <label for="username">Username</label>
+                    <input type="text" id="username" name="username" placeholder="Enter username" required>
+                </div>
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" name="password" placeholder="Enter password" required>
+                </div>
+                <div class="form-group checkbox">
+                    <input type="checkbox" id="rememberMe" name="rememberMe">
+                    <label for="rememberMe">Remember me</label>
+                </div>
+                <button type="submit" class="login-button">Sign In</button>
+                <div id="loginError" class="login-error hidden"></div>
+            </form>
+        </div>
+    </div>
     <div id="banner">
         <div class="banner-left">
             <img src="images/Argus_Dark.png" alt="Argus Dynamics Logo">
@@ -19,6 +48,9 @@
                 <span>System Status</span>
             </div>
             <div id="banner-slot"></div>
+            <button id="logoutBtn" class="logout-button">
+                <img src="images/logout_white.png" alt="Logout" class="logout-logo">
+            </button>
         </div>
     </div>
 
@@ -74,6 +106,52 @@
 
     <script>
         const bannerSlot = document.getElementById('banner-slot');
+        
+        // ===== TELEMETRY WEBSOCKET CONNECTION =====
+        let telemetryData = {};
+        let telemetryLatencyMs = 0;
+        
+        function connectTelemetryWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const telemetryWs = new WebSocket(`${protocol}//${window.location.hostname}:8764`);
+            
+            telemetryWs.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    telemetryData = data;
+                    
+                    // Calculate round-trip latency (including server-side latency)
+                    const clientTime = Date.now() / 1000;
+                    const serverTime = data.timestamp;
+                    const roundTripLatency = (clientTime - serverTime) * 1000;
+                    telemetryLatencyMs = roundTripLatency + (data.server_latency_ms || 0);
+                    
+                    // Log latency periodically
+                    if (Math.random() < 0.01) { // 1% of messages
+                        console.log(`[Telemetry] Latency: ${telemetryLatencyMs.toFixed(1)}ms (client: ${roundTripLatency.toFixed(1)}ms + server: ${(data.server_latency_ms || 0).toFixed(1)}ms)`);
+                    }
+                } catch (e) {
+                    console.error('Failed to parse telemetry data:', e);
+                }
+            };
+            
+            telemetryWs.onerror = (error) => {
+                console.error('Telemetry WebSocket error:', error);
+            };
+            
+            telemetryWs.onopen = () => {
+                console.log('Telemetry WebSocket connected');
+            };
+            
+            telemetryWs.onclose = () => {
+                console.warn('Telemetry WebSocket disconnected, attempting to reconnect in 2 seconds...');
+                setTimeout(connectTelemetryWebSocket, 2000);
+            };
+        }
+        
+        // Connect to telemetry WebSocket
+        connectTelemetryWebSocket();
+        
         const updateMapControls = () => {
             const mapCard = document.querySelector('[data-card-id="map"]');
             const iframe = mapCard?.querySelector('iframe');
@@ -171,6 +249,113 @@
 
         // Initial setup for map controls
         updateMapControls();
+
+        // ===== LOGIN SYSTEM =====
+        const loginModal = document.getElementById('loginModal');
+        const loginForm = document.getElementById('loginForm');
+        const loginError = document.getElementById('loginError');
+        const logoutBtn = document.getElementById('logoutBtn');
+        const usernameInput = document.getElementById('username');
+        const passwordInput = document.getElementById('password');
+        const rememberMeCheckbox = document.getElementById('rememberMe');
+
+        // Check if user is already logged in
+        function initializeLogin() {
+            const cachedToken = localStorage.getItem('sentryToken');
+            const cachedUsername = localStorage.getItem('sentryUsername');
+            
+            if (cachedToken && cachedUsername) {
+                // User is already logged in
+                hideLoginModal();
+            } else {
+                // User needs to log in
+                showLoginModal();
+            }
+        }
+
+        function showLoginModal() {
+            loginModal.classList.remove('hidden');
+            document.body.style.overflow = 'hidden';
+            usernameInput.focus();
+        }
+
+        function hideLoginModal() {
+            loginModal.classList.add('hidden');
+            document.body.style.overflow = 'auto';
+        }
+
+        // Handle login form submission
+        loginForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const username = usernameInput.value.trim();
+            const password = passwordInput.value.trim();
+            const rememberMe = rememberMeCheckbox.checked;
+
+            try {
+                const response = await fetch('/api/authenticate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ username, password })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    // Store credentials if remember me is checked
+                    if (rememberMe) {
+                        localStorage.setItem('sentryToken', data.token);
+                        localStorage.setItem('sentryUsername', username);
+                    }
+                    
+                    // Clear form
+                    loginForm.reset();
+                    loginError.classList.add('hidden');
+                    
+                    // Hide login modal
+                    hideLoginModal();
+                } else {
+                    // Show error message
+                    loginError.textContent = data.message || 'Invalid username or password';
+                    loginError.classList.remove('hidden');
+                    passwordInput.value = '';
+                    passwordInput.focus();
+                }
+            } catch (error) {
+                loginError.textContent = 'An error occurred. Please try again.';
+                loginError.classList.remove('hidden');
+                console.error('Login error:', error);
+            }
+        });
+
+        // Handle logout
+        logoutBtn.addEventListener('click', async () => {
+            try {
+                await fetch('/api/logout', { method: 'POST' });
+            } catch (error) {
+                console.error('Logout error:', error);
+            }
+            
+            // Clear stored credentials
+            localStorage.removeItem('sentryToken');
+            localStorage.removeItem('sentryUsername');
+            
+            // Show login modal
+            loginForm.reset();
+            showLoginModal();
+        });
+
+        // Initialize login on page load
+        document.addEventListener('DOMContentLoaded', initializeLogin);
+        
+        // Also run immediately in case DOM is already loaded
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initializeLogin);
+        } else {
+            initializeLogin();
+        }
     </script>
 </body>
 </html>
