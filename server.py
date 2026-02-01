@@ -5,6 +5,7 @@ from pymavlink import mavutil
 import math
 import json
 import time
+import struct
 
 # ===== Configuration Variables =====
 VIDEO_FPS = 15  
@@ -37,7 +38,9 @@ async def stream_cam0(ws):
     while True:
         frame = cam0.capture_array()
         ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
-        await ws.send(buffer.tobytes())
+        # Embed timestamp for latency measurement: 8-byte double + JPEG data
+        timestamp_bytes = struct.pack('d', time.time())
+        await ws.send(timestamp_bytes + buffer.tobytes())
         await asyncio.sleep(1.0 / VIDEO_FPS)
 
 async def stream_cam1(ws):
@@ -46,7 +49,9 @@ async def stream_cam1(ws):
         frame = cam1.capture_array()
         mono_frame = frame[0:VIDEO_HEIGHT, 0:VIDEO_WIDTH] 
         ret, buffer = cv2.imencode('.jpg', mono_frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
-        await ws.send(buffer.tobytes())
+        # Embed timestamp for latency measurement: 8-byte double + JPEG data
+        timestamp_bytes = struct.pack('d', time.time())
+        await ws.send(timestamp_bytes + buffer.tobytes())
         await asyncio.sleep(1.0 / VIDEO_FPS)
 
 # Global storage for latest MAVLink data (shared between WebSocket and UDP)

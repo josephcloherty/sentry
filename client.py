@@ -12,6 +12,7 @@ import folium
 import secrets
 import time
 import json
+import struct
 
 # ===== Configuration Variables =====
 STATUS_UPDATE_INTERVAL_MS = 2000   # How often to poll connection status (milliseconds)
@@ -30,6 +31,12 @@ frame_cam1 = None
 last_cam0_time = 0
 last_cam1_time = 0
 last_mav_time = 0
+
+# Video latency tracking (end-to-end: capture -> network -> client receive)
+video_latency_cam0_ms = 0
+video_latency_cam1_ms = 0
+cam0_frame_timestamp = 0  # Server-side capture timestamp for cam0
+cam1_frame_timestamp = 0  # Server-side capture timestamp for cam1
 
 # Status variables (updated automatically based on connection health)
 cam0_online = False
@@ -77,14 +84,23 @@ def load_geodata():
     return None, None
 
 async def receive_video_cam0():
-    global frame_cam0, last_cam0_time
+    global frame_cam0, last_cam0_time, video_latency_cam0_ms, cam0_frame_timestamp
     while True:
         try:
             async with websockets.connect('ws://100.112.223.17:8765') as ws:
                 print("Connected to video server (cam0).")
                 while True:
                     data = await ws.recv()
-                    frame_cam0 = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+                    receive_time = time.time()
+                    # Extract timestamp (first 8 bytes) and JPEG data
+                    if len(data) > 8:
+                        cam0_frame_timestamp = struct.unpack('d', data[:8])[0]
+                        jpeg_data = data[8:]
+                        # Calculate network latency (server capture to client receive)
+                        video_latency_cam0_ms = (receive_time - cam0_frame_timestamp) * 1000
+                    else:
+                        jpeg_data = data
+                    frame_cam0 = cv2.imdecode(np.frombuffer(jpeg_data, np.uint8), cv2.IMREAD_COLOR)
                     last_cam0_time = time.time()  # Update timestamp on successful receive
         except websockets.exceptions.ConnectionClosed:
             print("Camera 0 WebSocket disconnected, reconnecting in 2 seconds...")
@@ -94,14 +110,23 @@ async def receive_video_cam0():
             await asyncio.sleep(2)
 
 async def receive_video_cam1():
-    global frame_cam1, last_cam1_time
+    global frame_cam1, last_cam1_time, video_latency_cam1_ms, cam1_frame_timestamp
     while True:
         try:
             async with websockets.connect('ws://100.112.223.17:8766') as ws:
                 print("Connected to video server (cam1).")
                 while True:
                     data = await ws.recv()
-                    frame_cam1 = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+                    receive_time = time.time()
+                    # Extract timestamp (first 8 bytes) and JPEG data
+                    if len(data) > 8:
+                        cam1_frame_timestamp = struct.unpack('d', data[:8])[0]
+                        jpeg_data = data[8:]
+                        # Calculate network latency (server capture to client receive)
+                        video_latency_cam1_ms = (receive_time - cam1_frame_timestamp) * 1000
+                    else:
+                        jpeg_data = data
+                    frame_cam1 = cv2.imdecode(np.frombuffer(jpeg_data, np.uint8), cv2.IMREAD_COLOR)
                     last_cam1_time = time.time()  # Update timestamp on successful receive
         except websockets.exceptions.ConnectionClosed:
             print("Camera 1 WebSocket disconnected, reconnecting in 2 seconds...")
@@ -267,6 +292,25 @@ def telemetry():
     telemetry_with_latency = mavlink_data.copy()
     telemetry_with_latency['client_latency_ms'] = telemetry_latency_ms
     return jsonify(telemetry_with_latency)
+
+@app.route('/api/video_latency')
+def api_video_latency():
+    """Return current video latency measurements for both cameras.
+    
+    This measures end-to-end latency from:
+    - Server: Frame capture timestamp embedded in stream
+    - Client: Frame receive time (network latency)
+    - The frontend adds its own render timing to complete the measurement
+    """
+    return jsonify({
+        'cam0_network_latency_ms': round(video_latency_cam0_ms, 2),
+        'cam1_network_latency_ms': round(video_latency_cam1_ms, 2),
+        'cam0_frame_timestamp': cam0_frame_timestamp,
+        'cam1_frame_timestamp': cam1_frame_timestamp,
+        'cam0_online': cam0_online,
+        'cam1_online': cam1_online,
+        'server_time': time.time()
+    })
 
 @app.route('/api/status')
 def api_status():
