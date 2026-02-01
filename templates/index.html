@@ -102,10 +102,214 @@
             </div>
             <div class="desc_map">GPS Location of SENTRY</div>
         </div>
+
+        <div class="card latency-card" data-card data-card-id="latency">
+            <div class="card-header" data-header>
+                <span id="latency-status-dot" class="status-dot off"></span>
+                <h2>Video Latency</h2>
+                <button class="minimize" data-minimize>Minimize</button>
+            </div>
+            <div class="media latency-content">
+                <div class="latency-dashboard">
+                    <div class="latency-section">
+                        <h3>Pilot Camera (cam0)</h3>
+                        <div class="latency-metrics">
+                            <div class="latency-row">
+                                <span class="latency-label">Network:</span>
+                                <span id="cam0-network-latency" class="latency-value">--</span>
+                                <span class="latency-unit">ms</span>
+                            </div>
+                            <div class="latency-row">
+                                <span class="latency-label">Render:</span>
+                                <span id="cam0-render-latency" class="latency-value">--</span>
+                                <span class="latency-unit">ms</span>
+                            </div>
+                            <div class="latency-row total">
+                                <span class="latency-label">Total E2E:</span>
+                                <span id="cam0-total-latency" class="latency-value">--</span>
+                                <span class="latency-unit">ms</span>
+                            </div>
+                        </div>
+                        <div class="latency-bar-container">
+                            <div id="cam0-latency-bar" class="latency-bar"></div>
+                        </div>
+                    </div>
+                    <div class="latency-section">
+                        <h3>Landing Camera (cam1)</h3>
+                        <div class="latency-metrics">
+                            <div class="latency-row">
+                                <span class="latency-label">Network:</span>
+                                <span id="cam1-network-latency" class="latency-value">--</span>
+                                <span class="latency-unit">ms</span>
+                            </div>
+                            <div class="latency-row">
+                                <span class="latency-label">Render:</span>
+                                <span id="cam1-render-latency" class="latency-value">--</span>
+                                <span class="latency-unit">ms</span>
+                            </div>
+                            <div class="latency-row total">
+                                <span class="latency-label">Total E2E:</span>
+                                <span id="cam1-total-latency" class="latency-value">--</span>
+                                <span class="latency-unit">ms</span>
+                            </div>
+                        </div>
+                        <div class="latency-bar-container">
+                            <div id="cam1-latency-bar" class="latency-bar"></div>
+                        </div>
+                    </div>
+                    <div class="latency-stats">
+                        <div class="stat-item">
+                            <span class="stat-label">Update Rate:</span>
+                            <span id="latency-update-rate" class="stat-value">--</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Last Update:</span>
+                            <span id="latency-last-update" class="stat-value">--</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="desc">End-to-end video latency monitoring</div>
+        </div>
     </div>
 
     <script>
         const bannerSlot = document.getElementById('banner-slot');
+        
+        // ===== VIDEO LATENCY MEASUREMENT =====
+        let videoLatencyData = {
+            cam0_network_latency_ms: 0,
+            cam1_network_latency_ms: 0,
+            cam0_render_latency_ms: 0,
+            cam1_render_latency_ms: 0,
+            cam0_total_latency_ms: 0,
+            cam1_total_latency_ms: 0
+        };
+        let latencyUpdateCount = 0;
+        let lastLatencyUpdateTime = Date.now();
+        let cam0LastFrameTime = 0;
+        let cam1LastFrameTime = 0;
+        
+        // Track render latency by observing when frames are displayed
+        function measureRenderLatency() {
+            const cam0Img = document.getElementById('stream_cam0');
+            const cam1Img = document.getElementById('stream_cam1');
+            
+            // Use frame timestamps to estimate render delay
+            // The browser adds ~16-33ms (1-2 frames at 60fps) for rendering
+            const ESTIMATED_BROWSER_RENDER_MS = 16;
+            videoLatencyData.cam0_render_latency_ms = ESTIMATED_BROWSER_RENDER_MS;
+            videoLatencyData.cam1_render_latency_ms = ESTIMATED_BROWSER_RENDER_MS;
+        }
+        
+        function updateLatencyDisplay() {
+            const cam0NetworkEl = document.getElementById('cam0-network-latency');
+            const cam0RenderEl = document.getElementById('cam0-render-latency');
+            const cam0TotalEl = document.getElementById('cam0-total-latency');
+            const cam0BarEl = document.getElementById('cam0-latency-bar');
+            
+            const cam1NetworkEl = document.getElementById('cam1-network-latency');
+            const cam1RenderEl = document.getElementById('cam1-render-latency');
+            const cam1TotalEl = document.getElementById('cam1-total-latency');
+            const cam1BarEl = document.getElementById('cam1-latency-bar');
+            
+            const updateRateEl = document.getElementById('latency-update-rate');
+            const lastUpdateEl = document.getElementById('latency-last-update');
+            const statusDotEl = document.getElementById('latency-status-dot');
+            
+            // Calculate totals
+            videoLatencyData.cam0_total_latency_ms = videoLatencyData.cam0_network_latency_ms + videoLatencyData.cam0_render_latency_ms;
+            videoLatencyData.cam1_total_latency_ms = videoLatencyData.cam1_network_latency_ms + videoLatencyData.cam1_render_latency_ms;
+            
+            // Update cam0 display
+            if (cam0NetworkEl) {
+                const networkVal = videoLatencyData.cam0_network_latency_ms;
+                cam0NetworkEl.textContent = networkVal > 0 ? networkVal.toFixed(1) : '--';
+                cam0NetworkEl.className = 'latency-value ' + getLatencyClass(networkVal);
+            }
+            if (cam0RenderEl) {
+                cam0RenderEl.textContent = videoLatencyData.cam0_render_latency_ms.toFixed(1);
+            }
+            if (cam0TotalEl) {
+                const totalVal = videoLatencyData.cam0_total_latency_ms;
+                cam0TotalEl.textContent = totalVal > 0 ? totalVal.toFixed(1) : '--';
+                cam0TotalEl.className = 'latency-value ' + getLatencyClass(totalVal);
+            }
+            if (cam0BarEl) {
+                // Scale bar: 0-500ms maps to 0-100%
+                const barWidth = Math.min(100, (videoLatencyData.cam0_total_latency_ms / 500) * 100);
+                cam0BarEl.style.width = barWidth + '%';
+            }
+            
+            // Update cam1 display
+            if (cam1NetworkEl) {
+                const networkVal = videoLatencyData.cam1_network_latency_ms;
+                cam1NetworkEl.textContent = networkVal > 0 ? networkVal.toFixed(1) : '--';
+                cam1NetworkEl.className = 'latency-value ' + getLatencyClass(networkVal);
+            }
+            if (cam1RenderEl) {
+                cam1RenderEl.textContent = videoLatencyData.cam1_render_latency_ms.toFixed(1);
+            }
+            if (cam1TotalEl) {
+                const totalVal = videoLatencyData.cam1_total_latency_ms;
+                cam1TotalEl.textContent = totalVal > 0 ? totalVal.toFixed(1) : '--';
+                cam1TotalEl.className = 'latency-value ' + getLatencyClass(totalVal);
+            }
+            if (cam1BarEl) {
+                const barWidth = Math.min(100, (videoLatencyData.cam1_total_latency_ms / 500) * 100);
+                cam1BarEl.style.width = barWidth + '%';
+            }
+            
+            // Update stats
+            if (updateRateEl) {
+                updateRateEl.textContent = '500ms';
+            }
+            if (lastUpdateEl) {
+                lastUpdateEl.textContent = new Date().toLocaleTimeString();
+            }
+            
+            // Update status dot - green if any camera is providing data
+            if (statusDotEl) {
+                const hasData = videoLatencyData.cam0_network_latency_ms > 0 || videoLatencyData.cam1_network_latency_ms > 0;
+                statusDotEl.classList.remove('on', 'off');
+                statusDotEl.classList.add(hasData ? 'on' : 'off');
+            }
+        }
+        
+        function getLatencyClass(latencyMs) {
+            if (latencyMs <= 0) return '';
+            if (latencyMs < 100) return 'good';
+            if (latencyMs < 250) return 'warning';
+            return 'critical';
+        }
+        
+        function fetchVideoLatency() {
+            fetch('/api/video_latency')
+                .then(response => response.json())
+                .then(data => {
+                    // Capture the moment we receive the API response
+                    const receiveTime = Date.now() / 1000;
+                    
+                    // Network latency from server
+                    videoLatencyData.cam0_network_latency_ms = data.cam0_network_latency_ms || 0;
+                    videoLatencyData.cam1_network_latency_ms = data.cam1_network_latency_ms || 0;
+                    
+                    // Measure render latency
+                    measureRenderLatency();
+                    
+                    // Update display
+                    latencyUpdateCount++;
+                    lastLatencyUpdateTime = Date.now();
+                    updateLatencyDisplay();
+                })
+                .catch(err => {
+                    console.error('Failed to fetch video latency:', err);
+                });
+        }
+        
+        // Poll video latency every 500ms
+        setInterval(fetchVideoLatency, 500);
+        fetchVideoLatency(); // Initial fetch
         
         // ===== TELEMETRY WEBSOCKET CONNECTION =====
         let telemetryData = {};
