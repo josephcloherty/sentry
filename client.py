@@ -21,14 +21,46 @@ sock.setblocking(False)
 app = Flask(__name__, static_folder='templates', static_url_path='')
 frame_cam0 = None
 frame_cam1 = None
-main_online = True
-cam0_online = True
-cam1_online = True
-mav_online = True
-hq_online = False
-map_online = True
+
+# Connection status tracking
+STATUS_TIMEOUT = 3.0  # Seconds before marking a connection as offline
+last_cam0_time = 0
+last_cam1_time = 0
+last_mav_time = 0
+
+# Status variables (updated automatically based on connection health)
+cam0_online = False
+cam1_online = False
+mav_online = False
+hq_online = False  # Not implemented yet
+
+# Derived status
+@property
+def main_online():
+    return cam0_online or cam1_online or mav_online
+
+@property
+def map_online():
+    return mav_online  # Map requires MAVLink GPS data
+
 mavlink_data = {"roll": 0, "pitch": 0, "yaw": 0, "lat": 0, "lon": 0, "alt": 0, "battery": 0, "battery_remaining": 0, "ground_speed": 0, "throttle": 0, "timestamp": 0, "server_latency_ms": 0}
 telemetry_latency_ms = 0  # Track round-trip latency
+
+def update_connection_status():
+    """Update connection status based on last received data timestamps."""
+    global cam0_online, cam1_online, mav_online
+    current_time = time.time()
+    cam0_online = (current_time - last_cam0_time) < STATUS_TIMEOUT if last_cam0_time > 0 else False
+    cam1_online = (current_time - last_cam1_time) < STATUS_TIMEOUT if last_cam1_time > 0 else False
+    mav_online = (current_time - last_mav_time) < STATUS_TIMEOUT if last_mav_time > 0 else False
+
+def get_main_online():
+    """Check if any system is online."""
+    return cam0_online or cam1_online or mav_online
+
+def get_map_online():
+    """Map is online when MAVLink data is available."""
+    return mav_online
 
 @lru_cache(maxsize=1)
 def load_geodata():
@@ -42,27 +74,45 @@ def load_geodata():
     return None, None
 
 async def receive_video_cam0():
-    global frame_cam0
-    async with websockets.connect('ws://100.112.223.17:8765') as ws:
-        print("Connected to video server (cam0).")
-        while True:
-            data = await ws.recv()
-            frame_cam0 = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+    global frame_cam0, last_cam0_time
+    while True:
+        try:
+            async with websockets.connect('ws://100.112.223.17:8765') as ws:
+                print("Connected to video server (cam0).")
+                while True:
+                    data = await ws.recv()
+                    frame_cam0 = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+                    last_cam0_time = time.time()  # Update timestamp on successful receive
+        except websockets.exceptions.ConnectionClosed:
+            print("Camera 0 WebSocket disconnected, reconnecting in 2 seconds...")
+            await asyncio.sleep(2)
+        except Exception as e:
+            print(f"Camera 0 error: {e}, reconnecting in 2 seconds...")
+            await asyncio.sleep(2)
 
 async def receive_video_cam1():
-    global frame_cam1
-    async with websockets.connect('ws://100.112.223.17:8766') as ws:
-        print("Connected to video server (cam1).")
-        while True:
-            data = await ws.recv()
-            frame_cam1 = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+    global frame_cam1, last_cam1_time
+    while True:
+        try:
+            async with websockets.connect('ws://100.112.223.17:8766') as ws:
+                print("Connected to video server (cam1).")
+                while True:
+                    data = await ws.recv()
+                    frame_cam1 = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+                    last_cam1_time = time.time()  # Update timestamp on successful receive
+        except websockets.exceptions.ConnectionClosed:
+            print("Camera 1 WebSocket disconnected, reconnecting in 2 seconds...")
+            await asyncio.sleep(2)
+        except Exception as e:
+            print(f"Camera 1 error: {e}, reconnecting in 2 seconds...")
+            await asyncio.sleep(2)
 
 async def receive_telemetry():
     """
     Connect to telemetry WebSocket and update mavlink_data in real-time.
     This replaces the old UDP polling method.
     """
-    global mavlink_data, telemetry_latency_ms
+    global mavlink_data, telemetry_latency_ms, last_mav_time
     while True:
         try:
             async with websockets.connect('ws://100.112.223.17:8764') as ws:
@@ -77,6 +127,7 @@ async def receive_telemetry():
                         telemetry_latency_ms = (current_time - server_time) * 1000
                         
                         mavlink_data = telemetry_msg
+                        last_mav_time = time.time()  # Update timestamp on successful receive
                     except json.JSONDecodeError:
                         print(f"Failed to parse telemetry JSON: {data}")
         except websockets.exceptions.ConnectionRefused:
@@ -88,7 +139,7 @@ async def receive_telemetry():
 
 def receive_mavlink():
     """Legacy UDP receiver for backward compatibility"""
-    global mavlink_data
+    global mavlink_data, last_mav_time
     while True:
         try:
             data, _ = sock.recvfrom(1024)
@@ -107,8 +158,15 @@ def receive_mavlink():
                 "timestamp": time.time(),
                 "server_latency_ms": 0
             }
+            last_mav_time = time.time()  # Update timestamp on successful receive
         except:
             pass
+
+def status_monitor():
+    """Background thread to update connection status every second."""
+    while True:
+        update_connection_status()
+        time.sleep(1)
 
 def gen_frames_cam0():
     colour = (255, 255, 255)
@@ -202,9 +260,23 @@ def logout():
 @app.route('/telemetry')
 def telemetry():
     """Return current telemetry data as JSON"""
+    update_connection_status()  # Update status before returning
     telemetry_with_latency = mavlink_data.copy()
     telemetry_with_latency['client_latency_ms'] = telemetry_latency_ms
     return jsonify(telemetry_with_latency)
+
+@app.route('/api/status')
+def api_status():
+    """Return current connection status for all systems."""
+    update_connection_status()  # Update status before returning
+    return jsonify({
+        'main_online': get_main_online(),
+        'cam0_online': cam0_online,
+        'cam1_online': cam1_online,
+        'mav_online': mav_online,
+        'map_online': get_map_online(),
+        'hq_online': hq_online
+    })
 
 @app.route('/')
 def index():
@@ -231,10 +303,11 @@ def index():
         m.fit_bounds([[bounds[1], bounds[0]], [bounds[3], bounds[2]]])
     
     # Add icon at GPS location (centered and rotated)
+    # Use a unique class name for JavaScript access
     icon_path = Path(__file__).parent / 'templates' / 'images' / 'sentry_icon_white.png'
     if icon_path.exists():
         icon_html = f'''
-        <div style="
+        <div class="sentry-marker-icon" style="
             width: 50px;
             height: 50px;
             transform: translate(-50%, -50%) rotate({yaw}deg);
@@ -242,12 +315,13 @@ def index():
             <img src="/images/sentry_icon_white.png" style="width: 50px; height: 50px; display: block;" />
         </div>
         '''
-        folium.Marker(
+        marker = folium.Marker(
             location=GPS_Location,
-            icon=folium.DivIcon(html=icon_html)
-        ).add_to(m)
+            icon=folium.DivIcon(html=icon_html, class_name='sentry-marker-container')
+        )
+        marker.add_to(m)
     
-    # Add reset button
+    # Add reset button and marker update functionality
     map_id = m.get_name()
     bounds_js = "null"
     if bounds is not None:
@@ -268,6 +342,35 @@ def index():
         var __defaultCenter = [{GPS_Location[0]}, {GPS_Location[1]}];
         var __defaultZoom = 20;
         var __bounds = {bounds_js};
+        var __sentryMarker = null;
+        var __mapObj = null;
+
+        // Find and store the marker reference on load
+        document.addEventListener('DOMContentLoaded', function() {{
+            __mapObj = window['{map_id}'];
+            if (__mapObj) {{
+                // Find all markers and get the sentry marker
+                __mapObj.eachLayer(function(layer) {{
+                    if (layer instanceof L.Marker) {{
+                        __sentryMarker = layer;
+                    }}
+                }});
+            }}
+        }});
+
+        // Update marker position and rotation
+        window.updateSentryMarker = function(lat, lon, yaw) {{
+            if (__sentryMarker && __mapObj) {{
+                // Update position
+                __sentryMarker.setLatLng([lat, lon]);
+                
+                // Update rotation
+                var iconDiv = document.querySelector('.sentry-marker-icon');
+                if (iconDiv) {{
+                    iconDiv.style.transform = 'translate(-50%, -50%) rotate(' + yaw + 'deg)';
+                }}
+            }}
+        }};
 
         window.resetView = function() {{
             var mapObj = window['{map_id}'];
@@ -292,13 +395,14 @@ def index():
     """
     m.get_root().html.add_child(folium.Element(reset_button))
     
+    update_connection_status()  # Update status before rendering
     return render_template(
         'index.html',
-        main_online=main_online,
+        main_online=get_main_online(),
         cam0_online=cam0_online,
         cam1_online=cam1_online,
         hq_online=hq_online,
-        map_online=map_online,
+        map_online=get_map_online(),
         map_html=m._repr_html_()
     )
 
@@ -315,4 +419,6 @@ Thread(target=lambda: asyncio.run(receive_video_cam1()), daemon=True).start()
 Thread(target=lambda: asyncio.run(receive_telemetry()), daemon=True).start()
 # Legacy UDP receiver (optional, for backward compatibility)
 Thread(target=receive_mavlink, daemon=True).start()
+# Status monitor thread
+Thread(target=status_monitor, daemon=True).start()
 app.run(port=8000, threaded=True)
