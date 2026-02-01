@@ -5,6 +5,10 @@ import socket
 from compass import draw_compass
 from attitude import draw_attitude_indicator
 from battery import draw_battery_widget
+from functools import lru_cache
+from pathlib import Path
+import geopandas as gpd
+import folium
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind(('', 5000))
@@ -17,7 +21,19 @@ main_online = True
 cam0_online = True
 cam1_online = True
 hq_online = False
+map_online = True
 mavlink_data = {"roll": 0, "pitch": 0, "yaw": 0, "lat": 0, "lon": 0, "alt": 0, "battery": 0, "battery_remaining": 0, "ground_speed": 0, "throttle": 0}
+
+@lru_cache(maxsize=1)
+def load_geodata():
+    gpkg_path = Path(__file__).parent / 'map' / 'NorthWest_Railways.gpkg'
+    if gpkg_path.exists():
+        gdf = gpd.read_file(gpkg_path)
+        gdf['geometry'] = gdf['geometry'].simplify(tolerance=0.001, preserve_topology=True)
+        if gdf.crs and gdf.crs.to_epsg() != 4326:
+            gdf = gdf.to_crs(epsg=4326)
+        return gdf.__geo_interface__, gdf.total_bounds
+    return None, None
 
 async def receive_video_cam0():
     global frame_cam0
@@ -128,12 +144,99 @@ def gen_frames_cam1():
 
 @app.route('/')
 def index():
+    # Generate map
+    geojson_data, bounds = load_geodata()
+    GPS_Location = [mavlink_data['lat'] if mavlink_data['lat'] != 0 else 53.406049,#18.3002,
+                    mavlink_data['lon'] if mavlink_data['lon'] != 0 else -2.968585]#-64.8252]
+    yaw = mavlink_data['yaw']
+    
+    m = folium.Map(
+        location=GPS_Location,
+        zoom_start=20,
+        tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        attr='Esri'
+    )
+    
+    if geojson_data:
+        folium.GeoJson(
+            geojson_data,
+            style_function=lambda x: {'color': '#0066cc', 'weight': 2}
+        ).add_to(m)
+
+    if bounds is not None:
+        m.fit_bounds([[bounds[1], bounds[0]], [bounds[3], bounds[2]]])
+    
+    # Add icon at GPS location (centered and rotated)
+    icon_path = Path(__file__).parent / 'templates' / 'images' / 'sentry_icon_white.png'
+    if icon_path.exists():
+        icon_html = f'''
+        <div style="
+            width: 50px;
+            height: 50px;
+            transform: translate(-50%, -50%) rotate({yaw}deg);
+            transform-origin: center center;
+        ">
+            <img src="/images/sentry_icon_white.png" style="width: 50px; height: 50px; display: block;" />
+        </div>
+        '''
+        folium.Marker(
+            location=GPS_Location,
+            icon=folium.DivIcon(html=icon_html)
+        ).add_to(m)
+    
+    # Add reset button
+    map_id = m.get_name()
+    bounds_js = "null"
+    if bounds is not None:
+        bounds_js = f"[[{bounds[1]}, {bounds[0]}], [{bounds[3]}, {bounds[2]}]]"
+    reset_button = f"""
+    <div id="reset-btn" style="position: fixed; top: 80px; right: 10px; z-index: 1000;">
+        <button onclick="resetView()" style="
+            padding: 10px 15px;
+            background: white;
+            border: 2px solid rgba(0,0,0,0.2);
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            box-shadow: 0 1px 5px rgba(0,0,0,0.4);
+        ">Reset View</button>
+    </div>
+    <script>
+        var __defaultCenter = [{GPS_Location[0]}, {GPS_Location[1]}];
+        var __defaultZoom = 20;
+        var __bounds = {bounds_js};
+
+        window.resetView = function() {{
+            var mapObj = window['{map_id}'];
+            if (mapObj) {{
+                mapObj.setView(__defaultCenter, __defaultZoom);
+                mapObj.invalidateSize();
+            }}
+        }};
+
+        window.fitBoundsView = function() {{
+            var mapObj = window['{map_id}'];
+            if (mapObj) {{
+                if (__bounds) {{
+                    mapObj.fitBounds(__bounds);
+                }} else {{
+                    mapObj.setView(__defaultCenter, __defaultZoom);
+                }}
+                mapObj.invalidateSize();
+            }}
+        }};
+    </script>
+    """
+    m.get_root().html.add_child(folium.Element(reset_button))
+    
     return render_template(
         'index.html',
         main_online=main_online,
         cam0_online=cam0_online,
         cam1_online=cam1_online,
         hq_online=hq_online,
+        map_online=map_online,
+        map_html=m._repr_html_()
     )
 
 @app.route('/video_feed_cam0')

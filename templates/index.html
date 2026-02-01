@@ -4,12 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Argus Dynamics - SENTRY Dashboard</title>
+    <link rel="icon" type="image/x-icon" href="/images/Argus_Light.ico" >
     <link rel="stylesheet" href="/styles/index.css">
 </head>
 <body>
     <div id="banner">
         <div class="banner-left">
-            <img src="/images/Argus_Dark.png" alt="Argus Dynamics Logo">
+            <img src="images/Argus_Dark.png" alt="Argus Dynamics Logo">
             <h1>SENTRY UAS Dashboard</h1>
         </div>
         <div class="banner-right">
@@ -58,26 +59,76 @@
             <div class="desc">High Quality camera for detailed imaging (Gimbal)</div>
         </div>
 
-        <div class="card" data-card data-card-id="hq">
+        <div class="card" data-card data-card-id="map">
             <div class="card-header" data-header>
-                <span class="status-dot {{ 'on' if hq_online else 'off' }}"></span>
-                <h2>High Quality Camera</h2>
+                <span class="status-dot {{ 'on' if map_online else 'off' }}"></span>
+                <h2>GPS Map</h2>
                 <button class="minimize" data-minimize>Minimize</button>
             </div>
-            <div class="media empty">
-                <div class="placeholder">EMPTY</div>
+            <div class="media_map">
+                <div class="map-container">{{ map_html|safe }}</div>
             </div>
-            <div class="desc">High Quality camera for detailed imaging (Gimbal)</div>
+            <div class="desc_map">GPS Location of SENTRY</div>
         </div>
     </div>
 
     <script>
         const bannerSlot = document.getElementById('banner-slot');
+        const updateMapControls = () => {
+            const mapCard = document.querySelector('[data-card-id="map"]');
+            const iframe = mapCard?.querySelector('iframe');
+            if (!mapCard || !iframe) return;
+
+            const apply = () => {
+                const doc = iframe.contentDocument || iframe.contentWindow?.document;
+                if (!doc) return;
+                const hide = !mapCard.classList.contains('expanded');
+                doc.querySelectorAll('.leaflet-control, #reset-btn').forEach(el => {
+                    el.style.display = hide ? 'none' : '';
+                });
+            };
+
+            if (iframe.contentDocument?.readyState === 'complete') {
+                apply();
+            } else {
+                iframe.addEventListener('load', apply, { once: true });
+            }
+        };
+
+        const fitMapToBounds = () => {
+            const mapCard = document.querySelector('[data-card-id="map"]');
+            const iframe = mapCard?.querySelector('iframe');
+            const mapWin = iframe?.contentWindow;
+            if (!mapWin) return;
+
+            const doFit = () => mapWin.fitBoundsView?.();
+            if (iframe?.contentDocument?.readyState === 'complete') {
+                setTimeout(doFit, 0);
+            } else {
+                iframe?.addEventListener('load', () => setTimeout(doFit, 0), { once: true });
+            }
+        };
+
+        const resetMapView = () => {
+            const mapCard = document.querySelector('[data-card-id="map"]');
+            const iframe = mapCard?.querySelector('iframe');
+            const mapWin = iframe?.contentWindow;
+            if (!mapWin) return;
+
+            const doReset = () => mapWin.resetView?.();
+            if (iframe?.contentDocument?.readyState === 'complete') {
+                setTimeout(doReset, 0);
+            } else {
+                iframe?.addEventListener('load', () => setTimeout(doReset, 0), { once: true });
+            }
+        };
+
         const clearExpanded = () => {
             bannerSlot.innerHTML = '';
             document.querySelectorAll('.card.expanded').forEach(c => c.classList.remove('expanded'));
             document.body.classList.remove('expanded');
             document.exitFullscreen?.().catch(() => {});
+            updateMapControls();
         };
 
         // Handle minimize button clicks first with capturing phase
@@ -101,6 +152,7 @@
                     headerClone.classList.add('in-banner');
                     bannerSlot.appendChild(headerClone);
                     document.documentElement.requestFullscreen?.().catch(() => {});
+                    updateMapControls();
                 }
             });
         });
@@ -108,6 +160,9 @@
             e.stopPropagation();
             location.reload();
         });
+
+        // Initial setup for map controls
+        updateMapControls();
     </script>
 </body>
 </html>
