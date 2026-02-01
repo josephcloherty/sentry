@@ -44,7 +44,7 @@
         </div>
         <div class="banner-right">
             <div class="main-status">
-                <span class="status-dot {{ 'on' if main_online else 'off' }}"></span>
+                <span id="main-status-dot" class="status-dot {{ 'on' if main_online else 'off' }}"></span>
                 <span>System Status</span>
             </div>
             <div id="banner-slot"></div>
@@ -57,7 +57,7 @@
     <div class="grid">
         <div class="card" data-card data-card-id="cam0">
             <div class="card-header" data-header>
-                <span class="status-dot {{ 'on' if cam0_online else 'off' }}"></span>
+                <span id="cam0-status-dot" class="status-dot {{ 'on' if cam0_online else 'off' }}"></span>
                 <h2>Pilot Camera</h2>
                 <button class="minimize" data-minimize>Minimize</button>
             </div>
@@ -69,7 +69,7 @@
 
         <div class="card" data-card data-card-id="cam1">
             <div class="card-header" data-header>
-                <span class="status-dot {{ 'on' if cam1_online else 'off' }}"></span>
+                <span id="cam1-status-dot" class="status-dot {{ 'on' if cam1_online else 'off' }}"></span>
                 <h2>Landing Camera</h2>
                 <button class="minimize" data-minimize>Minimize</button>
             </div>
@@ -81,7 +81,7 @@
 
         <div class="card" data-card data-card-id="hq">
             <div class="card-header" data-header>
-                <span class="status-dot {{ 'on' if hq_online else 'off' }}"></span>
+                <span id="hq-status-dot" class="status-dot {{ 'on' if hq_online else 'off' }}"></span>
                 <h2>High Quality Camera</h2>
                 <button class="minimize" data-minimize>Minimize</button>
             </div>
@@ -93,7 +93,7 @@
 
         <div class="card" data-card data-card-id="map">
             <div class="card-header" data-header>
-                <span class="status-dot {{ 'on' if map_online else 'off' }}"></span>
+                <span id="map-status-dot" class="status-dot {{ 'on' if map_online else 'off' }}"></span>
                 <h2>GPS Map</h2>
                 <button class="minimize" data-minimize>Minimize</button>
             </div>
@@ -151,6 +151,89 @@
         
         // Connect to telemetry WebSocket
         connectTelemetryWebSocket();
+        
+        // ===== STATUS UPDATE FUNCTION =====
+        function updateStatusDots() {
+            fetch('/api/status')
+                .then(response => response.json())
+                .then(status => {
+                    // Update all status dots
+                    const mainDot = document.getElementById('main-status-dot');
+                    const cam0Dot = document.getElementById('cam0-status-dot');
+                    const cam1Dot = document.getElementById('cam1-status-dot');
+                    const hqDot = document.getElementById('hq-status-dot');
+                    const mapDot = document.getElementById('map-status-dot');
+                    
+                    if (mainDot) {
+                        mainDot.classList.remove('on', 'off');
+                        mainDot.classList.add(status.main_online ? 'on' : 'off');
+                    }
+                    if (cam0Dot) {
+                        cam0Dot.classList.remove('on', 'off');
+                        cam0Dot.classList.add(status.cam0_online ? 'on' : 'off');
+                    }
+                    if (cam1Dot) {
+                        cam1Dot.classList.remove('on', 'off');
+                        cam1Dot.classList.add(status.cam1_online ? 'on' : 'off');
+                    }
+                    if (hqDot) {
+                        hqDot.classList.remove('on', 'off');
+                        hqDot.classList.add(status.hq_online ? 'on' : 'off');
+                    }
+                    if (mapDot) {
+                        mapDot.classList.remove('on', 'off');
+                        mapDot.classList.add(status.map_online ? 'on' : 'off');
+                    }
+                })
+                .catch(err => console.error('Failed to fetch status:', err));
+        }
+        
+        // Update status every 2 seconds
+        setInterval(updateStatusDots, 2000);
+        updateStatusDots(); // Initial update
+        
+        // ===== MAP MARKER UPDATE FUNCTION =====
+        function updateMapMarker() {
+            // Get the map iframe
+            const mapCard = document.querySelector('[data-card-id="map"]');
+            const iframe = mapCard?.querySelector('iframe');
+            if (!iframe) return;
+            
+            const mapWin = iframe.contentWindow;
+            if (!mapWin) return;
+            
+            // Check if we have telemetry data with valid GPS
+            if (!telemetryData || telemetryData.lat === 0 || telemetryData.lon === 0) {
+                return;
+            }
+            
+            const lat = telemetryData.lat;
+            const lon = telemetryData.lon;
+            const yaw = telemetryData.yaw || 0;
+            
+            // Update marker using the exposed function in the iframe
+            try {
+                if (typeof mapWin.updateSentryMarker === 'function') {
+                    mapWin.updateSentryMarker(lat, lon, yaw);
+                    console.log(`[Map] Updated marker: lat=${lat.toFixed(6)}, lon=${lon.toFixed(6)}, yaw=${yaw.toFixed(1)}°`);
+                } else {
+                    // Fallback: try to find the marker element directly
+                    const doc = iframe.contentDocument || mapWin.document;
+                    if (doc) {
+                        const markerIcon = doc.querySelector('.sentry-marker-icon');
+                        if (markerIcon) {
+                            markerIcon.style.transform = `translate(-50%, -50%) rotate(${yaw}deg)`;
+                            console.log(`[Map] Updated marker rotation: yaw=${yaw.toFixed(1)}°`);
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to update map marker:', e);
+            }
+        }
+        
+        // Update map marker every 5 seconds
+        setInterval(updateMapMarker, 5000);
         
         const updateMapControls = () => {
             const mapCard = document.querySelector('[data-card-id="map"]');

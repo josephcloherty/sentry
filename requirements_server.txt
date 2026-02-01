@@ -1,0 +1,15 @@
+# Sentry Server Requirements
+# Install with: pip install -r requirements_server.txt
+
+# Camera interface for Raspberry Pi
+picamera2>=0.3.12
+
+# Video streaming over WebSocket
+websockets>=12.0
+
+# Image processing
+opencv-python>=4.8.0
+numpy>=1.24.0
+
+# MAVLink communication with autopilot
+pymavlink>=2.4.40
