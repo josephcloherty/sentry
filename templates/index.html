@@ -193,64 +193,6 @@
         setInterval(updateStatusDots, STATUS_UPDATE_INTERVAL);
         updateStatusDots(); // Initial update
         
-        // ===== MAP RELOAD FUNCTION =====
-        const MAP_UPDATE_INTERVAL = {{ map_update_interval_ms }};
-        
-        function reloadMap() {
-            // Get the map card and iframe
-            const mapCard = document.querySelector('[data-card-id="map"]');
-            const iframe = mapCard?.querySelector('iframe');
-            if (!iframe) {
-                console.log('[Map] Iframe not found');
-                return;
-            }
-            
-            // Check if we have telemetry data (allow lat/lon = 0, will use default)
-            if (!telemetryData) {
-                console.log('[Map] Waiting for telemetry data...');
-                return;
-            }
-            
-            const lat = telemetryData.lat || 0;
-            const lon = telemetryData.lon || 0;
-            const yaw = telemetryData.yaw || 0;
-            
-            console.log(`[Map] Reloading map... lat=${lat.toFixed(6)}, lon=${lon.toFixed(6)}, yaw=${yaw.toFixed(1)}°`);
-            
-            // Fetch fresh map HTML from server
-            fetch('/api/map')
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error(`HTTP ${response.status}`);
-                    }
-                    return response.json();
-                })
-                .then(data => {
-                    // Replace iframe content with new map
-                    const blob = new Blob([data.map_html], { type: 'text/html' });
-                    const oldSrc = iframe.src;
-                    iframe.src = URL.createObjectURL(blob);
-                    
-                    // Revoke old blob URL to prevent memory leak
-                    if (oldSrc.startsWith('blob:')) {
-                        URL.revokeObjectURL(oldSrc);
-                    }
-                    
-                    console.log(`[Map] ✓ Reloaded successfully`);
-                    
-                    // Update map controls after reload
-                    iframe.addEventListener('load', () => {
-                        updateMapControls();
-                    }, { once: true });
-                })
-                .catch(err => console.error('[Map] Failed to reload:', err));
-        }
-        
-        // Reload map at configured interval
-        setInterval(reloadMap, MAP_UPDATE_INTERVAL);
-        // Also trigger first reload after 2 seconds (give time for telemetry to connect)
-        setTimeout(reloadMap, 2000);
-        
         const updateMapControls = () => {
             const mapCard = document.querySelector('[data-card-id="map"]');
             const iframe = mapCard?.querySelector('iframe');

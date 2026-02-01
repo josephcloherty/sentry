@@ -14,8 +14,7 @@ import time
 import json
 
 # ===== Configuration Variables =====
-MAP_UPDATE_INTERVAL_MS = 1000      # How often to regenerate map (milliseconds)
-STATUS_UPDATE_INTERVAL_MS = 50000   # How often to poll connection status (milliseconds)
+STATUS_UPDATE_INTERVAL_MS = 2000   # How often to poll connection status (milliseconds)
 STATUS_TIMEOUT = 3.0               # Seconds before marking a connection as offline
 
 # Legacy UDP socket (for backward compatibility)
@@ -400,11 +399,6 @@ def generate_map_html():
     
     return m._repr_html_()
 
-@app.route('/api/map')
-def api_map():
-    """Return fresh map HTML for periodic updates."""
-    return jsonify({'map_html': generate_map_html()})
-
 @app.route('/')
 def index():
     update_connection_status()  # Update status before rendering
@@ -416,7 +410,6 @@ def index():
         hq_online=hq_online,
         map_online=get_map_online(),
         map_html=generate_map_html(),
-        map_update_interval_ms=MAP_UPDATE_INTERVAL_MS,
         status_update_interval_ms=STATUS_UPDATE_INTERVAL_MS
     )
 
