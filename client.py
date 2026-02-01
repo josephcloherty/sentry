@@ -1,5 +1,5 @@
 import asyncio, cv2, numpy as np, websockets
-from flask import Flask, render_template, Response, jsonify
+from flask import Flask, render_template, Response, jsonify, request
 from threading import Thread
 import socket
 from compass import draw_compass
@@ -9,6 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 import geopandas as gpd
 import folium
+import secrets
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind(('', 5000))
@@ -141,6 +142,24 @@ def gen_frames_cam1():
         f = frame_cam1.copy()
         ret, jpeg = cv2.imencode('.jpg', f, [cv2.IMWRITE_JPEG_QUALITY, 90])
         yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + jpeg.tobytes() + b'\r\n')
+
+@app.route('/api/authenticate', methods=['POST'])
+def authenticate():
+    data = request.json
+    username = data.get('username', '').strip()
+    password = data.get('password', '').strip()
+    
+    VALID_USERNAME = 'argus'
+    VALID_PASSWORD = 'sentry'
+    
+    if username == VALID_USERNAME and password == VALID_PASSWORD:
+        return jsonify({'success': True, 'token': secrets.token_hex(32)})
+    else:
+        return jsonify({'success': False, 'message': 'Invalid credentials'}), 401
+
+@app.route('/api/logout', methods=['POST'])
+def logout():
+    return jsonify({'success': True})
 
 @app.route('/telemetry')
 def telemetry():
