@@ -3,6 +3,8 @@ import asyncio, websockets, cv2
 import socket
 from pymavlink import mavutil
 import math
+import json
+import time
 
 # ===== Configuration Variables =====
 VIDEO_FPS = 15  
@@ -11,6 +13,8 @@ VIDEO_HEIGHT = 480
 JPEG_QUALITY = 75  # 0-95, lower = faster but lower quality
 VIDEO_PORT_1 = 8765
 VIDEO_PORT_2 = 8766
+TELEMETRY_PORT = 8764
+TELEMETRY_HZ = 50  # 50Hz = 20ms interval for low latency
 
 print("Connecting to MAVLink...")
 mav = mavutil.mavlink_connection('udp:127.0.0.1:14550')
@@ -45,6 +49,52 @@ async def stream_cam1(ws):
         await ws.send(buffer.tobytes())
         await asyncio.sleep(1.0 / VIDEO_FPS)
 
+# Global storage for latest MAVLink data (shared between WebSocket and UDP)
+mavlink_data = {
+    'roll': 0, 'pitch': 0, 'yaw': 0,
+    'lat': 0, 'lon': 0, 'alt': 0,
+    'battery': 0, 'battery_remaining': 0,
+    'ground_speed': 0, 'throttle': 0,
+    'timestamp': 0
+}
+
+# Set of connected WebSocket telemetry clients
+telemetry_clients = set()
+
+async def stream_telemetry(ws):
+    """WebSocket handler for telemetry streaming."""
+    telemetry_clients.add(ws)
+    print(f"Telemetry client connected. Total clients: {len(telemetry_clients)}")
+    try:
+        # Keep connection alive, data is pushed via broadcast_telemetry_to_clients
+        await ws.wait_closed()
+    finally:
+        telemetry_clients.discard(ws)
+        print(f"Telemetry client disconnected. Total clients: {len(telemetry_clients)}")
+
+async def broadcast_telemetry_to_clients():
+    """Broadcast telemetry to all connected WebSocket clients at high frequency."""
+    while True:
+        if telemetry_clients:
+            # Create JSON payload with timestamp for latency measurement
+            payload = json.dumps({
+                **mavlink_data,
+                'server_time': time.time()
+            })
+            
+            # Broadcast to all connected clients
+            disconnected = set()
+            for ws in telemetry_clients:
+                try:
+                    await ws.send(payload)
+                except websockets.exceptions.ConnectionClosed:
+                    disconnected.add(ws)
+            
+            # Remove disconnected clients
+            telemetry_clients.difference_update(disconnected)
+        
+        await asyncio.sleep(1.0 / TELEMETRY_HZ)  # 50Hz = 20ms
+
 async def mavlink_broadcast():
     # Store latest messages
     latest_msgs = {}
@@ -59,12 +109,12 @@ async def mavlink_broadcast():
                 if not mavlink_connected:
                     mavlink_connected = True
                     print("MAVLink connection established.")
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0.005)  # Check more frequently (200Hz)
     
     # Start mavlink reader
     asyncio.create_task(read_mavlink())
     
-    # Broadcast at 10Hz
+    # Update mavlink_data and broadcast UDP at 10Hz (legacy)
     while True:
         att_msg = latest_msgs.get('ATTITUDE')
         gps_msg = latest_msgs.get('GLOBAL_POSITION_INT')
@@ -85,16 +135,38 @@ async def mavlink_broadcast():
         ground_speed = vfr_msg.groundspeed if vfr_msg else 0
         throttle = vfr_msg.throttle if vfr_msg else 0
         
+        # Update global mavlink_data for WebSocket telemetry
+        mavlink_data.update({
+            'roll': round(roll, 4),
+            'pitch': round(pitch, 4),
+            'yaw': round(yaw, 2),
+            'lat': round(lat, 6),
+            'lon': round(lon, 6),
+            'alt': round(alt, 1),
+            'battery': round(battery, 2),
+            'battery_remaining': round(battery_remaining, 0),
+            'ground_speed': round(ground_speed, 1),
+            'throttle': round(throttle, 0),
+            'timestamp': time.time()
+        })
+        
+        # Legacy UDP broadcast (keep for backward compatibility)
         data = f"{roll:.4f},{pitch:.4f},{yaw:.2f},{lat:.6f},{lon:.6f},{alt:.1f},{battery:.2f},{battery_remaining:.0f},{ground_speed:.1f},{throttle:.0f}".encode()
         sock.sendto(data, ('<broadcast>', 5000))
         
-        await asyncio.sleep(0.1)  # 10Hz (100ms)
+        await asyncio.sleep(0.1)  # 10Hz UDP broadcast (legacy)
 
 async def main():
     async with websockets.serve(stream_cam0, '0.0.0.0', VIDEO_PORT_1), \
-            websockets.serve(stream_cam1, '0.0.0.0', VIDEO_PORT_2):
-        print(f"Server running and ready for connections on ports {VIDEO_PORT_1} and {VIDEO_PORT_2}.")
+            websockets.serve(stream_cam1, '0.0.0.0', VIDEO_PORT_2), \
+            websockets.serve(stream_telemetry, '0.0.0.0', TELEMETRY_PORT):
+        print(f"Server running:")
+        print(f"  - Video cam0: ws://0.0.0.0:{VIDEO_PORT_1}")
+        print(f"  - Video cam1: ws://0.0.0.0:{VIDEO_PORT_2}")
+        print(f"  - Telemetry:  ws://0.0.0.0:{TELEMETRY_PORT} ({TELEMETRY_HZ}Hz)")
+        print(f"  - UDP legacy: broadcast:5000 (10Hz)")
         asyncio.create_task(mavlink_broadcast())
+        asyncio.create_task(broadcast_telemetry_to_clients())
         await asyncio.Future()
 
 asyncio.run(main())
