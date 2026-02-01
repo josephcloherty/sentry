@@ -74,7 +74,7 @@ def get_map_online():
 
 @lru_cache(maxsize=1)
 def load_geodata():
-    gpkg_path = Path(__file__).parent / 'map' / 'NorthWest_Railways.gpkg'
+    gpkg_path = Path(__file__).parent / 'dev' / 'map' / 'NorthWest_Railways.gpkg'
     if gpkg_path.exists():
         gdf = gpd.read_file(gpkg_path)
         gdf['geometry'] = gdf['geometry'].simplify(tolerance=0.001, preserve_topology=True)
