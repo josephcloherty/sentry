@@ -176,6 +176,10 @@
     <script>
         const bannerSlot = document.getElementById('banner-slot');
         
+        // ===== Configuration =====
+        const LATENCY_UPDATE_INTERVAL_MS = 2000;  // How often to poll video latency (milliseconds)
+        const STATUS_UPDATE_INTERVAL_MS = 30000;   // How often to poll connection status (milliseconds)
+        
         // ===== VIDEO LATENCY MEASUREMENT =====
         let videoLatencyData = {
             cam0_network_latency_ms: 0,
@@ -262,7 +266,7 @@
             
             // Update stats
             if (updateRateEl) {
-                updateRateEl.textContent = '500ms';
+                updateRateEl.textContent = LATENCY_UPDATE_INTERVAL_MS + 'ms';
             }
             if (lastUpdateEl) {
                 lastUpdateEl.textContent = new Date().toLocaleTimeString();
@@ -307,8 +311,8 @@
                 });
         }
         
-        // Poll video latency every 500ms
-        setInterval(fetchVideoLatency, 500);
+        // Poll video latency at configured interval
+        setInterval(fetchVideoLatency, LATENCY_UPDATE_INTERVAL_MS);
         fetchVideoLatency(); // Initial fetch
         
         // ===== TELEMETRY WEBSOCKET CONNECTION =====
@@ -392,9 +396,8 @@
                 .catch(err => console.error('Failed to fetch status:', err));
         }
         
-        // Update status using configurable interval
-        const STATUS_UPDATE_INTERVAL = {{ status_update_interval_ms }};
-        setInterval(updateStatusDots, STATUS_UPDATE_INTERVAL);
+        // Update status at configured interval
+        setInterval(updateStatusDots, STATUS_UPDATE_INTERVAL_MS);
         updateStatusDots(); // Initial update
         
         const updateMapControls = () => {
