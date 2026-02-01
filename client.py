@@ -10,7 +10,10 @@ from pathlib import Path
 import geopandas as gpd
 import folium
 import secrets
+import time
+import json
 
+# Legacy UDP socket (for backward compatibility)
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind(('', 5000))
 sock.setblocking(False)
@@ -21,9 +24,11 @@ frame_cam1 = None
 main_online = True
 cam0_online = True
 cam1_online = True
+mav_online = True
 hq_online = False
 map_online = True
-mavlink_data = {"roll": 0, "pitch": 0, "yaw": 0, "lat": 0, "lon": 0, "alt": 0, "battery": 0, "battery_remaining": 0, "ground_speed": 0, "throttle": 0}
+mavlink_data = {"roll": 0, "pitch": 0, "yaw": 0, "lat": 0, "lon": 0, "alt": 0, "battery": 0, "battery_remaining": 0, "ground_speed": 0, "throttle": 0, "timestamp": 0, "server_latency_ms": 0}
+telemetry_latency_ms = 0  # Track round-trip latency
 
 @lru_cache(maxsize=1)
 def load_geodata():
@@ -39,7 +44,7 @@ def load_geodata():
 async def receive_video_cam0():
     global frame_cam0
     async with websockets.connect('ws://100.112.223.17:8765') as ws:
-        print("Connected to video server.")
+        print("Connected to video server (cam0).")
         while True:
             data = await ws.recv()
             frame_cam0 = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
@@ -51,7 +56,38 @@ async def receive_video_cam1():
         while True:
             data = await ws.recv()
             frame_cam1 = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+
+async def receive_telemetry():
+    """
+    Connect to telemetry WebSocket and update mavlink_data in real-time.
+    This replaces the old UDP polling method.
+    """
+    global mavlink_data, telemetry_latency_ms
+    while True:
+        try:
+            async with websockets.connect('ws://100.112.223.17:8764') as ws:
+                print("Connected to telemetry server (WebSocket).")
+                while True:
+                    data = await ws.recv()
+                    try:
+                        telemetry_msg = json.loads(data)
+                        # Calculate round-trip latency
+                        current_time = time.time()
+                        server_time = telemetry_msg.get('timestamp', current_time)
+                        telemetry_latency_ms = (current_time - server_time) * 1000
+                        
+                        mavlink_data = telemetry_msg
+                    except json.JSONDecodeError:
+                        print(f"Failed to parse telemetry JSON: {data}")
+        except websockets.exceptions.ConnectionRefused:
+            print("Telemetry server not available, retrying in 2 seconds...")
+            await asyncio.sleep(2)
+        except Exception as e:
+            print(f"Telemetry WebSocket error: {e}")
+            await asyncio.sleep(2)
+
 def receive_mavlink():
+    """Legacy UDP receiver for backward compatibility"""
     global mavlink_data
     while True:
         try:
@@ -67,7 +103,9 @@ def receive_mavlink():
                 "battery": float(values[6]),
                 "battery_remaining": float(values[7]),
                 "ground_speed": float(values[8]),
-                "throttle": float(values[9])
+                "throttle": float(values[9]),
+                "timestamp": time.time(),
+                "server_latency_ms": 0
             }
         except:
             pass
@@ -163,7 +201,10 @@ def logout():
 
 @app.route('/telemetry')
 def telemetry():
-    return jsonify(mavlink_data)
+    """Return current telemetry data as JSON"""
+    telemetry_with_latency = mavlink_data.copy()
+    telemetry_with_latency['client_latency_ms'] = telemetry_latency_ms
+    return jsonify(telemetry_with_latency)
 
 @app.route('/')
 def index():
@@ -271,5 +312,7 @@ def video_feed_cam1():
 
 Thread(target=lambda: asyncio.run(receive_video_cam0()), daemon=True).start()
 Thread(target=lambda: asyncio.run(receive_video_cam1()), daemon=True).start()
+Thread(target=lambda: asyncio.run(receive_telemetry()), daemon=True).start()
+# Legacy UDP receiver (optional, for backward compatibility)
 Thread(target=receive_mavlink, daemon=True).start()
 app.run(port=8000, threaded=True)

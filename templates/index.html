@@ -106,6 +106,52 @@
 
     <script>
         const bannerSlot = document.getElementById('banner-slot');
+        
+        // ===== TELEMETRY WEBSOCKET CONNECTION =====
+        let telemetryData = {};
+        let telemetryLatencyMs = 0;
+        
+        function connectTelemetryWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const telemetryWs = new WebSocket(`${protocol}//${window.location.hostname}:8764`);
+            
+            telemetryWs.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    telemetryData = data;
+                    
+                    // Calculate round-trip latency (including server-side latency)
+                    const clientTime = Date.now() / 1000;
+                    const serverTime = data.timestamp;
+                    const roundTripLatency = (clientTime - serverTime) * 1000;
+                    telemetryLatencyMs = roundTripLatency + (data.server_latency_ms || 0);
+                    
+                    // Log latency periodically
+                    if (Math.random() < 0.01) { // 1% of messages
+                        console.log(`[Telemetry] Latency: ${telemetryLatencyMs.toFixed(1)}ms (client: ${roundTripLatency.toFixed(1)}ms + server: ${(data.server_latency_ms || 0).toFixed(1)}ms)`);
+                    }
+                } catch (e) {
+                    console.error('Failed to parse telemetry data:', e);
+                }
+            };
+            
+            telemetryWs.onerror = (error) => {
+                console.error('Telemetry WebSocket error:', error);
+            };
+            
+            telemetryWs.onopen = () => {
+                console.log('Telemetry WebSocket connected');
+            };
+            
+            telemetryWs.onclose = () => {
+                console.warn('Telemetry WebSocket disconnected, attempting to reconnect in 2 seconds...');
+                setTimeout(connectTelemetryWebSocket, 2000);
+            };
+        }
+        
+        // Connect to telemetry WebSocket
+        connectTelemetryWebSocket();
+        
         const updateMapControls = () => {
             const mapCard = document.querySelector('[data-card-id="map"]');
             const iframe = mapCard?.querySelector('iframe');
