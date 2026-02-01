@@ -4,51 +4,19 @@ Ground station dashboard for the S.E.N.T.R.Y UAS with real-time telemetry, dual 
 
 ## Quick Start
 
-### Server (Raspberry Pi / Vehicle)
+### Server (Raspberry Pi)
 ```bash
-./install_server.sh  # First time only
+./install_server.sh  # Install packages and dependencies
 ./run_server.sh      # Start server
 ```
 
 ### Client (Ground Station)
 ```bash
-./install_client.sh  # First time only
+./install_client.sh  # Install packages and dependencies
 ./run_client.sh      # Start dashboard
 ```
 
-Open http://localhost:8000 in your browser.
-
-## Configuration
-
-### Client Configuration (`client.py`)
-
-Adjust these variables at the top of `client.py`:
-
-```python
-# Update intervals (milliseconds)
-MAP_UPDATE_INTERVAL_MS = 5000      # How often to regenerate map
-STATUS_UPDATE_INTERVAL_MS = 2000   # How often to poll connection status
-STATUS_TIMEOUT = 3.0               # Seconds before marking offline
-```
-
-### Server Configuration (`server.py`)
-
-Adjust these variables at the top of `server.py`:
-
-```python
-VIDEO_FPS = 15              # Video frame rate
-TELEMETRY_HZ = 50           # Telemetry update rate (affects latency)
-JPEG_QUALITY = 75           # Video quality (0-95)
-```
-
-## Features
-
-- ✅ Dual camera video streams (WebSocket)
-- ✅ Real-time MAVLink telemetry (50Hz WebSocket + 10Hz UDP fallback)
-- ✅ Live GPS tracking with auto-updating map
-- ✅ Automatic connection status monitoring
-- ✅ Attitude indicator, compass, and battery widgets
-- ✅ Low latency (~40-60ms telemetry with WebSocket)
+Open http://localhost:8000 in a browser
 
 ## Ports
 
