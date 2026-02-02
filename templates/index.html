@@ -177,7 +177,7 @@
         const bannerSlot = document.getElementById('banner-slot');
         
         // ===== Configuration =====
-        const LATENCY_UPDATE_INTERVAL_MS = 2000;  // How often to poll video latency (milliseconds)
+        const LATENCY_UPDATE_INTERVAL_MS = 500;  // How often to poll video latency (milliseconds)
         const STATUS_UPDATE_INTERVAL_MS = 30000;   // How often to poll connection status (milliseconds)
         
         // ===== VIDEO LATENCY MEASUREMENT =====
@@ -193,17 +193,53 @@
         let lastLatencyUpdateTime = Date.now();
         let cam0LastFrameTime = 0;
         let cam1LastFrameTime = 0;
+        let cam0FrameLoadTime = 0;
+        let cam1FrameLoadTime = 0;
+        let cam0FrameRenderTime = 0;
+        let cam1FrameRenderTime = 0;
         
-        // Track render latency by observing when frames are displayed
+        // Track render latency by measuring frame load and paint times
         function measureRenderLatency() {
             const cam0Img = document.getElementById('stream_cam0');
             const cam1Img = document.getElementById('stream_cam1');
             
-            // Use frame timestamps to estimate render delay
-            // The browser adds ~16-33ms (1-2 frames at 60fps) for rendering
-            const ESTIMATED_BROWSER_RENDER_MS = 16;
-            videoLatencyData.cam0_render_latency_ms = ESTIMATED_BROWSER_RENDER_MS;
-            videoLatencyData.cam1_render_latency_ms = ESTIMATED_BROWSER_RENDER_MS;
+            // Calculate render latency as the time between frame load and actual render
+            // This uses the difference between when the image was fetched and when it was painted
+            if (cam0FrameLoadTime > 0 && cam0FrameRenderTime > 0) {
+                const cam0RenderTime = cam0FrameRenderTime - cam0FrameLoadTime;
+                videoLatencyData.cam0_render_latency_ms = Math.max(0, cam0RenderTime);
+            }
+            
+            if (cam1FrameLoadTime > 0 && cam1FrameRenderTime > 0) {
+                const cam1RenderTime = cam1FrameRenderTime - cam1FrameLoadTime;
+                videoLatencyData.cam1_render_latency_ms = Math.max(0, cam1RenderTime);
+            }
+        }
+        
+        // Setup image load event listeners to track when frames arrive and are rendered
+        function setupImageLoadTracking() {
+            const cam0Img = document.getElementById('stream_cam0');
+            const cam1Img = document.getElementById('stream_cam1');
+            
+            if (cam0Img) {
+                cam0Img.addEventListener('load', function() {
+                    cam0FrameLoadTime = performance.now();
+                    // Schedule a check after the next paint to get render time
+                    requestAnimationFrame(function() {
+                        cam0FrameRenderTime = performance.now();
+                    });
+                });
+            }
+            
+            if (cam1Img) {
+                cam1Img.addEventListener('load', function() {
+                    cam1FrameLoadTime = performance.now();
+                    // Schedule a check after the next paint to get render time
+                    requestAnimationFrame(function() {
+                        cam1FrameRenderTime = performance.now();
+                    });
+                });
+            }
         }
         
         function updateLatencyDisplay() {
@@ -359,6 +395,9 @@
         
         // Connect to telemetry WebSocket
         connectTelemetryWebSocket();
+        
+        // Setup image load tracking for render latency measurement
+        setupImageLoadTracking();
         
         // ===== STATUS UPDATE FUNCTION =====
         function updateStatusDots() {
