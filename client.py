@@ -15,7 +15,7 @@ import json
 import struct
 
 # ===== Configuration Variables =====
-STATUS_UPDATE_INTERVAL_MS = 2000   # How often to poll connection status (milliseconds)
+STATUS_UPDATE_INTERVAL_MS = 500   # How often to poll connection status (milliseconds)
 STATUS_TIMEOUT = 3.0               # Seconds before marking a connection as offline
 
 # Legacy UDP socket (for backward compatibility)
