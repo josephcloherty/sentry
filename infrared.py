@@ -5,6 +5,8 @@ from dataclasses import dataclass
 @dataclass
 class IRLockResult:
     locked: bool
+    cx: int            # pixel x coordinate of detected center
+    cy: int            # pixel y coordinate of detected center
     error_x: float      # -1.0 (left) → +1.0 (right)
     error_y: float      # -1.0 (up)   → +1.0 (down)
     area: float         # Blob area (proxy for distance)
@@ -17,12 +19,28 @@ def process_ir_frame(frame: np.ndarray) -> IRLockResult:
     Assumes IR beacon appears as the brightest object in the frame.
     """
 
-    h, w = frame.shape[:2]
+    # Ensure we operate on a single-channel (grayscale) image
+    if isinstance(frame, np.ndarray):
+        if frame.ndim == 2:
+            gray = frame
+        elif frame.ndim == 3:
+            if frame.shape[2] == 3:
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            elif frame.shape[2] == 4:
+                gray = cv2.cvtColor(frame, cv2.COLOR_RGBA2GRAY)
+            else:
+                gray = frame[..., 0]
+        else:
+            gray = frame
+    else:
+        # If not a numpy array, bail out with empty result
+        return IRLockResult(False, 0, 0, 0.0, 0.0, 0.0, 0.0)
+
+    h, w = gray.shape[:2]
     cx_img, cy_img = w // 2, h // 2
 
-
     # Blur to reduce noise
-    blurred = cv2.GaussianBlur(frame, (7, 7), 0)
+    blurred = cv2.GaussianBlur(gray, (7, 7), 0)
 
     # Adaptive threshold for varying lighting
     _, thresh = cv2.threshold(
@@ -45,18 +63,18 @@ def process_ir_frame(frame: np.ndarray) -> IRLockResult:
     )
 
     if not contours:
-        return IRLockResult(False, 0.0, 0.0, 0.0, 0.0)
+        return IRLockResult(False, 0, 0, 0.0, 0.0, 0.0, 0.0)
 
     # Select brightest / largest contour
     largest = max(contours, key=cv2.contourArea)
     area = cv2.contourArea(largest)
 
     if area < 50:  # Reject tiny noise blobs
-        return IRLockResult(False, 0.0, 0.0, area, 0.0)
+        return IRLockResult(False, 0, 0, 0.0, 0.0, area, 0.0)
 
     M = cv2.moments(largest)
     if M["m00"] == 0:
-        return IRLockResult(False, 0.0, 0.0, area, 0.0)
+        return IRLockResult(False, 0, 0, 0.0, 0.0, area, 0.0)
 
     cx = int(M["m10"] / M["m00"])
     cy = int(M["m01"] / M["m00"])
@@ -70,6 +88,8 @@ def process_ir_frame(frame: np.ndarray) -> IRLockResult:
 
     return IRLockResult(
         locked=True,
+        cx=cx,
+        cy=cy,
         error_x=error_x,
         error_y=error_y,
         area=area,
