@@ -20,11 +20,9 @@ def process_ir_frame(frame: np.ndarray) -> IRLockResult:
     h, w = frame.shape[:2]
     cx_img, cy_img = w // 2, h // 2
 
-    # Convert to grayscale (IR shows up bright)
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
     # Blur to reduce noise
-    blurred = cv2.GaussianBlur(gray, (7, 7), 0)
+    blurred = cv2.GaussianBlur(frame, (7, 7), 0)
 
     # Adaptive threshold for varying lighting
     _, thresh = cv2.threshold(
