@@ -39,39 +39,37 @@ async def stream_cam0(ws):
     print("Client connected to video stream (cam0).")
     while True:
         frame = cam0.capture_array()
-
-        # ===== IR LOCKING (AVIONICS – LOCAL ONLY) =====
-        ir = process_ir_frame(frame)
-
-        if ir.locked and ir.confidence > 0.3:
-            # Placeholder: guidance only, no control yet
-            print(
-                f"IR LOCK | "
-                f"ex={ir.error_x:.2f}, "
-                f"ey={ir.error_y:.2f}, "
-                f"area={ir.area:.0f}, "
-                f"conf={ir.confidence:.2f}"
-            )
-
-        # ===== STREAMING (NON-CRITICAL) =====
-        ret, buffer = cv2.imencode(
-            '.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]
-        )
+        ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+        # Embed timestamp for latency measurement: 8-byte double + JPEG data
         timestamp_bytes = struct.pack('d', time.time())
         await ws.send(timestamp_bytes + buffer.tobytes())
-
         await asyncio.sleep(1.0 / VIDEO_FPS)
-
 
 async def stream_cam1(ws):
     print("Client connected to video stream (cam1).")
     while True:
         frame = cam1.capture_array()
         mono_frame = frame[0:VIDEO_HEIGHT, 0:VIDEO_WIDTH] 
+
+        # Call your IR function
+        ir = process_ir_frame(mono_frame)
+
+        # Draw overlay on the frame
+        if ir.locked:
+            # Draw a circle at the detected center
+            center = (int(ir.cx), int(ir.cy))
+            radius = max(5, int(math.sqrt(ir.area)/2))  # optional: radius based on blob area
+            cv2.circle(mono_frame, center, radius, (0, 255, 0), 2)  # green circle
+
+            # Optionally draw crosshairs
+            cv2.line(mono_frame, (center[0]-10, center[1]), (center[0]+10, center[1]), (0,255,0),1)
+            cv2.line(mono_frame, (center[0], center[1]-10), (center[0], center[1]+10), (0,255,0),1)
+
+        # Encode and send frame
         ret, buffer = cv2.imencode('.jpg', mono_frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
-        # Embed timestamp for latency measurement: 8-byte double + JPEG data
         timestamp_bytes = struct.pack('d', time.time())
         await ws.send(timestamp_bytes + buffer.tobytes())
+
         await asyncio.sleep(1.0 / VIDEO_FPS)
 
 # Global storage for latest MAVLink data (shared between WebSocket and UDP)
