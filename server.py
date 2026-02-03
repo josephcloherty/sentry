@@ -49,28 +49,22 @@ async def stream_cam1(ws):
     print("Client connected to video stream (cam1).")
     while True:
         frame = cam1.capture_array()
-        mono_frame = frame[0:VIDEO_HEIGHT, 0:VIDEO_WIDTH] 
+        gray = cv2.cvtColor(frame, cv2.COLOR_YUV2GRAY_I420)  # Proper grayscale conversion for YUV420
+        ir = process_ir_frame(gray)
 
-        # Call your IR function
-        ir = process_ir_frame(mono_frame)
-
-        # Draw overlay on the frame
+        display_frame = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
         if ir.locked:
-            # Draw a circle at the detected center
             center = (int(ir.cx), int(ir.cy))
-            radius = max(5, int(math.sqrt(ir.area)/2))  # optional: radius based on blob area
-            cv2.circle(mono_frame, center, radius, (0, 255, 0), 2)  # green circle
+            radius = max(5, int(math.sqrt(ir.area)/2))
+            cv2.circle(display_frame, center, radius, (0, 255, 0), 2)
+            cv2.line(display_frame, (center[0]-10, center[1]), (center[0]+10, center[1]), (0,255,0),1)
+            cv2.line(display_frame, (center[0], center[1]-10), (center[0], center[1]+10), (0,255,0),1)
 
-            # Optionally draw crosshairs
-            cv2.line(mono_frame, (center[0]-10, center[1]), (center[0]+10, center[1]), (0,255,0),1)
-            cv2.line(mono_frame, (center[0], center[1]-10), (center[0], center[1]+10), (0,255,0),1)
-
-        # Encode and send frame
-        ret, buffer = cv2.imencode('.jpg', mono_frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+        ret, buffer = cv2.imencode('.jpg', display_frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
         timestamp_bytes = struct.pack('d', time.time())
         await ws.send(timestamp_bytes + buffer.tobytes())
-
         await asyncio.sleep(1.0 / VIDEO_FPS)
+
 
 # Global storage for latest MAVLink data (shared between WebSocket and UDP)
 mavlink_data = {
