@@ -1,5 +1,6 @@
 from picamera2 import Picamera2
 import asyncio, websockets, cv2
+import numpy as np
 import socket
 from pymavlink import mavutil
 import math
@@ -27,13 +28,55 @@ print("MAVLink heartbeat received.")
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
-cam0 = Picamera2(0)
-cam0.configure(cam0.create_preview_configuration(main={"format": 'XRGB8888', "size": (VIDEO_WIDTH, VIDEO_HEIGHT)}))
-cam0.start()
+class MockCamera:
+    """Fallback camera that generates synthetic frames for testing when Picamera2 isn't available."""
+    def __init__(self, width, height, color=True):
+        self.w = width
+        self.h = height
+        self.color = color
+        self._t = 0
 
-cam1 = Picamera2(1)
-cam1.configure(cam1.create_preview_configuration(main={"format": 'YUV420', "size": (VIDEO_WIDTH, VIDEO_HEIGHT)}))
-cam1.start()
+    def capture_array(self):
+        self._t += 1
+        if self.color:
+            img = np.zeros((self.h, self.w, 3), dtype=np.uint8)
+            cx = int((self._t * 5) % (self.w + 40)) - 20
+            cv2.circle(img, (max(0, cx), self.h // 2), 20, (255, 255, 255), -1)
+            return img
+        else:
+            img = np.zeros((self.h, self.w), dtype=np.uint8)
+            cx = int((self._t * 5) % (self.w + 40)) - 20
+            cv2.circle(img, (max(0, cx), self.h // 2), 20, 255, -1)
+            return img
+
+
+# Initialize cam0 (preview / colour) with graceful fallback
+try:
+    cam0 = Picamera2(0)
+    cam0.configure(cam0.create_preview_configuration(main={"format": 'XRGB8888', "size": (VIDEO_WIDTH, VIDEO_HEIGHT)}))
+    cam0.start()
+    print("cam0: Picamera2 started (XRGB8888)")
+except Exception as e:
+    print(f"Warning: cam0 Picamera2 init failed: {e}. Using MockCamera.")
+    cam0 = MockCamera(VIDEO_WIDTH, VIDEO_HEIGHT, color=True)
+
+# Initialize cam1 (YUV / IR) with attempt for YUV then fallback to XRGB then Mock
+try:
+    cam1 = Picamera2(1)
+    try:
+        cam1.configure(cam1.create_preview_configuration(main={"format": 'YUV420', "size": (VIDEO_WIDTH, VIDEO_HEIGHT)}))
+        cam1.start()
+        cam1_format = 'YUV420'
+        print("cam1: Picamera2 started (YUV420)")
+    except Exception:
+        cam1.configure(cam1.create_preview_configuration(main={"format": 'XRGB8888', "size": (VIDEO_WIDTH, VIDEO_HEIGHT)}))
+        cam1.start()
+        cam1_format = 'XRGB8888'
+        print("cam1: Picamera2 started (XRGB8888) as fallback")
+except Exception as e:
+    print(f"Warning: cam1 Picamera2 init failed: {e}. Using MockCamera.")
+    cam1 = MockCamera(VIDEO_WIDTH, VIDEO_HEIGHT, color=False)
+    cam1_format = 'MOCK'
 
 async def stream_cam0(ws):
     print("Client connected to video stream (cam0).")
@@ -49,16 +92,66 @@ async def stream_cam1(ws):
     print("Client connected to video stream (cam1).")
     while True:
         frame = cam1.capture_array()
-        gray = cv2.cvtColor(frame, cv2.COLOR_YUV2GRAY_I420)  # Proper grayscale conversion for YUV420
+        # Handle multiple possible frame layouts robustly
+        try:
+            if isinstance(frame, np.ndarray):
+                if frame.ndim == 2:
+                    gray = frame
+                elif frame.ndim == 3 and frame.shape[2] == 3:
+                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                elif frame.ndim == 3 and frame.shape[2] == 4:
+                    gray = cv2.cvtColor(frame, cv2.COLOR_RGBA2GRAY)
+                else:
+                    # Try YUV->GRAY conversion (for YUV420 layout)
+                    try:
+                        gray = cv2.cvtColor(frame, cv2.COLOR_YUV2GRAY_I420)
+                    except Exception:
+                        # As a last resort, take the first channel
+                        gray = frame[..., 0] if frame.ndim == 3 else frame
+            else:
+                gray = frame
+        except Exception as e:
+            print(f"Warning: failed to convert frame to gray: {e}")
+            # create a blank gray frame to keep stream alive
+            gray = np.zeros((VIDEO_HEIGHT, VIDEO_WIDTH), dtype=np.uint8)
         ir = process_ir_frame(gray)
+
+        # Fallback: if IR processing didn't lock, locate the brightest region
+        fallback_center = None
+        fallback_radius = None
+        try:
+            if not ir.locked:
+                minV, maxV, minLoc, maxLoc = cv2.minMaxLoc(gray)
+                # require a reasonably bright peak to consider
+                if maxV >= 180:
+                    # threshold relative to peak to capture the bright blob
+                    thresh_val = int(maxV * 0.65)
+                    _, th = cv2.threshold(gray, thresh_val, 255, cv2.THRESH_BINARY)
+                    contours, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    if contours:
+                        c = max(contours, key=cv2.contourArea)
+                        area = cv2.contourArea(c)
+                        if area > 10:
+                            M = cv2.moments(c)
+                            if M.get('m00', 0) != 0:
+                                cx = int(M['m10'] / M['m00'])
+                                cy = int(M['m01'] / M['m00'])
+                                fallback_center = (cx, cy)
+                                fallback_radius = max(5, int(math.sqrt(area) / 2))
+        except Exception as e:
+            print(f"Warning: brightest-region fallback failed: {e}")
 
         display_frame = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
         if ir.locked:
             center = (int(ir.cx), int(ir.cy))
             radius = max(5, int(math.sqrt(ir.area)/2))
-            cv2.circle(display_frame, center, radius, (0, 255, 0), 2)
-            cv2.line(display_frame, (center[0]-10, center[1]), (center[0]+10, center[1]), (0,255,0),1)
-            cv2.line(display_frame, (center[0], center[1]-10), (center[0], center[1]+10), (0,255,0),1)
+            cv2.circle(display_frame, center, radius, (255, 255, 255), 2)
+            cv2.line(display_frame, (center[0]-10, center[1]), (center[0]+10, center[1]), (255,255,255),1)
+            cv2.line(display_frame, (center[0], center[1]-10), (center[0], center[1]+10), (255,255,255),1)
+        elif fallback_center is not None:
+            cv2.circle(display_frame, fallback_center, fallback_radius, (255, 255, 255), 2)
+            cv2.line(display_frame, (fallback_center[0]-10, fallback_center[1]), (fallback_center[0]+10, fallback_center[1]), (255,255,255),1)
+            cv2.line(display_frame, (fallback_center[0], fallback_center[1]-10), (fallback_center[0], fallback_center[1]+10), (255,255,255),1)
 
         ret, buffer = cv2.imencode('.jpg', display_frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
         timestamp_bytes = struct.pack('d', time.time())
