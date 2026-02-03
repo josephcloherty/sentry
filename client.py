@@ -1,3 +1,4 @@
+# Import libraries
 import asyncio, cv2, numpy as np, websockets
 from flask import Flask, render_template, Response, jsonify, request
 from threading import Thread
