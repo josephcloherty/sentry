@@ -6,6 +6,8 @@ import math
 import json
 import time
 import struct
+from infrared import process_ir_frame
+
 
 # ===== Configuration Variables =====
 VIDEO_FPS = 15  
@@ -37,11 +39,29 @@ async def stream_cam0(ws):
     print("Client connected to video stream (cam0).")
     while True:
         frame = cam0.capture_array()
-        ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
-        # Embed timestamp for latency measurement: 8-byte double + JPEG data
+
+        # ===== IR LOCKING (AVIONICS – LOCAL ONLY) =====
+        ir = process_ir_frame(frame)
+
+        if ir.locked and ir.confidence > 0.3:
+            # Placeholder: guidance only, no control yet
+            print(
+                f"IR LOCK | "
+                f"ex={ir.error_x:.2f}, "
+                f"ey={ir.error_y:.2f}, "
+                f"area={ir.area:.0f}, "
+                f"conf={ir.confidence:.2f}"
+            )
+
+        # ===== STREAMING (NON-CRITICAL) =====
+        ret, buffer = cv2.imencode(
+            '.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]
+        )
         timestamp_bytes = struct.pack('d', time.time())
         await ws.send(timestamp_bytes + buffer.tobytes())
+
         await asyncio.sleep(1.0 / VIDEO_FPS)
+
 
 async def stream_cam1(ws):
     print("Client connected to video stream (cam1).")
