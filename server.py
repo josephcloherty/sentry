@@ -155,7 +155,7 @@ async def stream_cam0(ws):
 async def stream_cam1(ws):
     print("Client connected to video stream (cam1).")
     while True:
-        frame = cam1.capture_array()[:VIDEO_HEIGHT, :VIDEO_WIDTH]
+        frame = cam1.capture_array()
         
         try:
             gray = to_grayscale(frame)
