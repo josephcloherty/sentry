@@ -174,13 +174,18 @@
     </div>
 
     <script>
+        // ===== GLOBAL CONFIGURATION =====
+        const LATENCY_UPDATE_INTERVAL_MS = 500;
+        const STATUS_UPDATE_INTERVAL_MS = 30000;
+        
+        // ===== GLOBAL DOM ELEMENTS =====
         const bannerSlot = document.getElementById('banner-slot');
+        const loginModal = document.getElementById('loginModal');
+        const loginForm = document.getElementById('loginForm');
+        const loginError = document.getElementById('loginError');
+        const logoutBtn = document.getElementById('logoutBtn');
         
-        // ===== Configuration =====
-        const LATENCY_UPDATE_INTERVAL_MS = 500;  // How often to poll video latency (milliseconds)
-        const STATUS_UPDATE_INTERVAL_MS = 30000;   // How often to poll connection status (milliseconds)
-        
-        // ===== VIDEO LATENCY MEASUREMENT =====
+        // ===== GLOBAL STATE =====
         let videoLatencyData = {
             cam0_network_latency_ms: 0,
             cam1_network_latency_ms: 0,
@@ -189,171 +194,129 @@
             cam0_total_latency_ms: 0,
             cam1_total_latency_ms: 0
         };
-        let latencyUpdateCount = 0;
-        let lastLatencyUpdateTime = Date.now();
-        let cam0LastFrameTime = 0;
-        let cam1LastFrameTime = 0;
+        let telemetryData = {};
+        let telemetryLatencyMs = 0;
         let cam0FrameLoadTime = 0;
         let cam1FrameLoadTime = 0;
         let cam0FrameRenderTime = 0;
         let cam1FrameRenderTime = 0;
-        
-        // Track render latency by measuring frame load and paint times
-        function measureRenderLatency() {
-            const cam0Img = document.getElementById('stream_cam0');
-            const cam1Img = document.getElementById('stream_cam1');
-            
-            // Calculate render latency as the time between frame load and actual render
-            // This uses the difference between when the image was fetched and when it was painted
-            if (cam0FrameLoadTime > 0 && cam0FrameRenderTime > 0) {
-                const cam0RenderTime = cam0FrameRenderTime - cam0FrameLoadTime;
-                videoLatencyData.cam0_render_latency_ms = Math.max(0, cam0RenderTime);
-            }
-            
-            if (cam1FrameLoadTime > 0 && cam1FrameRenderTime > 0) {
-                const cam1RenderTime = cam1FrameRenderTime - cam1FrameLoadTime;
-                videoLatencyData.cam1_render_latency_ms = Math.max(0, cam1RenderTime);
-            }
-        }
-        
-        // Setup image load event listeners to track when frames arrive and are rendered
-        function setupImageLoadTracking() {
-            const cam0Img = document.getElementById('stream_cam0');
-            const cam1Img = document.getElementById('stream_cam1');
-            
-            if (cam0Img) {
-                cam0Img.addEventListener('load', function() {
-                    cam0FrameLoadTime = performance.now();
-                    // Schedule a check after the next paint to get render time
-                    requestAnimationFrame(function() {
-                        cam0FrameRenderTime = performance.now();
-                    });
-                });
-            }
-            
-            if (cam1Img) {
-                cam1Img.addEventListener('load', function() {
-                    cam1FrameLoadTime = performance.now();
-                    // Schedule a check after the next paint to get render time
-                    requestAnimationFrame(function() {
-                        cam1FrameRenderTime = performance.now();
-                    });
-                });
-            }
-        }
-        
-        function updateLatencyDisplay() {
-            const cam0NetworkEl = document.getElementById('cam0-network-latency');
-            const cam0RenderEl = document.getElementById('cam0-render-latency');
-            const cam0TotalEl = document.getElementById('cam0-total-latency');
-            const cam0BarEl = document.getElementById('cam0-latency-bar');
-            
-            const cam1NetworkEl = document.getElementById('cam1-network-latency');
-            const cam1RenderEl = document.getElementById('cam1-render-latency');
-            const cam1TotalEl = document.getElementById('cam1-total-latency');
-            const cam1BarEl = document.getElementById('cam1-latency-bar');
-            
-            const updateRateEl = document.getElementById('latency-update-rate');
-            const lastUpdateEl = document.getElementById('latency-last-update');
-            const statusDotEl = document.getElementById('latency-status-dot');
-            
-            // Calculate totals
-            videoLatencyData.cam0_total_latency_ms = videoLatencyData.cam0_network_latency_ms + videoLatencyData.cam0_render_latency_ms;
-            videoLatencyData.cam1_total_latency_ms = videoLatencyData.cam1_network_latency_ms + videoLatencyData.cam1_render_latency_ms;
-            
-            // Update cam0 display
-            if (cam0NetworkEl) {
-                const networkVal = videoLatencyData.cam0_network_latency_ms;
-                cam0NetworkEl.textContent = networkVal > 0 ? networkVal.toFixed(1) : '--';
-                cam0NetworkEl.className = 'latency-value ' + getLatencyClass(networkVal);
-            }
-            if (cam0RenderEl) {
-                cam0RenderEl.textContent = videoLatencyData.cam0_render_latency_ms.toFixed(1);
-            }
-            if (cam0TotalEl) {
-                const totalVal = videoLatencyData.cam0_total_latency_ms;
-                cam0TotalEl.textContent = totalVal > 0 ? totalVal.toFixed(1) : '--';
-                cam0TotalEl.className = 'latency-value ' + getLatencyClass(totalVal);
-            }
-            if (cam0BarEl) {
-                // Scale bar: 0-500ms maps to 0-100%
-                const barWidth = Math.min(100, (videoLatencyData.cam0_total_latency_ms / 500) * 100);
-                cam0BarEl.style.width = barWidth + '%';
-            }
-            
-            // Update cam1 display
-            if (cam1NetworkEl) {
-                const networkVal = videoLatencyData.cam1_network_latency_ms;
-                cam1NetworkEl.textContent = networkVal > 0 ? networkVal.toFixed(1) : '--';
-                cam1NetworkEl.className = 'latency-value ' + getLatencyClass(networkVal);
-            }
-            if (cam1RenderEl) {
-                cam1RenderEl.textContent = videoLatencyData.cam1_render_latency_ms.toFixed(1);
-            }
-            if (cam1TotalEl) {
-                const totalVal = videoLatencyData.cam1_total_latency_ms;
-                cam1TotalEl.textContent = totalVal > 0 ? totalVal.toFixed(1) : '--';
-                cam1TotalEl.className = 'latency-value ' + getLatencyClass(totalVal);
-            }
-            if (cam1BarEl) {
-                const barWidth = Math.min(100, (videoLatencyData.cam1_total_latency_ms / 500) * 100);
-                cam1BarEl.style.width = barWidth + '%';
-            }
-            
-            // Update stats
-            if (updateRateEl) {
-                updateRateEl.textContent = LATENCY_UPDATE_INTERVAL_MS + 'ms';
-            }
-            if (lastUpdateEl) {
-                lastUpdateEl.textContent = new Date().toLocaleTimeString();
-            }
-            
-            // Update status dot - green if any camera is providing data
-            if (statusDotEl) {
-                const hasData = videoLatencyData.cam0_network_latency_ms > 0 || videoLatencyData.cam1_network_latency_ms > 0;
-                statusDotEl.classList.remove('on', 'off');
-                statusDotEl.classList.add(hasData ? 'on' : 'off');
-            }
-        }
-        
+
+        // ===== HELPER FUNCTIONS =====
         function getLatencyClass(latencyMs) {
             if (latencyMs <= 0) return '';
             if (latencyMs < 100) return 'good';
             if (latencyMs < 250) return 'warning';
             return 'critical';
         }
+
+        function updateStatusDot(elementId, isOnline) {
+            const dot = document.getElementById(elementId);
+            if (!dot) return;
+            dot.classList.remove('on', 'off');
+            dot.classList.add(isOnline ? 'on' : 'off');
+        }
+
+        function updateLatencyValue(elementId, value, applyClass = false) {
+            const el = document.getElementById(elementId);
+            if (!el) return;
+            el.textContent = value > 0 ? value.toFixed(1) : '--';
+            if (applyClass) {
+                el.className = 'latency-value ' + getLatencyClass(value);
+            }
+        }
+
+        function updateLatencyBar(elementId, latencyMs, maxMs = 500) {
+            const el = document.getElementById(elementId);
+            if (!el) return;
+            const barWidth = Math.min(100, (latencyMs / maxMs) * 100);
+            el.style.width = barWidth + '%';
+        }
+
+        // ===== VIDEO LATENCY FUNCTIONS =====
+        function measureRenderLatency() {
+            if (cam0FrameLoadTime > 0 && cam0FrameRenderTime > 0) {
+                videoLatencyData.cam0_render_latency_ms = Math.max(0, cam0FrameRenderTime - cam0FrameLoadTime);
+            }
+            if (cam1FrameLoadTime > 0 && cam1FrameRenderTime > 0) {
+                videoLatencyData.cam1_render_latency_ms = Math.max(0, cam1FrameRenderTime - cam1FrameLoadTime);
+            }
+        }
+        
+        function setupImageLoadTracking() {
+            const setupCameraTracking = (camId) => {
+                const img = document.getElementById(`stream_${camId}`);
+                if (!img) return;
+                
+                img.addEventListener('load', () => {
+                    if (camId === 'cam0') {
+                        cam0FrameLoadTime = performance.now();
+                        requestAnimationFrame(() => cam0FrameRenderTime = performance.now());
+                    } else {
+                        cam1FrameLoadTime = performance.now();
+                        requestAnimationFrame(() => cam1FrameRenderTime = performance.now());
+                    }
+                });
+            };
+            
+            setupCameraTracking('cam0');
+            setupCameraTracking('cam1');
+        }
+        
+        function updateLatencyDisplay() {
+            // Calculate totals
+            videoLatencyData.cam0_total_latency_ms = videoLatencyData.cam0_network_latency_ms + videoLatencyData.cam0_render_latency_ms;
+            videoLatencyData.cam1_total_latency_ms = videoLatencyData.cam1_network_latency_ms + videoLatencyData.cam1_render_latency_ms;
+            
+            // Update cam0
+            updateLatencyValue('cam0-network-latency', videoLatencyData.cam0_network_latency_ms, true);
+            updateLatencyValue('cam0-render-latency', videoLatencyData.cam0_render_latency_ms);
+            updateLatencyValue('cam0-total-latency', videoLatencyData.cam0_total_latency_ms, true);
+            updateLatencyBar('cam0-latency-bar', videoLatencyData.cam0_total_latency_ms);
+            
+            // Update cam1
+            updateLatencyValue('cam1-network-latency', videoLatencyData.cam1_network_latency_ms, true);
+            updateLatencyValue('cam1-render-latency', videoLatencyData.cam1_render_latency_ms);
+            updateLatencyValue('cam1-total-latency', videoLatencyData.cam1_total_latency_ms, true);
+            updateLatencyBar('cam1-latency-bar', videoLatencyData.cam1_total_latency_ms);
+            
+            // Update stats
+            const updateRateEl = document.getElementById('latency-update-rate');
+            const lastUpdateEl = document.getElementById('latency-last-update');
+            if (updateRateEl) updateRateEl.textContent = LATENCY_UPDATE_INTERVAL_MS + 'ms';
+            if (lastUpdateEl) lastUpdateEl.textContent = new Date().toLocaleTimeString();
+            
+            // Update status dot
+            const hasData = videoLatencyData.cam0_network_latency_ms > 0 || videoLatencyData.cam1_network_latency_ms > 0;
+            updateStatusDot('latency-status-dot', hasData);
+        }
         
         function fetchVideoLatency() {
             fetch('/api/video_latency')
                 .then(response => response.json())
                 .then(data => {
-                    // Capture the moment we receive the API response
-                    const receiveTime = Date.now() / 1000;
-                    
-                    // Network latency from server
                     videoLatencyData.cam0_network_latency_ms = data.cam0_network_latency_ms || 0;
                     videoLatencyData.cam1_network_latency_ms = data.cam1_network_latency_ms || 0;
-                    
-                    // Measure render latency
                     measureRenderLatency();
-                    
-                    // Update display
-                    latencyUpdateCount++;
-                    lastLatencyUpdateTime = Date.now();
                     updateLatencyDisplay();
                 })
-                .catch(err => {
-                    console.error('Failed to fetch video latency:', err);
-                });
+                .catch(err => console.error('Failed to fetch video latency:', err));
         }
         
-        // Poll video latency at configured interval
-        setInterval(fetchVideoLatency, LATENCY_UPDATE_INTERVAL_MS);
-        fetchVideoLatency(); // Initial fetch
+        // ===== STATUS UPDATE FUNCTIONS =====
+        function updateStatusDots() {
+            fetch('/api/status')
+                .then(response => response.json())
+                .then(status => {
+                    updateStatusDot('main-status-dot', status.main_online);
+                    updateStatusDot('cam0-status-dot', status.cam0_online);
+                    updateStatusDot('cam1-status-dot', status.cam1_online);
+                    updateStatusDot('hq-status-dot', status.hq_online);
+                    updateStatusDot('map-status-dot', status.map_online);
+                })
+                .catch(err => console.error('Failed to fetch status:', err));
+        }
         
-        // ===== TELEMETRY WEBSOCKET CONNECTION =====
-        let telemetryData = {};
-        let telemetryLatencyMs = 0;
+        // ===== TELEMETRY WEBSOCKET FUNCTIONS =====
         
         function connectTelemetryWebSocket() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -364,14 +327,11 @@
                     const data = JSON.parse(event.data);
                     telemetryData = data;
                     
-                    // Calculate round-trip latency (including server-side latency)
                     const clientTime = Date.now() / 1000;
-                    const serverTime = data.timestamp;
-                    const roundTripLatency = (clientTime - serverTime) * 1000;
+                    const roundTripLatency = (clientTime - data.timestamp) * 1000;
                     telemetryLatencyMs = roundTripLatency + (data.server_latency_ms || 0);
                     
-                    // Log latency periodically
-                    if (Math.random() < 0.01) { // 1% of messages
+                    if (Math.random() < 0.01) {
                         console.log(`[Telemetry] Latency: ${telemetryLatencyMs.toFixed(1)}ms (client: ${roundTripLatency.toFixed(1)}ms + server: ${(data.server_latency_ms || 0).toFixed(1)}ms)`);
                     }
                 } catch (e) {
@@ -379,191 +339,108 @@
                 }
             };
             
-            telemetryWs.onerror = (error) => {
-                console.error('Telemetry WebSocket error:', error);
-            };
-            
-            telemetryWs.onopen = () => {
-                console.log('Telemetry WebSocket connected');
-            };
-            
+            telemetryWs.onerror = (error) => console.error('Telemetry WebSocket error:', error);
+            telemetryWs.onopen = () => console.log('Telemetry WebSocket connected');
             telemetryWs.onclose = () => {
                 console.warn('Telemetry WebSocket disconnected, attempting to reconnect in 2 seconds...');
                 setTimeout(connectTelemetryWebSocket, 2000);
             };
         }
         
-        // Connect to telemetry WebSocket
-        connectTelemetryWebSocket();
+        // ===== MAP CONTROL FUNCTIONS =====
         
-        // Setup image load tracking for render latency measurement
-        setupImageLoadTracking();
-        
-        // ===== STATUS UPDATE FUNCTION =====
-        function updateStatusDots() {
-            fetch('/api/status')
-                .then(response => response.json())
-                .then(status => {
-                    // Update all status dots
-                    const mainDot = document.getElementById('main-status-dot');
-                    const cam0Dot = document.getElementById('cam0-status-dot');
-                    const cam1Dot = document.getElementById('cam1-status-dot');
-                    const hqDot = document.getElementById('hq-status-dot');
-                    const mapDot = document.getElementById('map-status-dot');
-                    
-                    if (mainDot) {
-                        mainDot.classList.remove('on', 'off');
-                        mainDot.classList.add(status.main_online ? 'on' : 'off');
-                    }
-                    if (cam0Dot) {
-                        cam0Dot.classList.remove('on', 'off');
-                        cam0Dot.classList.add(status.cam0_online ? 'on' : 'off');
-                    }
-                    if (cam1Dot) {
-                        cam1Dot.classList.remove('on', 'off');
-                        cam1Dot.classList.add(status.cam1_online ? 'on' : 'off');
-                    }
-                    if (hqDot) {
-                        hqDot.classList.remove('on', 'off');
-                        hqDot.classList.add(status.hq_online ? 'on' : 'off');
-                    }
-                    if (mapDot) {
-                        mapDot.classList.remove('on', 'off');
-                        mapDot.classList.add(status.map_online ? 'on' : 'off');
-                    }
-                })
-                .catch(err => console.error('Failed to fetch status:', err));
-        }
-        
-        // Update status at configured interval
-        setInterval(updateStatusDots, STATUS_UPDATE_INTERVAL_MS);
-        updateStatusDots(); // Initial update
-        
-        const updateMapControls = () => {
+        function getMapIframe() {
             const mapCard = document.querySelector('[data-card-id="map"]');
-            const iframe = mapCard?.querySelector('iframe');
-            if (!mapCard || !iframe) return;
+            return mapCard?.querySelector('iframe');
+        }
 
-            const apply = () => {
+        function executeOnIframe(callback) {
+            const iframe = getMapIframe();
+            if (!iframe) return;
+
+            if (iframe.contentDocument?.readyState === 'complete') {
+                callback(iframe);
+            } else {
+                iframe.addEventListener('load', () => callback(iframe), { once: true });
+            }
+        }
+
+        function updateMapControls() {
+            executeOnIframe((iframe) => {
                 const doc = iframe.contentDocument || iframe.contentWindow?.document;
                 if (!doc) return;
-                const isExpanded = mapCard.classList.contains('expanded');
                 
-                // Hide leaflet controls when not expanded
+                const mapCard = document.querySelector('[data-card-id="map"]');
+                const isExpanded = mapCard?.classList.contains('expanded');
+                
                 doc.querySelectorAll('.leaflet-control').forEach(el => {
                     el.style.display = isExpanded ? '' : 'none';
                 });
                 
-                // Show/hide reset button
                 const resetBtn = doc.getElementById('reset-btn');
-                if (resetBtn) {
-                    resetBtn.style.display = isExpanded ? 'block' : 'none';
-                }
-            };
+                if (resetBtn) resetBtn.style.display = isExpanded ? 'block' : 'none';
+            });
+        }
 
-            if (iframe.contentDocument?.readyState === 'complete') {
-                apply();
-            } else {
-                iframe.addEventListener('load', apply, { once: true });
-            }
-        };
+        function callMapMethod(methodName) {
+            executeOnIframe((iframe) => {
+                setTimeout(() => iframe.contentWindow?.[methodName]?.(), 0);
+            });
+        }
 
-        const fitMapToBounds = () => {
-            const mapCard = document.querySelector('[data-card-id="map"]');
-            const iframe = mapCard?.querySelector('iframe');
-            const mapWin = iframe?.contentWindow;
-            if (!mapWin) return;
+        function fitMapToBounds() {
+            callMapMethod('fitBoundsView');
+        }
 
-            const doFit = () => mapWin.fitBoundsView?.();
-            if (iframe?.contentDocument?.readyState === 'complete') {
-                setTimeout(doFit, 0);
-            } else {
-                iframe?.addEventListener('load', () => setTimeout(doFit, 0), { once: true });
-            }
-        };
+        function resetMapView() {
+            callMapMethod('resetView');
+        }
 
-        const resetMapView = () => {
-            const mapCard = document.querySelector('[data-card-id="map"]');
-            const iframe = mapCard?.querySelector('iframe');
-            const mapWin = iframe?.contentWindow;
-            if (!mapWin) return;
-
-            const doReset = () => mapWin.resetView?.();
-            if (iframe?.contentDocument?.readyState === 'complete') {
-                setTimeout(doReset, 0);
-            } else {
-                iframe?.addEventListener('load', () => setTimeout(doReset, 0), { once: true });
-            }
-        };
-
-        const clearExpanded = () => {
+        function clearExpanded() {
             bannerSlot.innerHTML = '';
             document.querySelectorAll('.card.expanded').forEach(c => c.classList.remove('expanded'));
             document.body.classList.remove('expanded');
             document.exitFullscreen?.().catch(() => {});
             updateMapControls();
-        };
-
-        // Handle minimize button clicks first with capturing phase
-        document.addEventListener('click', e => {
-            if (e.target.closest('[data-minimize]')) {
-                e.preventDefault();
-                e.stopPropagation();
-                clearExpanded();
-                return;
-            }
-        }, true);
-
-        document.querySelectorAll('[data-card]').forEach(card => {
-            const header = card.querySelector('[data-header]');
-            card.addEventListener('click', e => {
-                if (!card.classList.contains('expanded')) {
-                    clearExpanded();
-                    card.classList.add('expanded');
-                    document.body.classList.add('expanded');
-                    const headerClone = header.cloneNode(true);
-                    headerClone.classList.add('in-banner');
-                    bannerSlot.appendChild(headerClone);
-                    document.documentElement.requestFullscreen?.().catch(() => {});
-                    updateMapControls();
-                }
-            });
-        });
-        document.querySelector('#banner img').addEventListener('click', e => {
-            e.stopPropagation();
-            location.reload();
-        });
-
-        // Initial setup for map controls
-        updateMapControls();
-
-        // ===== LOGIN SYSTEM =====
-        const loginModal = document.getElementById('loginModal');
-        const loginForm = document.getElementById('loginForm');
-        const loginError = document.getElementById('loginError');
-        const logoutBtn = document.getElementById('logoutBtn');
-        const usernameInput = document.getElementById('username');
-        const passwordInput = document.getElementById('password');
-        const rememberMeCheckbox = document.getElementById('rememberMe');
-
-        // Check if user is already logged in
-        function initializeLogin() {
-            const cachedToken = localStorage.getItem('sentryToken');
-            const cachedUsername = localStorage.getItem('sentryUsername');
-            
-            if (cachedToken && cachedUsername) {
-                // User is already logged in
-                hideLoginModal();
-            } else {
-                // User needs to log in
-                showLoginModal();
-            }
         }
 
+        // ===== CARD EXPANSION HANDLERS =====
+        function setupCardExpansion() {
+            document.addEventListener('click', e => {
+                if (e.target.closest('[data-minimize]')) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    clearExpanded();
+                }
+            }, true);
+
+            document.querySelectorAll('[data-card]').forEach(card => {
+                const header = card.querySelector('[data-header]');
+                card.addEventListener('click', () => {
+                    if (!card.classList.contains('expanded')) {
+                        clearExpanded();
+                        card.classList.add('expanded');
+                        document.body.classList.add('expanded');
+                        const headerClone = header.cloneNode(true);
+                        headerClone.classList.add('in-banner');
+                        bannerSlot.appendChild(headerClone);
+                        document.documentElement.requestFullscreen?.().catch(() => {});
+                        updateMapControls();
+                    }
+                });
+            });
+
+            document.querySelector('#banner img').addEventListener('click', e => {
+                e.stopPropagation();
+                location.reload();
+            });
+        }
+
+        // ===== LOGIN FUNCTIONS =====
         function showLoginModal() {
             loginModal.classList.remove('hidden');
             document.body.style.overflow = 'hidden';
-            usernameInput.focus();
+            document.getElementById('username').focus();
         }
 
         function hideLoginModal() {
@@ -571,77 +448,85 @@
             document.body.style.overflow = 'auto';
         }
 
-        // Handle login form submission
-        loginForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            
-            const username = usernameInput.value.trim();
-            const password = passwordInput.value.trim();
-            const rememberMe = rememberMeCheckbox.checked;
+        function initializeLogin() {
+            const cachedToken = localStorage.getItem('sentryToken');
+            const cachedUsername = localStorage.getItem('sentryUsername');
+            (cachedToken && cachedUsername) ? hideLoginModal() : showLoginModal();
+        }
 
-            try {
-                const response = await fetch('/api/authenticate', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ username, password })
-                });
+        function setupLoginHandlers() {
+            loginForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                
+                const username = document.getElementById('username').value.trim();
+                const password = document.getElementById('password').value.trim();
+                const rememberMe = document.getElementById('rememberMe').checked;
 
-                const data = await response.json();
+                try {
+                    const response = await fetch('/api/authenticate', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ username, password })
+                    });
 
-                if (data.success) {
-                    // Store credentials if remember me is checked
-                    if (rememberMe) {
-                        localStorage.setItem('sentryToken', data.token);
-                        localStorage.setItem('sentryUsername', username);
+                    const data = await response.json();
+
+                    if (data.success) {
+                        if (rememberMe) {
+                            localStorage.setItem('sentryToken', data.token);
+                            localStorage.setItem('sentryUsername', username);
+                        }
+                        loginForm.reset();
+                        loginError.classList.add('hidden');
+                        hideLoginModal();
+                    } else {
+                        loginError.textContent = data.message || 'Invalid username or password';
+                        loginError.classList.remove('hidden');
+                        document.getElementById('password').value = '';
+                        document.getElementById('password').focus();
                     }
-                    
-                    // Clear form
-                    loginForm.reset();
-                    loginError.classList.add('hidden');
-                    
-                    // Hide login modal
-                    hideLoginModal();
-                } else {
-                    // Show error message
-                    loginError.textContent = data.message || 'Invalid username or password';
+                } catch (error) {
+                    loginError.textContent = 'An error occurred. Please try again.';
                     loginError.classList.remove('hidden');
-                    passwordInput.value = '';
-                    passwordInput.focus();
+                    console.error('Login error:', error);
                 }
-            } catch (error) {
-                loginError.textContent = 'An error occurred. Please try again.';
-                loginError.classList.remove('hidden');
-                console.error('Login error:', error);
-            }
-        });
+            });
 
-        // Handle logout
-        logoutBtn.addEventListener('click', async () => {
-            try {
-                await fetch('/api/logout', { method: 'POST' });
-            } catch (error) {
-                console.error('Logout error:', error);
-            }
-            
-            // Clear stored credentials
-            localStorage.removeItem('sentryToken');
-            localStorage.removeItem('sentryUsername');
-            
-            // Show login modal
-            loginForm.reset();
-            showLoginModal();
-        });
+            logoutBtn.addEventListener('click', async () => {
+                try {
+                    await fetch('/api/logout', { method: 'POST' });
+                } catch (error) {
+                    console.error('Logout error:', error);
+                }
+                localStorage.removeItem('sentryToken');
+                localStorage.removeItem('sentryUsername');
+                loginForm.reset();
+                showLoginModal();
+            });
+        }
 
-        // Initialize login on page load
-        document.addEventListener('DOMContentLoaded', initializeLogin);
-        
-        // Also run immediately in case DOM is already loaded
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', initializeLogin);
-        } else {
+        // ===== INITIALIZATION =====
+        function initialize() {
+            setupImageLoadTracking();
+            setupCardExpansion();
+            setupLoginHandlers();
+            updateMapControls();
+            
+            connectTelemetryWebSocket();
+            
+            setInterval(fetchVideoLatency, LATENCY_UPDATE_INTERVAL_MS);
+            fetchVideoLatency();
+            
+            setInterval(updateStatusDots, STATUS_UPDATE_INTERVAL_MS);
+            updateStatusDots();
+            
             initializeLogin();
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initialize);
+        } else {
+            initialize();
         }
     </script>
 </body>
