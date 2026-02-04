@@ -82,7 +82,7 @@ def init_camera(cam_id, formats, color=True):
     return MockCamera(VIDEO_WIDTH, VIDEO_HEIGHT, color=color), 'MOCK'
 
 
-cam0, _ = init_camera(0, ['XRGB8888'], color=True)
+cam0, _ = init_camera(1, ['XRGB8888'], color=True)
 cam1, cam1_format = init_camera(0, ['YUV420', 'XRGB8888'], color=False)
 
 
