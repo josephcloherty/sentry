@@ -106,7 +106,7 @@
         <div class="card latency-card" data-card data-card-id="latency">
             <div class="card-header" data-header>
                 <span id="latency-status-dot" class="status-dot off"></span>
-                <h2>Video Latency</h2>
+                <h2>Latency Monitoring</h2>
                 <button class="minimize" data-minimize>Minimize</button>
             </div>
             <div class="media latency-content">
@@ -157,6 +157,20 @@
                             <div id="cam1-latency-bar" class="latency-bar"></div>
                         </div>
                     </div>
+                    <!-- MAVLink telemetry card (latency only, with bar) -->
+                    <div class="latency-section">
+                        <h3>MAVLink Telemetry</h3>
+                        <div class="latency-metrics">
+                            <div class="latency-row">
+                                <span class="latency-label">Latency:</span>
+                                <span id="mavlink-latency" class="latency-value">--</span>
+                                <span class="latency-unit">ms</span>
+                            </div>
+                        </div>
+                        <div class="latency-bar-container">
+                            <div id="mavlink-latency-bar" class="latency-bar"></div>
+                        </div>
+                    </div>
                     <div class="latency-stats">
                         <div class="stat-item">
                             <span class="stat-label">Update Rate:</span>
@@ -173,9 +187,21 @@
         </div>
     </div>
 
+    <!-- Minimap tab (left) and minimap overlay (bottom-right) -->
+    <div id="minimap-tab" class="minimap-tab" aria-hidden="true">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+    </div>
+
+    <div id="minimap" class="minimap" aria-hidden="true">
+        <div class="minimap-bar" id="minimap-bar"></div>
+        <div class="minimap-content" id="minimap-content">
+            <!-- iframe cloned here when available; no text per design -->
+        </div>
+    </div>
+
     <script>
         // ===== GLOBAL CONFIGURATION =====
-        const LATENCY_UPDATE_INTERVAL_MS = 500;
+        const LATENCY_UPDATE_INTERVAL_MS = 2000;
         const STATUS_UPDATE_INTERVAL_MS = 30000;
         
         // ===== GLOBAL DOM ELEMENTS =====
@@ -286,8 +312,12 @@
             if (lastUpdateEl) lastUpdateEl.textContent = new Date().toLocaleTimeString();
             
             // Update status dot
-            const hasData = videoLatencyData.cam0_network_latency_ms > 0 || videoLatencyData.cam1_network_latency_ms > 0;
+            const hasData = videoLatencyData.cam0_network_latency_ms > 0 || videoLatencyData.cam1_network_latency_ms > 0 || telemetryLatencyMs > 0;
             updateStatusDot('latency-status-dot', hasData);
+
+            // Update MAVLink telemetry latency display and bar
+            updateLatencyValue('mavlink-latency', telemetryLatencyMs || 0, true);
+            updateLatencyBar('mavlink-latency-bar', telemetryLatencyMs || 0);
         }
         
         function fetchVideoLatency() {
@@ -319,32 +349,72 @@
         // ===== TELEMETRY WEBSOCKET FUNCTIONS =====
         
         function connectTelemetryWebSocket() {
-            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const telemetryWs = new WebSocket(`${protocol}//${window.location.hostname}:8764`);
+            const urls = [
+                'ws://100.112.223.17:8764',
+                `ws://localhost:8888`
+            ];
+            let urlIndex = 0;
+            let reconnectAttempts = 0;
+            const maxReconnectAttempts = 3;
             
-            telemetryWs.onmessage = (event) => {
-                try {
-                    const data = JSON.parse(event.data);
-                    telemetryData = data;
-                    
-                    const clientTime = Date.now() / 1000;
-                    const roundTripLatency = (clientTime - data.timestamp) * 1000;
-                    telemetryLatencyMs = roundTripLatency + (data.server_latency_ms || 0);
-                    
-                    if (Math.random() < 0.01) {
-                        console.log(`[Telemetry] Latency: ${telemetryLatencyMs.toFixed(1)}ms (client: ${roundTripLatency.toFixed(1)}ms + server: ${(data.server_latency_ms || 0).toFixed(1)}ms)`);
+            function attemptConnection() {
+                console.log(`Attempting to connect to ${urls[urlIndex]} (attempt ${reconnectAttempts + 1})`);
+                
+                const telemetryWs = new WebSocket(urls[urlIndex]);
+                const connectionTimeout = setTimeout(() => {
+                    console.warn(`Connection timeout for ${urls[urlIndex]}`);
+                    telemetryWs.close();
+                }, 3000);
+                
+                telemetryWs.onopen = () => {
+                    clearTimeout(connectionTimeout);
+                    console.log(`✓ Connected to telemetry at ${urls[urlIndex]}`);
+                    reconnectAttempts = 0;
+                };
+                
+                telemetryWs.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        telemetryData = data;
+                        
+                        const clientTime = Date.now() / 1000;
+                        const roundTripLatency = (clientTime - data.timestamp) * 1000;
+                        telemetryLatencyMs = roundTripLatency + (data.server_latency_ms || 0);
+                        
+                        if (Math.random() < 0.01) {
+                            console.log(`[Telemetry] Latency: ${telemetryLatencyMs.toFixed(1)}ms (client: ${roundTripLatency.toFixed(1)}ms + server: ${(data.server_latency_ms || 0).toFixed(1)}ms)`);
+                        }
+                    } catch (e) {
+                        console.error('Failed to parse telemetry data:', e);
                     }
-                } catch (e) {
-                    console.error('Failed to parse telemetry data:', e);
-                }
-            };
+                };
+                
+                telemetryWs.onerror = (error) => {
+                    clearTimeout(connectionTimeout);
+                    console.error(`WebSocket error for ${urls[urlIndex]}:`, error);
+                };
+                
+                telemetryWs.onclose = () => {
+                    clearTimeout(connectionTimeout);
+                    console.log(`✗ Connection closed for ${urls[urlIndex]}`);
+                    
+                    reconnectAttempts++;
+                    if (reconnectAttempts >= maxReconnectAttempts) {
+                        console.log('Max attempts reached, trying next URL');
+                        urlIndex++;
+                        reconnectAttempts = 0;
+                        
+                        if (urlIndex >= urls.length) {
+                            console.log('All telemetry URLs exhausted, restarting from first URL');
+                            urlIndex = 0;
+                        }
+                    }
+                    
+                    setTimeout(attemptConnection, 1000);
+                };
+            }
             
-            telemetryWs.onerror = (error) => console.error('Telemetry WebSocket error:', error);
-            telemetryWs.onopen = () => console.log('Telemetry WebSocket connected');
-            telemetryWs.onclose = () => {
-                console.warn('Telemetry WebSocket disconnected, attempting to reconnect in 2 seconds...');
-                setTimeout(connectTelemetryWebSocket, 2000);
-            };
+            setTimeout(attemptConnection, 300);
         }
         
         // ===== MAP CONTROL FUNCTIONS =====
@@ -382,6 +452,108 @@
             });
         }
 
+        // ===== MINIMAP (small persistent map) =====
+        let minimapOpen = false;
+
+        function updateMinimapVisibility() {
+            const expandedCard = document.querySelector('.card.expanded');
+            const showTab = expandedCard && ['cam0', 'cam1', 'hq'].includes(expandedCard.getAttribute('data-card-id'));
+            const tab = document.getElementById('minimap-tab');
+            if (tab) tab.style.display = showTab ? 'flex' : 'none';
+            if (!showTab) {
+                minimapOpen = false;
+                const mm = document.getElementById('minimap');
+                if (mm) mm.classList.remove('open');
+                const content = document.getElementById('minimap-content');
+                if (content) content.querySelectorAll('iframe').forEach(n => n.remove());
+            }
+        }
+
+        function showMinimap() {
+            minimapOpen = true;
+            const mm = document.getElementById('minimap');
+            if (mm) mm.classList.add('open');
+
+            const content = document.getElementById('minimap-content');
+            if (!content) return;
+            content.querySelectorAll('iframe, .map-clone').forEach(n => n.remove());
+
+            const iframe = getMapIframe();
+            if (iframe && iframe.src) {
+                try {
+                    const clone = document.createElement('iframe');
+                    clone.src = iframe.src;
+                    clone.style.width = '100%';
+                    clone.style.height = '100%';
+                    clone.style.border = '0';
+                    clone.className = 'map-clone';
+                    // when iframe loads, hide leaflet controls inside it
+                    clone.addEventListener('load', () => {
+                        try {
+                            const doc = clone.contentDocument || clone.contentWindow.document;
+                            if (doc) {
+                                const removeControls = () => {
+                                    doc.querySelectorAll('.leaflet-control, #reset-btn, .leaflet-control-zoom, .leaflet-control-container').forEach(el => {
+                                        try { el.style.display = 'none'; el.remove?.(); } catch(e) {}
+                                    });
+                                };
+                                removeControls();
+                                // in case controls are added later, observe and remove
+                                try {
+                                    const obs = new MutationObserver(removeControls);
+                                    obs.observe(doc.body, { childList: true, subtree: true });
+                                    setTimeout(() => obs.disconnect(), 3000);
+                                } catch (e) {}
+                            }
+                        } catch (e) {
+                            console.warn('Unable to hide controls in cloned iframe minimap', e);
+                        }
+                    }, { once: true });
+
+                    content.appendChild(clone);
+                    return;
+                } catch (e) {
+                    console.warn('Failed to clone map iframe for minimap', e);
+                }
+            }
+
+            const mapCard = document.querySelector('[data-card-id="map"]');
+            const mapContainer = mapCard?.querySelector('.map-container');
+            if (mapContainer) {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'map-clone';
+                wrapper.style.width = '100%';
+                wrapper.style.height = '100%';
+                wrapper.style.overflow = 'hidden';
+                wrapper.innerHTML = mapContainer.innerHTML;
+                // remove/hide leaflet controls in the copied HTML and watch for late additions
+                const removeInlineControls = () => {
+                    wrapper.querySelectorAll('.leaflet-control, #reset-btn, .leaflet-control-zoom, .leaflet-control-container').forEach(el => {
+                        try { el.remove(); } catch (e) {}
+                    });
+                };
+                removeInlineControls();
+                try {
+                    const obs = new MutationObserver(removeInlineControls);
+                    obs.observe(wrapper, { childList: true, subtree: true });
+                    setTimeout(() => obs.disconnect(), 3000);
+                } catch (e) {}
+                content.appendChild(wrapper);
+            }
+        }
+
+        function hideMinimap() {
+            minimapOpen = false;
+            const mm = document.getElementById('minimap');
+            if (mm) mm.classList.remove('open');
+            const content = document.getElementById('minimap-content');
+            if (content) content.querySelectorAll('iframe').forEach(n => n.remove());
+        }
+
+        function toggleMinimap() {
+            if (minimapOpen) hideMinimap(); else showMinimap();
+        }
+
         function callMapMethod(methodName) {
             executeOnIframe((iframe) => {
                 setTimeout(() => iframe.contentWindow?.[methodName]?.(), 0);
@@ -402,6 +574,7 @@
             document.body.classList.remove('expanded');
             document.exitFullscreen?.().catch(() => {});
             updateMapControls();
+            updateMinimapVisibility();
         }
 
         // ===== CARD EXPANSION HANDLERS =====
@@ -410,6 +583,19 @@
                 if (e.target.closest('[data-minimize]')) {
                     e.preventDefault();
                     e.stopPropagation();
+                    
+                    // Check if we're minimizing the map card and enable follow mode
+                    const card = e.target.closest('[data-card]');
+                    if (card && card.getAttribute('data-card-id') === 'map') {
+                        // Enable follow mode when map is minimized
+                        executeOnIframe((iframe) => {
+                            const win = iframe.contentWindow;
+                            if (win && win.isFollowing !== undefined) {
+                                win.isFollowing = true;
+                            }
+                        });
+                    }
+                    
                     clearExpanded();
                 }
             }, true);
@@ -426,6 +612,7 @@
                         bannerSlot.appendChild(headerClone);
                         document.documentElement.requestFullscreen?.().catch(() => {});
                         updateMapControls();
+                            updateMinimapVisibility();
                     }
                 });
             });
@@ -511,6 +698,10 @@
             setupCardExpansion();
             setupLoginHandlers();
             updateMapControls();
+            updateMinimapVisibility();
+            // wire minimap UI (tab toggles open/close)
+            const tab = document.getElementById('minimap-tab');
+            if (tab) tab.addEventListener('click', (e) => { e.stopPropagation(); toggleMinimap(); });
             
             connectTelemetryWebSocket();
             
@@ -521,6 +712,7 @@
             updateStatusDots();
             
             initializeLogin();
+            updateMapControls();  // Ensure map controls are properly initialized
         }
 
         if (document.readyState === 'loading') {

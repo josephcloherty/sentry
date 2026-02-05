@@ -63,6 +63,26 @@ class MockCamera:
 
 
 # ===== Camera Initialization =====
+def detect_camera_type(cam_id):
+    """Detect if camera is a regular Pi Cam or Pi Cam Noir."""
+    try:
+        cam = Picamera2(cam_id)
+        camera_props = cam.camera_properties
+        model = camera_props.get('Model', 'unknown').lower()
+        
+        # Pi Cam Noir typically has 'noir' in the model name
+        # Also check for specific model numbers:
+        # - imx219 noir, ov5647 noir, etc.
+        is_noir = 'noir' in model
+        
+        print(f"Camera {cam_id}: Model={camera_props.get('Model', 'unknown')}, Is Noir={is_noir}")
+        cam.close()
+        return is_noir
+    except Exception as e:
+        print(f"Warning: Could not detect camera {cam_id} type: {e}")
+        return None
+
+
 def init_camera(cam_id, formats, color=True):
     """Initialize camera with format fallback chain."""
     try:
@@ -82,8 +102,54 @@ def init_camera(cam_id, formats, color=True):
     return MockCamera(VIDEO_WIDTH, VIDEO_HEIGHT, color=color), 'MOCK'
 
 
-cam0, _ = init_camera(1, ['XRGB8888'], color=True)
-cam1, cam1_format = init_camera(0, ['YUV420', 'XRGB8888'], color=False)
+# Detect available cameras and their types
+available_cameras = []
+for i in range(2):
+    try:
+        cam_type = detect_camera_type(i)
+        if cam_type is not None:
+            available_cameras.append({'id': i, 'is_noir': cam_type})
+    except Exception as e:
+        print(f"Camera {i} not available: {e}")
+
+print(f"Available cameras: {available_cameras}")
+
+# Assign cameras ensuring cam0=normal, cam1=noir
+cam0_id = None
+cam1_id = None
+
+for cam_info in available_cameras:
+    if not cam_info['is_noir'] and cam0_id is None:
+        cam0_id = cam_info['id']
+    elif cam_info['is_noir'] and cam1_id is None:
+        cam1_id = cam_info['id']
+
+# If we can't find both types, use whatever is available
+if cam0_id is None and available_cameras:
+    # Use first non-noir or any available camera
+    for cam_info in available_cameras:
+        if cam_info['id'] != cam1_id:
+            cam0_id = cam_info['id']
+            break
+
+if cam1_id is None and available_cameras:
+    # Use first noir or any available camera
+    for cam_info in available_cameras:
+        if cam_info['id'] != cam0_id:
+            cam1_id = cam_info['id']
+            break
+
+# Default to 0 and 1 if detection failed
+if cam0_id is None:
+    cam0_id = 0
+if cam1_id is None:
+    cam1_id = 1
+
+print(f"Assigning cam0 (color) to camera ID {cam0_id}")
+print(f"Assigning cam1 (noir/IR) to camera ID {cam1_id}")
+
+cam0, _ = init_camera(cam0_id, ['XRGB8888'], color=True)
+cam1, cam1_format = init_camera(cam1_id, ['YUV420', 'XRGB8888'], color=False)
 
 
 # ===== Helper Functions =====

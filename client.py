@@ -8,34 +8,48 @@ import socket
 import struct
 import time
 import websockets
-from functools import lru_cache
-from pathlib import Path
 from threading import Thread
+from collections import deque
+import statistics
 
-import folium
-import geopandas as gpd
 from flask import Flask, Response, jsonify, render_template, request
 
-from attitude import draw_attitude_indicator
-from battery import draw_battery_widget
-from compass import draw_compass
+from functions.attitude import draw_attitude_indicator
+from functions.battery import draw_battery_widget
+from functions.map import generate_map_html
+from functions.compass import draw_compass
 
 # ===== Configuration =====
-STATUS_UPDATE_INTERVAL_MS = 500
+STATUS_UPDATE_INTERVAL_MS = 2000
 STATUS_TIMEOUT = 3.0
-SERVER_IP = '100.112.223.17'
-CAM0_PORT = 8765
-CAM1_PORT = 8766
-TELEMETRY_PORT = 8764
+
+# Toggle test mode to use local test telemetry/streams (set True to enable)
+# When enabled: telemetry WS -> ws://localhost:8888, cam0 -> localhost:8886, cam1 -> localhost:8887
+TEST_MODE = True
+
+if TEST_MODE:
+    SERVER_IP = 'localhost'
+    CAM0_PORT = 8886
+    CAM1_PORT = 8887
+    TELEMETRY_PORT = 8888
+else:
+    SERVER_IP = '100.112.223.17'
+    CAM0_PORT = 8765
+    CAM1_PORT = 8766
+    TELEMETRY_PORT = 8764
 VALID_USERNAME = 'argus'
 VALID_PASSWORD = 'sentry'
 
 # ===== Global State =====
 app = Flask(__name__, static_folder='templates', static_url_path='')
 
-# Video frames
+# Video frames (store dicts with timing info)
 frame_cam0 = None
 frame_cam1 = None
+
+# Per-camera latency sample buffers (store tuples of (network_ms, render_ms))
+cam0_latency_samples = deque(maxlen=200)
+cam1_latency_samples = deque(maxlen=200)
 
 # Connection timestamps
 last_cam0_time = 0
@@ -47,6 +61,8 @@ video_latency_cam0_ms = 0
 video_latency_cam1_ms = 0
 cam0_frame_timestamp = 0
 cam1_frame_timestamp = 0
+cam0_render_latency_ms = 0
+cam1_render_latency_ms = 0
 
 # Connection status
 cam0_online = False
@@ -86,18 +102,6 @@ def is_main_online():
 
 def is_map_online():
     return mav_online
-
-
-@lru_cache(maxsize=1)
-def load_geodata():
-    gpkg_path = Path(__file__).parent / 'dev' / 'map' / 'NorthWest_Railways.gpkg'
-    if not gpkg_path.exists():
-        return None, None
-    gdf = gpd.read_file(gpkg_path)
-    gdf['geometry'] = gdf['geometry'].simplify(tolerance=0.001, preserve_topology=True)
-    if gdf.crs and gdf.crs.to_epsg() != 4326:
-        gdf = gdf.to_crs(epsg=4326)
-    return gdf.__geo_interface__, gdf.total_bounds
 
 
 def decode_video_frame(data):
@@ -153,18 +157,29 @@ async def receive_video(cam_id, port):
                     receive_time = time.time()
                     frame, timestamp = decode_video_frame(data)
                     
+                    # Store frame along with timing info so we can compute network + render latency later
                     if cam_id == 0:
-                        frame_cam0 = frame
+                        network_ms = (receive_time - timestamp) * 1000 if timestamp else None
+                        frame_cam0 = {
+                            'frame': frame,
+                            'server_ts': timestamp,
+                            'receive_time': receive_time,
+                            'network_ms': network_ms
+                        }
                         last_cam0_time = receive_time
                         if timestamp:
                             cam0_frame_timestamp = timestamp
-                            video_latency_cam0_ms = (receive_time - timestamp) * 1000
                     else:
-                        frame_cam1 = frame
+                        network_ms = (receive_time - timestamp) * 1000 if timestamp else None
+                        frame_cam1 = {
+                            'frame': frame,
+                            'server_ts': timestamp,
+                            'receive_time': receive_time,
+                            'network_ms': network_ms
+                        }
                         last_cam1_time = receive_time
                         if timestamp:
                             cam1_frame_timestamp = timestamp
-                            video_latency_cam1_ms = (receive_time - timestamp) * 1000
         except websockets.exceptions.ConnectionClosed:
             print(f"Camera {cam_id} WebSocket disconnected, reconnecting in 2 seconds...")
         except Exception as e:
@@ -227,10 +242,12 @@ def status_monitor():
 
 # ===== Frame Generators =====
 def gen_frames_cam0():
+    global video_latency_cam0_ms, cam0_render_latency_ms, cam0_frame_timestamp
     while True:
         if frame_cam0 is None:
             continue
-        f = frame_cam0.copy()
+        entry = frame_cam0
+        f = entry['frame'].copy()
         h, w = f.shape[:2]
         
         draw_compass(f, mavlink_data['yaw'], 0, h - 130, 120)
@@ -238,98 +255,66 @@ def gen_frames_cam0():
         draw_battery_widget(f, mavlink_data['battery_remaining'], position=(10, 10), width=60, height=20)
         draw_telemetry_text(f, mavlink_data)
         
+        # Compute render latency (time from receive to actual render) and record samples
+        render_time = time.time()
+        render_ms = (render_time - entry['receive_time']) * 1000 if entry.get('receive_time') else None
+        network_ms = entry.get('network_ms')
+        cam0_latency_samples.append((network_ms, render_ms))
+
+        # Update median stats
+        nets = [n for n, r in cam0_latency_samples if n is not None]
+        renders = [r for n, r in cam0_latency_samples if r is not None]
+        if renders:
+            cam0_render_latency_ms = statistics.median(renders)
+        else:
+            cam0_render_latency_ms = 0
+        if nets:
+            video_latency_cam0_ms = statistics.median(nets)
+        else:
+            video_latency_cam0_ms = cam0_render_latency_ms
+
+        # expose latest frame timestamp
+        try:
+            cam0_frame_timestamp = entry.get('server_ts') or cam0_frame_timestamp
+        except NameError:
+            cam0_frame_timestamp = entry.get('server_ts')
+
         _, jpeg = cv2.imencode('.jpg', f, [cv2.IMWRITE_JPEG_QUALITY, 90])
         yield b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + jpeg.tobytes() + b'\r\n'
 
 
 def gen_frames_cam1():
+    global video_latency_cam1_ms, cam1_render_latency_ms, cam1_frame_timestamp
     while True:
         if frame_cam1 is None:
             continue
-        _, jpeg = cv2.imencode('.jpg', frame_cam1.copy(), [cv2.IMWRITE_JPEG_QUALITY, 90])
+        entry = frame_cam1
+        f = entry['frame'].copy()
+
+        # Compute render latency and record
+        render_time = time.time()
+        render_ms = (render_time - entry['receive_time']) * 1000 if entry.get('receive_time') else None
+        network_ms = entry.get('network_ms')
+        cam1_latency_samples.append((network_ms, render_ms))
+
+        nets = [n for n, r in cam1_latency_samples if n is not None]
+        renders = [r for n, r in cam1_latency_samples if r is not None]
+        if renders:
+            cam1_render_latency_ms = statistics.median(renders)
+        else:
+            cam1_render_latency_ms = 0
+        if nets:
+            video_latency_cam1_ms = statistics.median(nets)
+        else:
+            video_latency_cam1_ms = cam1_render_latency_ms
+
+        try:
+            cam1_frame_timestamp = entry.get('server_ts') or cam1_frame_timestamp
+        except NameError:
+            cam1_frame_timestamp = entry.get('server_ts')
+
+        _, jpeg = cv2.imencode('.jpg', f, [cv2.IMWRITE_JPEG_QUALITY, 90])
         yield b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + jpeg.tobytes() + b'\r\n'
-
-
-# ===== Map Generation =====
-def generate_map_html():
-    """Generate map HTML with current telemetry data."""
-    geojson_data, bounds = load_geodata()
-    lat = mavlink_data['lat'] if mavlink_data['lat'] != 0 else 53.406049
-    lon = mavlink_data['lon'] if mavlink_data['lon'] != 0 else -2.968585
-    yaw = mavlink_data['yaw']
-    location = [lat, lon]
-    
-    m = folium.Map(
-        location=location,
-        zoom_start=20,
-        tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-        attr='Esri'
-    )
-    
-    if geojson_data:
-        folium.GeoJson(geojson_data, style_function=lambda x: {'color': '#0066cc', 'weight': 2}).add_to(m)
-
-    if bounds is not None:
-        m.fit_bounds([[bounds[1], bounds[0]], [bounds[3], bounds[2]]])
-    
-    # Add sentry icon marker
-    icon_path = Path(__file__).parent / 'templates' / 'images' / 'sentry_icon_white.png'
-    if icon_path.exists():
-        icon_html = f'''
-        <div class="sentry-marker-icon" style="width: 50px; height: 50px; transform: translate(-50%, -50%) rotate({yaw}deg);">
-            <img src="/images/sentry_icon_white.png" style="width: 50px; height: 50px; display: block;" />
-        </div>'''
-        folium.Marker(location=location, icon=folium.DivIcon(html=icon_html, class_name='sentry-marker-container')).add_to(m)
-    
-    # Add map controls script
-    map_id = m.get_name()
-    bounds_js = f"[[{bounds[1]}, {bounds[0]}], [{bounds[3]}, {bounds[2]}]]" if bounds is not None else "null"
-    
-    control_script = f"""
-    <div id="reset-btn" style="position: fixed; top: 15px; right: 15px; z-index: 1000; display: none;">
-        <button onclick="resetView()" style="padding: 10px 15px; background: white; border: 2px solid rgba(0,0,0,0.2); border-radius: 4px; cursor: pointer; font-weight: bold; box-shadow: 0 1px 5px rgba(0,0,0,0.4);">Reset View</button>
-    </div>
-    <script>
-        var __defaultCenter = [{location[0]}, {location[1]}];
-        var __defaultZoom = 20;
-        var __bounds = {bounds_js};
-        var __sentryMarker = null;
-        var __mapObj = null;
-
-        document.addEventListener('DOMContentLoaded', function() {{
-            __mapObj = window['{map_id}'];
-            if (__mapObj) {{
-                __mapObj.eachLayer(function(layer) {{
-                    if (layer instanceof L.Marker) __sentryMarker = layer;
-                }});
-            }}
-        }});
-
-        window.updateSentryMarker = function(lat, lon, yaw) {{
-            if (__sentryMarker && __mapObj) {{
-                __sentryMarker.setLatLng([lat, lon]);
-                var iconDiv = document.querySelector('.sentry-marker-icon');
-                if (iconDiv) iconDiv.style.transform = 'translate(-50%, -50%) rotate(' + yaw + 'deg)';
-            }}
-        }};
-
-        window.resetView = function() {{
-            var mapObj = window['{map_id}'];
-            if (mapObj) {{ mapObj.setView(__defaultCenter, __defaultZoom); mapObj.invalidateSize(); }}
-        }};
-
-        window.fitBoundsView = function() {{
-            var mapObj = window['{map_id}'];
-            if (mapObj) {{
-                if (__bounds) mapObj.fitBounds(__bounds);
-                else mapObj.setView(__defaultCenter, __defaultZoom);
-                mapObj.invalidateSize();
-            }}
-        }};
-    </script>"""
-    m.get_root().html.add_child(folium.Element(control_script))
-    
-    return m._repr_html_()
 
 
 # ===== Flask Routes =====
@@ -343,7 +328,7 @@ def index():
         cam1_online=cam1_online,
         hq_online=hq_online,
         map_online=is_map_online(),
-        map_html=generate_map_html(),
+        map_html=generate_map_html(mavlink_data['lat'], mavlink_data['lon'], mavlink_data['yaw'], test_mode=TEST_MODE),
         status_update_interval_ms=STATUS_UPDATE_INTERVAL_MS
     )
 
@@ -383,9 +368,13 @@ def api_status():
 def api_video_latency():
     return jsonify({
         'cam0_network_latency_ms': round(video_latency_cam0_ms, 2),
+        'cam0_render_latency_ms': round(cam0_render_latency_ms, 2),
         'cam1_network_latency_ms': round(video_latency_cam1_ms, 2),
+        'cam1_render_latency_ms': round(cam1_render_latency_ms, 2),
         'cam0_frame_timestamp': cam0_frame_timestamp,
         'cam1_frame_timestamp': cam1_frame_timestamp,
+        'cam0_samples': len(cam0_latency_samples),
+        'cam1_samples': len(cam1_latency_samples),
         'cam0_online': cam0_online,
         'cam1_online': cam1_online,
         'server_time': time.time()
