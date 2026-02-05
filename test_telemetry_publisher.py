@@ -26,10 +26,9 @@ async def producer():
     t0 = time.time()
     try:
         while True:
-            t = time.time() - t0
-            # Synthetic attitude: yaw slowly rotating, roll/pitch small oscillations
-            yaw = (t * 30) % 360  # 30 deg/sec rotation
-            yaw += 10.0 * math.sin(t * 2.0)
+            now = time.time()
+            t = now - t0
+            # Simulated GPS-based heading: we'll compute yaw from motion direction
             roll = 5.0 * math.sin(t * 1.5)  # +/-5 deg
             pitch = 3.0 * math.sin(t * 1.2)  # +/-3 deg
             # Throttle: pseudo throttle oscillating 20-80%
@@ -45,10 +44,16 @@ async def producer():
             deg_per_meter = 1.0 / 111320.0
             radius_deg = radius_m * deg_per_meter
             # use a slow angular speed for the circular motion
-            angle = t * 0.1
+            angular_speed = 0.1  # rad/s
+            angle = t * angular_speed
             lat = base_lat + radius_deg * math.sin(angle)
             # scale longitude by cos(latitude) to approximate degrees->meters
             lon = base_lon + (radius_deg * math.cos(angle)) / max(0.0001, math.cos(math.radians(base_lat)))
+            # compute heading (yaw) analytically so the nose stays tangent to the circle
+            # For the chosen param: lat ~ sin(angle), lon ~ cos(angle) -> heading = -angle (radians)
+            yaw = ( -math.degrees(angle) + 360.0 ) % 360.0
+            # ground speed (m/s) = radius (m) * angular_speed (rad/s)
+            ground_speed = radius_m * angular_speed
 
             payload = json.dumps({
                 "yaw": round(yaw, 2),
@@ -60,7 +65,7 @@ async def producer():
                 "battery_remaining": int(max(0, min(100, round(battery)))),
                 # additional fields client may expect
                 "alt": round(100.0 + 5.0 * math.sin(t * 0.2), 1),
-                "ground_speed": round(5.0 + 2.0 * math.sin(t * 0.7), 1),
+                "ground_speed": round(ground_speed, 1),
                 "lat": round(lat, 6),
                 "lon": round(lon, 6),
                 "timestamp": time.time(),
