@@ -32,11 +32,13 @@ if TEST_MODE:
     CAM0_PORT = 8886
     CAM1_PORT = 8887
     TELEMETRY_PORT = 8888
+    COMMAND_PORT = 8889
 else:
     SERVER_IP = '100.112.223.17'
     CAM0_PORT = 8765
     CAM1_PORT = 8766
     TELEMETRY_PORT = 8764
+    COMMAND_PORT = 8763
 VALID_USERNAME = 'argus'
 VALID_PASSWORD = 'sentry'
 
@@ -57,12 +59,12 @@ last_cam1_time = 0
 last_mav_time = 0
 
 # Video latency tracking
-video_latency_cam0_ms = 0
+video_latency_cam0_ms = 0  # Network latency (server to client receive)
 video_latency_cam1_ms = 0
 cam0_frame_timestamp = 0
 cam1_frame_timestamp = 0
-cam0_render_latency_ms = 0
-cam1_render_latency_ms = 0
+cam0_processing_latency_ms = 0  # Backend processing time (overlays + JPEG encode)
+cam1_processing_latency_ms = 0
 
 # Connection status
 cam0_online = False
@@ -79,6 +81,18 @@ mavlink_data = {
     "timestamp": 0, "server_latency_ms": 0
 }
 telemetry_latency_ms = 0
+
+# Command state (mirrors server-side boolean flags)
+command_state = {
+    'go_dark': False,
+    'night_vision': False,
+    'auto_rth': False,
+    'drop_gps_pin': False,
+    'emergency': False,
+    'loiter': False,
+    'landing_mode': False,
+}
+command_ws = None  # Persistent WebSocket to server for commands
 
 # Legacy UDP socket
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -242,7 +256,7 @@ def status_monitor():
 
 # ===== Frame Generators =====
 def gen_frames_cam0():
-    global video_latency_cam0_ms, cam0_render_latency_ms, cam0_frame_timestamp
+    global video_latency_cam0_ms, cam0_processing_latency_ms, cam0_frame_timestamp
     while True:
         if frame_cam0 is None:
             continue
@@ -250,71 +264,106 @@ def gen_frames_cam0():
         f = entry['frame'].copy()
         h, w = f.shape[:2]
         
+        # Start timing backend processing
+        processing_start = time.time()
+        
+        # Draw overlays
         draw_compass(f, mavlink_data['yaw'], 0, h - 130, 120)
         draw_attitude_indicator(f, mavlink_data['roll'], mavlink_data['pitch'], x=w - 130, y=h - 130, size=120)
         draw_battery_widget(f, mavlink_data['battery_remaining'], position=(10, 10), width=60, height=20)
         draw_telemetry_text(f, mavlink_data)
         
-        # Compute render latency (time from receive to actual render) and record samples
-        render_time = time.time()
-        render_ms = (render_time - entry['receive_time']) * 1000 if entry.get('receive_time') else None
+        # Encode to JPEG
+        _, jpeg = cv2.imencode('.jpg', f, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        
+        # Compute backend processing latency (overlays + encoding)
+        processing_time = time.time()
+        processing_ms = (processing_time - processing_start) * 1000
         network_ms = entry.get('network_ms')
-        cam0_latency_samples.append((network_ms, render_ms))
+        
+        # Record samples: (network_latency, backend_processing_latency)
+        cam0_latency_samples.append((network_ms, processing_ms))
 
-        # Update median stats
+        # Update median stats for network latency
         nets = [n for n, r in cam0_latency_samples if n is not None]
-        renders = [r for n, r in cam0_latency_samples if r is not None]
-        if renders:
-            cam0_render_latency_ms = statistics.median(renders)
+        procs = [r for n, r in cam0_latency_samples if r is not None]
+        if procs:
+            cam0_processing_latency_ms = statistics.median(procs)
         else:
-            cam0_render_latency_ms = 0
+            cam0_processing_latency_ms = 0
         if nets:
             video_latency_cam0_ms = statistics.median(nets)
         else:
-            video_latency_cam0_ms = cam0_render_latency_ms
+            video_latency_cam0_ms = 0
 
-        # expose latest frame timestamp
+        # Expose latest frame timestamp
         try:
             cam0_frame_timestamp = entry.get('server_ts') or cam0_frame_timestamp
         except NameError:
             cam0_frame_timestamp = entry.get('server_ts')
 
-        _, jpeg = cv2.imencode('.jpg', f, [cv2.IMWRITE_JPEG_QUALITY, 90])
-        yield b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + jpeg.tobytes() + b'\r\n'
+        # Store latest JPEG bytes and per-frame metadata for one-shot snapshot endpoint
+        try:
+            entry['last_jpeg'] = jpeg.tobytes()
+            entry['last_processing_ms'] = processing_ms
+            entry['last_server_ts'] = entry.get('server_ts')
+            # preserve the network latency computed when frame was received via websocket
+            entry['last_network_ms'] = entry.get('network_ms')
+        except Exception:
+            pass
+
+        yield b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + entry['last_jpeg'] + b'\r\n'
 
 
 def gen_frames_cam1():
-    global video_latency_cam1_ms, cam1_render_latency_ms, cam1_frame_timestamp
+    global video_latency_cam1_ms, cam1_processing_latency_ms, cam1_frame_timestamp
     while True:
         if frame_cam1 is None:
             continue
         entry = frame_cam1
         f = entry['frame'].copy()
 
-        # Compute render latency and record
-        render_time = time.time()
-        render_ms = (render_time - entry['receive_time']) * 1000 if entry.get('receive_time') else None
+        # Start timing backend processing
+        processing_start = time.time()
+        
+        # Encode to JPEG (no overlays for cam1)
+        _, jpeg = cv2.imencode('.jpg', f, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        
+        # Compute backend processing latency
+        processing_time = time.time()
+        processing_ms = (processing_time - processing_start) * 1000
         network_ms = entry.get('network_ms')
-        cam1_latency_samples.append((network_ms, render_ms))
+        
+        # Record samples
+        cam1_latency_samples.append((network_ms, processing_ms))
 
+        # Update median stats
         nets = [n for n, r in cam1_latency_samples if n is not None]
-        renders = [r for n, r in cam1_latency_samples if r is not None]
-        if renders:
-            cam1_render_latency_ms = statistics.median(renders)
+        procs = [r for n, r in cam1_latency_samples if r is not None]
+        if procs:
+            cam1_processing_latency_ms = statistics.median(procs)
         else:
-            cam1_render_latency_ms = 0
+            cam1_processing_latency_ms = 0
         if nets:
             video_latency_cam1_ms = statistics.median(nets)
         else:
-            video_latency_cam1_ms = cam1_render_latency_ms
+            video_latency_cam1_ms = 0
 
         try:
             cam1_frame_timestamp = entry.get('server_ts') or cam1_frame_timestamp
         except NameError:
             cam1_frame_timestamp = entry.get('server_ts')
 
-        _, jpeg = cv2.imencode('.jpg', f, [cv2.IMWRITE_JPEG_QUALITY, 90])
-        yield b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + jpeg.tobytes() + b'\r\n'
+        # Store latest JPEG bytes and per-frame metadata for one-shot snapshot endpoint
+        try:
+            entry['last_jpeg'] = jpeg.tobytes()
+            entry['last_processing_ms'] = processing_ms
+            entry['last_server_ts'] = entry.get('server_ts')
+            entry['last_network_ms'] = entry.get('network_ms')
+        except Exception:
+            pass
+
+        yield b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + entry['last_jpeg'] + b'\r\n'
 
 
 # ===== Flask Routes =====
@@ -366,11 +415,21 @@ def api_status():
 
 @app.route('/api/video_latency')
 def api_video_latency():
+    """Return video latency metrics.
+    
+    Returns:
+        - network_latency_ms: Time from server capture to client receipt
+        - processing_latency_ms: Backend processing (overlays + JPEG encoding)
+        - render_latency_ms: Frontend rendering (measured by browser)
+        - Total latency = network + processing + render
+    """
     return jsonify({
         'cam0_network_latency_ms': round(video_latency_cam0_ms, 2),
-        'cam0_render_latency_ms': round(cam0_render_latency_ms, 2),
+        'cam0_processing_latency_ms': round(cam0_processing_latency_ms, 2),
+        'cam0_render_latency_ms': 0,  # Placeholder - measured by frontend
         'cam1_network_latency_ms': round(video_latency_cam1_ms, 2),
-        'cam1_render_latency_ms': round(cam1_render_latency_ms, 2),
+        'cam1_processing_latency_ms': round(cam1_processing_latency_ms, 2),
+        'cam1_render_latency_ms': 0,  # Placeholder - measured by frontend
         'cam0_frame_timestamp': cam0_frame_timestamp,
         'cam1_frame_timestamp': cam1_frame_timestamp,
         'cam0_samples': len(cam0_latency_samples),
@@ -397,8 +456,127 @@ def logout():
     return jsonify({'success': True})
 
 
+async def receive_commands():
+    """Connect to the server's command WebSocket and keep command_state in sync."""
+    global command_state, command_ws
+
+    while True:
+        try:
+            async with websockets.connect(f'ws://{SERVER_IP}:{COMMAND_PORT}') as ws:
+                command_ws = ws
+                print("Connected to command WebSocket.")
+                async for message in ws:
+                    try:
+                        msg = json.loads(message)
+                        if msg.get('type') == 'state' and 'commands' in msg:
+                            command_state.update(msg['commands'])
+                    except json.JSONDecodeError:
+                        pass
+        except websockets.exceptions.ConnectionRefused:
+            print("Command server not available, retrying in 2 seconds...")
+        except Exception as e:
+            print(f"Command WebSocket error: {e}")
+        finally:
+            command_ws = None
+        await asyncio.sleep(2)
+
+
+@app.route('/api/commands')
+def api_commands():
+    """Return current command states."""
+    return jsonify(command_state)
+
+
+@app.route('/api/command', methods=['POST'])
+def api_command_toggle():
+    """Toggle a single command and forward to server via WebSocket."""
+    data = request.json
+    cmd_id = data.get('id')
+    value = data.get('value')
+    is_pulse = data.get('pulse', False)
+    
+    if is_pulse:
+        print(f"[Flask] Received pulse command: '{cmd_id}'")
+    else:
+        print(f"[Flask] Received command toggle: '{cmd_id}' -> {value}")
+    
+    if cmd_id not in command_state:
+        return jsonify({'success': False, 'message': 'Unknown command'}), 400
+    
+    # For pulse commands, don't update local state
+    if not is_pulse:
+        command_state[cmd_id] = bool(value)
+    
+    # Forward to server via the persistent WebSocket
+    if command_ws:
+        try:
+            msg = {'type': 'pulse' if is_pulse else 'toggle', 'id': cmd_id, 'value': bool(value)}
+            print(f"[Flask] Forwarding to server: {msg}")
+            asyncio.run_coroutine_threadsafe(
+                command_ws.send(json.dumps(msg)),
+                command_loop
+            )
+        except Exception as e:
+            print(f"Failed to forward command to server: {e}")
+    else:
+        print("[Flask] Warning: command_ws is None, cannot forward to server")
+    return jsonify({'success': True, 'commands': command_state})
+
+
+@app.route('/api/snapshot_cam0')
+def api_snapshot_cam0():
+    """Return the latest JPEG snapshot for cam0 (one-shot)."""
+    if frame_cam0 and isinstance(frame_cam0, dict) and frame_cam0.get('last_jpeg'):
+        headers = {}
+        # include per-frame metadata if available
+        try:
+            if frame_cam0.get('last_server_ts'):
+                headers['X-Frame-Ts'] = str(frame_cam0.get('last_server_ts'))
+            if frame_cam0.get('last_processing_ms') is not None:
+                headers['X-Processing-Ms'] = str(frame_cam0.get('last_processing_ms'))
+            if frame_cam0.get('last_network_ms') is not None:
+                headers['X-Network-Ms'] = str(frame_cam0.get('last_network_ms'))
+        except Exception:
+            pass
+        return Response(frame_cam0['last_jpeg'], mimetype='image/jpeg', headers=headers)
+    return ('', 204)
+
+
+@app.route('/api/snapshot_cam1')
+def api_snapshot_cam1():
+    """Return the latest JPEG snapshot for cam1 (one-shot)."""
+    if frame_cam1 and isinstance(frame_cam1, dict) and frame_cam1.get('last_jpeg'):
+        headers = {}
+        try:
+            if frame_cam1.get('last_server_ts'):
+                headers['X-Frame-Ts'] = str(frame_cam1.get('last_server_ts'))
+            if frame_cam1.get('last_processing_ms') is not None:
+                headers['X-Processing-Ms'] = str(frame_cam1.get('last_processing_ms'))
+            if frame_cam1.get('last_network_ms') is not None:
+                headers['X-Network-Ms'] = str(frame_cam1.get('last_network_ms'))
+        except Exception:
+            pass
+        return Response(frame_cam1['last_jpeg'], mimetype='image/jpeg', headers=headers)
+    return ('', 204)
+
+
+@app.route('/map_embed')
+def map_embed():
+    """Return a full standalone map HTML page for embedding in an iframe."""
+    html = generate_map_html(mavlink_data['lat'], mavlink_data['lon'], mavlink_data['yaw'], test_mode=TEST_MODE)
+    return Response(html, mimetype='text/html')
+
+
 # ===== Main =====
 if __name__ == '__main__':
+    # Create a dedicated event loop for the command WebSocket
+    import threading
+    command_loop = asyncio.new_event_loop()
+    def run_command_loop():
+        asyncio.set_event_loop(command_loop)
+        command_loop.run_until_complete(receive_commands())
+    Thread(target=run_command_loop, daemon=True).start()
+
     Thread(target=lambda: asyncio.run(receive_video(0, CAM0_PORT)), daemon=True).start()
     Thread(target=lambda: asyncio.run(receive_video(1, CAM1_PORT)), daemon=True).start()
     Thread(target=lambda: asyncio.run(receive_telemetry()), daemon=True).start()

@@ -83,7 +83,8 @@ def generate_map_html(lat, lon, yaw, test_mode=False):
 
     # Choose telemetry URL list. When `test_mode` is True include the local test WS as a fallback.
     if test_mode:
-        urls_js = "['ws://100.112.223.17:8764', 'ws://localhost:8888']"
+        # Prefer localhost first in test mode to reduce connection delays during development
+        urls_js = "['ws://localhost:8888', 'ws://100.112.223.17:8764']"
     else:
         urls_js = "['ws://100.112.223.17:8764']"
 

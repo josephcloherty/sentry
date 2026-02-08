@@ -8,6 +8,47 @@ body {
     width: 100%;
     margin: 0;
     background-color: #f0f0f0;
+    position: relative;
+    transition: box-shadow 0.3s ease;
+}
+
+/* Emergency mode - red glow effect */
+body.emergency-mode {
+    box-shadow: inset 0 0 80px 20px rgba(239, 68, 68, 0.3);
+    animation: emergency-body-pulse 2s ease-in-out infinite;
+}
+
+body.emergency-mode::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    border: 4px solid rgba(239, 68, 68, 0.6);
+    pointer-events: none;
+    z-index: 9999;
+    animation: emergency-border-pulse 2s ease-in-out infinite;
+}
+
+@keyframes emergency-body-pulse {
+    0%, 100% { 
+        box-shadow: inset 0 0 80px 20px rgba(239, 68, 68, 0.25);
+    }
+    50% { 
+        box-shadow: inset 0 0 100px 30px rgba(239, 68, 68, 0.4);
+    }
+}
+
+@keyframes emergency-border-pulse {
+    0%, 100% { 
+        border-color: rgba(239, 68, 68, 0.5);
+        box-shadow: inset 0 0 40px rgba(239, 68, 68, 0.3), 0 0 40px rgba(239, 68, 68, 0.3);
+    }
+    50% { 
+        border-color: rgba(239, 68, 68, 0.8);
+        box-shadow: inset 0 0 60px rgba(239, 68, 68, 0.5), 0 0 60px rgba(239, 68, 68, 0.5);
+    }
 }
 
 /* ===== LOGIN MODAL STYLES ===== */
@@ -301,10 +342,113 @@ body {
     justify-content: center;
 }
 
+.media.command-suite {
+    background: #f5f7fb;
+    aspect-ratio: 4/3;
+}
+
 .media img {
     width: 100%;
     height: 100%;
     object-fit: cover;
+}
+
+/* ===== COMMAND SUITE ===== */
+.command-grid {
+    display: grid;
+    gap: 8px;
+    padding: 12px;
+    height: 100%;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.command-grid.compact-view {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-rows: 1fr;
+}
+
+.command-grid.full-view {
+    display: none;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-auto-rows: minmax(46px, 1fr);
+}
+
+.card.expanded .command-grid.compact-view {
+    display: none;
+}
+
+.card.expanded .command-grid.full-view {
+    display: grid;
+}
+
+.command-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid #dbe5f2;
+    background: #ffffff;
+    border-radius: 10px;
+    padding: 8px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #1e3c72;
+    cursor: pointer;
+    min-height: 42px;
+    transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease, transform 0.1s ease;
+    text-align: left;
+}
+
+.command-btn:hover {
+    border-color: #2a5298;
+    transform: translateY(-1px);
+}
+
+.command-btn:active {
+    transform: translateY(0);
+}
+
+.command-btn.is-active {
+    background: #1e3c72;
+    color: #ffffff;
+    border-color: #1e3c72;
+    box-shadow: 0 6px 16px rgba(30, 60, 114, 0.25);
+}
+
+.command-btn.is-pulse {
+    border-style: dashed;
+}
+
+.command-btn.is-pending {
+    animation: command-pulse 0.4s ease-out;
+}
+
+.command-icon {
+    width: 18px;
+    height: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: inherit;
+    flex: 0 0 18px;
+}
+
+.command-icon svg {
+    width: 18px;
+    height: 18px;
+}
+
+.command-label {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    line-height: 1.15;
+}
+
+@keyframes command-pulse {
+    0% { box-shadow: 0 0 0 0 rgba(30, 60, 114, 0.35); }
+    100% { box-shadow: 0 0 0 12px rgba(30, 60, 114, 0); }
 }
 
 .media.empty {
@@ -691,3 +835,245 @@ body.expanded { overflow: hidden; }
 
 /* Datacard & latency-dashboard rules are defined earlier and intentionally
    consolidated above to keep a single source of truth for sizing and spacing. */
+
+/* ===== COMMAND FUNCTIONS CARD ===== */
+.commands-card .commands-content {
+    background: linear-gradient(180deg, #1a1f2e 0%, #0d1117 100%);
+    padding: 16px;
+    aspect-ratio: auto;
+    min-height: 200px;
+    display: flex;
+    align-items: stretch;
+    justify-content: stretch;
+}
+
+.commands-dashboard {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    align-content: start;
+}
+
+.cmd-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.03);
+    color: #9ca3af;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-family: inherit;
+    font-size: 13px;
+    text-align: left;
+    width: 100%;
+}
+
+.cmd-btn:hover {
+    background: rgba(255, 255, 255, 0.07);
+    border-color: rgba(255, 255, 255, 0.15);
+    color: #d1d5db;
+}
+
+.cmd-btn.active {
+    background: rgba(16, 185, 129, 0.12);
+    border-color: rgba(16, 185, 129, 0.4);
+    color: #10b981;
+}
+
+.cmd-btn.active:hover {
+    background: rgba(16, 185, 129, 0.2);
+    border-color: rgba(16, 185, 129, 0.6);
+}
+
+.cmd-btn.emergency-active {
+    background: rgba(239, 68, 68, 0.15);
+    border-color: rgba(239, 68, 68, 0.5);
+    color: #ef4444;
+    animation: emergency-pulse 1.5s ease-in-out infinite;
+}
+
+.cmd-btn.emergency-active:hover {
+    background: rgba(239, 68, 68, 0.25);
+    border-color: rgba(239, 68, 68, 0.7);
+}
+
+@keyframes emergency-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.3); }
+    50% { box-shadow: 0 0 12px 2px rgba(239, 68, 68, 0.25); }
+}
+
+.cmd-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.04);
+}
+
+/* Push button styling */
+.cmd-btn.push-btn {
+    background: rgba(59, 130, 246, 0.08);
+    border-color: rgba(59, 130, 246, 0.2);
+    color: #60a5fa;
+}
+
+.cmd-btn.push-btn:hover {
+    background: rgba(59, 130, 246, 0.15);
+    border-color: rgba(59, 130, 246, 0.4);
+}
+
+.cmd-btn.push-btn .cmd-icon {
+    background: rgba(59, 130, 246, 0.12);
+}
+
+.cmd-btn.push-btn .cmd-toggle {
+    background: rgba(59, 130, 246, 0.15);
+    color: #60a5fa;
+}
+
+.cmd-btn.pulsing {
+    animation: button-pulse 0.3s ease-out;
+}
+
+@keyframes button-pulse {
+    0% { 
+        transform: scale(1);
+        box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7);
+    }
+    50% {
+        transform: scale(1.05);
+        box-shadow: 0 0 0 8px rgba(59, 130, 246, 0);
+    }
+    100% { 
+        transform: scale(1);
+        box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
+    }
+}
+
+.cmd-btn.active .cmd-icon {
+    background: rgba(16, 185, 129, 0.15);
+}
+
+.cmd-btn.emergency-active .cmd-icon {
+    background: rgba(239, 68, 68, 0.2);
+}
+
+.cmd-label {
+    flex: 1;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.cmd-toggle {
+    font-size: 11px;
+    font-weight: 700;
+    font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
+    letter-spacing: 0.5px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.06);
+    flex-shrink: 0;
+}
+
+.cmd-btn.active .cmd-toggle {
+    background: rgba(16, 185, 129, 0.2);
+    color: #10b981;
+}
+
+.cmd-btn.emergency-active .cmd-toggle {
+    background: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+}
+
+/* Commands card uses flex like latency and map */
+.card[data-card-id="commands"] {
+    display: flex;
+    flex-direction: column;
+}
+
+.card[data-card-id="commands"]:not(.expanded) .commands-content {
+    flex: 0 0 60%;
+    max-height: none;
+    overflow: hidden;
+    padding: 10px;
+}
+
+.card[data-card-id="commands"]:not(.expanded) .commands-dashboard {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+    align-content: center;
+    height: 100%;
+}
+
+.card[data-card-id="commands"]:not(.expanded) .cmd-btn {
+    padding: 8px 10px;
+    gap: 6px;
+    font-size: 11px;
+    min-height: auto;
+    flex-direction: column;
+    text-align: center;
+}
+
+.card[data-card-id="commands"]:not(.expanded) .cmd-icon {
+    width: 22px;
+    height: 22px;
+}
+
+.card[data-card-id="commands"]:not(.expanded) .cmd-icon svg {
+    width: 14px;
+    height: 14px;
+}
+
+.card[data-card-id="commands"]:not(.expanded) .cmd-label {
+    font-size: 10px;
+    line-height: 1.2;
+}
+
+.card[data-card-id="commands"]:not(.expanded) .cmd-toggle {
+    font-size: 9px;
+    padding: 2px 5px;
+}
+
+/* Expanded commands card: show all buttons in a wider grid */
+.card.expanded.commands-card .commands-content {
+    min-height: calc(100vh - 180px);
+    padding: 24px;
+}
+
+.card.expanded.commands-card .commands-dashboard {
+    max-width: 600px;
+    margin: 0 auto;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 14px;
+    align-content: center;
+}
+
+.card.expanded.commands-card .cmd-btn {
+    padding: 18px 20px;
+    font-size: 15px;
+    border-radius: 12px;
+}
+
+.card.expanded.commands-card .cmd-icon {
+    width: 36px;
+    height: 36px;
+}
+
+.card.expanded.commands-card .cmd-icon svg {
+    width: 22px;
+    height: 22px;
+}
+
+.card.expanded.commands-card .cmd-toggle {
+    font-size: 13px;
+    padding: 4px 10px;
+}

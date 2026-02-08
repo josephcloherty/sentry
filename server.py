@@ -22,6 +22,7 @@ VIDEO_PORT_1 = 8765
 VIDEO_PORT_2 = 8766
 TELEMETRY_PORT = 8764
 TELEMETRY_HZ = 50
+COMMAND_PORT = 8763
 
 # ===== Global State =====
 mavlink_data = {
@@ -32,6 +33,18 @@ mavlink_data = {
     'timestamp': 0
 }
 telemetry_clients = set()
+
+# Command state and clients
+command_state = {
+    'go_dark': False,
+    'night_vision': False,
+    'auto_rth': False,
+    'drop_gps_pin': False,
+    'emergency': False,
+    'loiter': False,
+    'landing_mode': False,
+}
+command_clients = set()
 
 # ===== MAVLink & Socket Setup =====
 print("Connecting to MAVLink...")
@@ -260,6 +273,59 @@ async def stream_telemetry(ws):
         print(f"Telemetry client disconnected. Total: {len(telemetry_clients)}")
 
 
+# ===== Commands =====
+async def broadcast_command_state():
+    if not command_clients:
+        return
+    payload = json.dumps({'type': 'state', 'commands': command_state})
+    disconnected = set()
+    for ws in command_clients:
+        try:
+            await ws.send(payload)
+        except websockets.exceptions.ConnectionClosed:
+            disconnected.add(ws)
+    command_clients.difference_update(disconnected)
+
+
+async def command_handler(ws):
+    """WebSocket handler for command toggles/pulses."""
+    command_clients.add(ws)
+    print(f"Command client connected. Total: {len(command_clients)}")
+
+    # Send current state on connect
+    try:
+        await ws.send(json.dumps({'type': 'state', 'commands': command_state}))
+    except Exception:
+        pass
+
+    try:
+        async for message in ws:
+            try:
+                msg = json.loads(message)
+            except json.JSONDecodeError:
+                continue
+
+            cmd_id = msg.get('id')
+            if cmd_id not in command_state:
+                continue
+
+            msg_type = msg.get('type')
+            if msg_type == 'toggle':
+                command_state[cmd_id] = bool(msg.get('value'))
+                await broadcast_command_state()
+            elif msg_type == 'pulse':
+                # Pulse commands do not change persistent state
+                try:
+                    await ws.send(json.dumps({'type': 'pulse', 'id': cmd_id, 'value': True}))
+                except Exception:
+                    pass
+            else:
+                continue
+    finally:
+        command_clients.discard(ws)
+        print(f"Command client disconnected. Total: {len(command_clients)}")
+
+
 async def broadcast_telemetry():
     """Broadcast telemetry to all connected WebSocket clients."""
     while True:
@@ -328,11 +394,13 @@ async def mavlink_broadcast():
 async def main():
     async with websockets.serve(stream_cam0, '0.0.0.0', VIDEO_PORT_1), \
                websockets.serve(stream_cam1, '0.0.0.0', VIDEO_PORT_2), \
-               websockets.serve(stream_telemetry, '0.0.0.0', TELEMETRY_PORT):
+         websockets.serve(stream_telemetry, '0.0.0.0', TELEMETRY_PORT), \
+         websockets.serve(command_handler, '0.0.0.0', COMMAND_PORT):
         print(f"Server running:")
         print(f"  - Video cam0: ws://0.0.0.0:{VIDEO_PORT_1}")
         print(f"  - Video cam1: ws://0.0.0.0:{VIDEO_PORT_2}")
         print(f"  - Telemetry:  ws://0.0.0.0:{TELEMETRY_PORT} ({TELEMETRY_HZ}Hz)")
+     print(f"  - Commands:   ws://0.0.0.0:{COMMAND_PORT}")
         print(f"  - UDP legacy: broadcast:5000 (10Hz)")
         asyncio.create_task(mavlink_broadcast())
         asyncio.create_task(broadcast_telemetry())
