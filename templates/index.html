@@ -87,8 +87,8 @@
                 <h2>High Quality Camera</h2>
                 <button class="minimize" data-minimize>Minimize</button>
             </div>
-            <div class="media empty">
-                <div class="placeholder">EMPTY</div>
+            <div class="media">
+                <img id="stream_hq" src="{{ url_for('video_feed_hq') }}">
             </div>
             <div class="camera-function-rail" data-function-rail data-camera-id="hq" aria-label="High quality camera functions"></div>
             <div class="desc">High Quality camera for detailed imaging (Gimbal)</div>
@@ -274,9 +274,12 @@
         </div>
     </div>
 
+    <script type="application/json" id="camera-function-tabs-data">{{ camera_function_tabs | tojson }}</script>
+
     <script>
         // ===== GLOBAL CONFIGURATION =====
-        const CAMERA_FUNCTION_TABS = {{ camera_function_tabs | tojson }};
+        const CAMERA_FUNCTION_TABS_DATA_ID = 'camera-function-tabs-data';
+        const CAMERA_FUNCTION_TABS = JSON.parse(document.getElementById(CAMERA_FUNCTION_TABS_DATA_ID)?.textContent || '{}');
         const LATENCY_UPDATE_INTERVAL_MS = 500;
         const LATENCY_SNAPSHOT_TIMEOUT_MS = 1500;
         const LATENCY_THRESHOLD_GOOD_MS = 100;

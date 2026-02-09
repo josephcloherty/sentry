@@ -20,6 +20,13 @@ VIDEO_HEIGHT = 480
 JPEG_QUALITY = 75
 VIDEO_PORT_1 = 8765
 VIDEO_PORT_2 = 8766
+HQ_VIDEO_PORT = 8767
+HQ_VIDEO_FPS = 30
+HQ_VIDEO_WIDTH = 1920
+HQ_VIDEO_HEIGHT = 1080
+HQ_JPEG_QUALITY = 80
+HQ_DEVICE_CANDIDATES = [0, 1, 2]
+HQ_CAPTURE_BACKEND = None  # None = default, or use cv2.CAP_V4L2/cv2.CAP_AVFOUNDATION
 TELEMETRY_PORT = 8764
 TELEMETRY_HZ = 50
 COMMAND_PORT = 8763
@@ -161,11 +168,34 @@ if cam0_id is not None:
 if cam1_id is not None:
     cam1, cam1_format = init_camera(cam1_id, ['YUV420', 'XRGB8888'], color=False)
 
+# ===== GoPro (USB) Initialization =====
+gopro_capture = None
+
+
+def init_gopro_capture():
+    """Initialize GoPro USB capture using OpenCV VideoCapture."""
+    backend = HQ_CAPTURE_BACKEND
+    for device_id in HQ_DEVICE_CANDIDATES:
+        try:
+            cap = cv2.VideoCapture(device_id, backend) if backend is not None else cv2.VideoCapture(device_id)
+            if not cap or not cap.isOpened():
+                if cap:
+                    cap.release()
+                continue
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, HQ_VIDEO_WIDTH)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, HQ_VIDEO_HEIGHT)
+            cap.set(cv2.CAP_PROP_FPS, HQ_VIDEO_FPS)
+            print(f"GoPro capture opened on device {device_id}")
+            return cap
+        except Exception as e:
+            print(f"Warning: GoPro capture init failed on device {device_id}: {e}")
+    return None
+
 
 # ===== Helper Functions =====
-def encode_frame_with_timestamp(frame):
+def encode_frame_with_timestamp(frame, quality=JPEG_QUALITY):
     """Encode frame as JPEG with prepended timestamp."""
-    _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+    _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
     return struct.pack('d', time.time()) + buffer.tobytes()
 
 
@@ -233,7 +263,7 @@ async def stream_cam0(ws):
 
     while True:
         frame = cam0.capture_array()
-        await ws.send(encode_frame_with_timestamp(frame))
+        await ws.send(encode_frame_with_timestamp(frame, quality=JPEG_QUALITY))
         await asyncio.sleep(1.0 / VIDEO_FPS)
 
 
@@ -283,8 +313,45 @@ async def stream_cam1(ws):
             except Exception as e:
                 print(f"Warning: brightest-region fallback failed: {e}")
         
-        await ws.send(encode_frame_with_timestamp(display_frame))
+        await ws.send(encode_frame_with_timestamp(display_frame, quality=JPEG_QUALITY))
         await asyncio.sleep(1.0 / VIDEO_FPS)
+
+
+async def stream_hq(ws):
+    """Stream GoPro USB feed over WebSocket."""
+    global gopro_capture
+    print("Client connected to video stream (hq).")
+    if gopro_capture is None or not gopro_capture.isOpened():
+        gopro_capture = init_gopro_capture()
+
+    if gopro_capture is None or not gopro_capture.isOpened():
+        print("GoPro not available; closing connection")
+        try:
+            await ws.send(json.dumps({'type': 'error', 'message': 'GoPro not available'}))
+        except Exception:
+            pass
+        await ws.close()
+        return
+
+    while True:
+        try:
+            ret, frame = await asyncio.to_thread(gopro_capture.read)
+            if not ret or frame is None:
+                print("Warning: GoPro frame read failed, attempting reinit")
+                try:
+                    gopro_capture.release()
+                except Exception:
+                    pass
+                gopro_capture = init_gopro_capture()
+                await asyncio.sleep(1.0)
+                continue
+            await ws.send(encode_frame_with_timestamp(frame, quality=HQ_JPEG_QUALITY))
+            await asyncio.sleep(1.0 / HQ_VIDEO_FPS)
+        except websockets.exceptions.ConnectionClosed:
+            break
+        except Exception as e:
+            print(f"GoPro stream error: {e}")
+            await asyncio.sleep(0.5)
 
 
 # ===== Telemetry =====
@@ -418,13 +485,15 @@ async def mavlink_broadcast():
 
 # ===== Main =====
 async def main():
-    async with websockets.serve(stream_cam0, '0.0.0.0', VIDEO_PORT_1), \
+        async with websockets.serve(stream_cam0, '0.0.0.0', VIDEO_PORT_1), \
                websockets.serve(stream_cam1, '0.0.0.0', VIDEO_PORT_2), \
-         websockets.serve(stream_telemetry, '0.0.0.0', TELEMETRY_PORT), \
-         websockets.serve(command_handler, '0.0.0.0', COMMAND_PORT):
+               websockets.serve(stream_hq, '0.0.0.0', HQ_VIDEO_PORT), \
+           websockets.serve(stream_telemetry, '0.0.0.0', TELEMETRY_PORT), \
+           websockets.serve(command_handler, '0.0.0.0', COMMAND_PORT):
         print(f"Server running:")
         print(f"  - Video cam0: ws://0.0.0.0:{VIDEO_PORT_1}")
         print(f"  - Video cam1: ws://0.0.0.0:{VIDEO_PORT_2}")
+        print(f"  - Video HQ:   ws://0.0.0.0:{HQ_VIDEO_PORT}")
         print(f"  - Telemetry:  ws://0.0.0.0:{TELEMETRY_PORT} ({TELEMETRY_HZ}Hz)")
         print(f"  - Commands:   ws://0.0.0.0:{COMMAND_PORT}")
         print(f"  - UDP legacy: broadcast:5000 (10Hz)")

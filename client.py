@@ -18,6 +18,7 @@ from functions.attitude import draw_attitude_indicator
 from functions.battery import draw_battery_widget
 from functions.map import generate_map_html
 from functions.compass import draw_compass
+from functions.throttle import draw_throttle_widget
 
 # ===== Configuration =====
 STATUS_UPDATE_INTERVAL_MS = 2000
@@ -32,12 +33,14 @@ if TEST_MODE:
     SERVER_IP = 'localhost'
     CAM0_PORT = 8886
     CAM1_PORT = 8887
+    HQ_PORT = 8890
     TELEMETRY_PORT = 8888
     COMMAND_PORT = 8889
 else:
     SERVER_IP = '100.112.223.17'
     CAM0_PORT = 8765
     CAM1_PORT = 8766
+    HQ_PORT = 8767
     TELEMETRY_PORT = 8764
     COMMAND_PORT = 8763
 VALID_USERNAME = 'argus'
@@ -57,6 +60,7 @@ app = Flask(__name__, static_folder='templates', static_url_path='')
 # Video frames (store dicts with timing info)
 frame_cam0 = None
 frame_cam1 = None
+frame_hq = None
 
 # Per-camera latency sample buffers (store tuples of (network_ms, render_ms))
 cam0_latency_samples = deque(maxlen=LATENCY_SAMPLE_SIZE)
@@ -66,6 +70,7 @@ cam1_latency_samples = deque(maxlen=LATENCY_SAMPLE_SIZE)
 last_cam0_time = 0
 last_cam1_time = 0
 last_mav_time = 0
+last_hq_time = 0
 
 # Video latency tracking
 video_latency_cam0_ms = 0  # Network latency (server to client receive)
@@ -112,11 +117,12 @@ sock.setblocking(False)
 # ===== Helper Functions =====
 def update_connection_status():
     """Update connection status based on last received data timestamps."""
-    global cam0_online, cam1_online, mav_online
+    global cam0_online, cam1_online, mav_online, hq_online
     current_time = time.time()
     cam0_online = last_cam0_time > 0 and (current_time - last_cam0_time) < STATUS_TIMEOUT
     cam1_online = last_cam1_time > 0 and (current_time - last_cam1_time) < STATUS_TIMEOUT
     mav_online = last_mav_time > 0 and (current_time - last_mav_time) < STATUS_TIMEOUT
+    hq_online = last_hq_time > 0 and (current_time - last_hq_time) < STATUS_TIMEOUT
 
 
 def is_main_online():
@@ -174,7 +180,8 @@ def draw_telemetry_text(frame, data):
 # ===== Video Receivers =====
 async def receive_video(cam_id, port):
     """Generic video receiver for a camera."""
-    global frame_cam0, frame_cam1, last_cam0_time, last_cam1_time
+    global frame_cam0, frame_cam1, frame_hq
+    global last_cam0_time, last_cam1_time, last_hq_time
     global video_latency_cam0_ms, video_latency_cam1_ms, cam0_frame_timestamp, cam1_frame_timestamp
     
     while True:
@@ -183,6 +190,15 @@ async def receive_video(cam_id, port):
                 print(f"Connected to video server (cam{cam_id}).")
                 while True:
                     data = await ws.recv()
+                    if isinstance(data, str):
+                        try:
+                            msg = json.loads(data)
+                            if msg.get('type') == 'error':
+                                print(f"Camera {cam_id} server error: {msg.get('message')}")
+                                await asyncio.sleep(2)
+                                continue
+                        except json.JSONDecodeError:
+                            continue
                     receive_time = time.time()
                     frame, timestamp = decode_video_frame(data)
                     
@@ -198,7 +214,7 @@ async def receive_video(cam_id, port):
                         last_cam0_time = receive_time
                         if timestamp:
                             cam0_frame_timestamp = timestamp
-                    else:
+                    elif cam_id == 1:
                         network_ms = (receive_time - timestamp) * 1000 if timestamp else None
                         frame_cam1 = {
                             'frame': frame,
@@ -209,6 +225,13 @@ async def receive_video(cam_id, port):
                         last_cam1_time = receive_time
                         if timestamp:
                             cam1_frame_timestamp = timestamp
+                    elif cam_id == 2:
+                        frame_hq = {
+                            'frame': frame,
+                            'server_ts': timestamp,
+                            'receive_time': receive_time
+                        }
+                        last_hq_time = receive_time
         except websockets.exceptions.ConnectionClosed:
             print(f"Camera {cam_id} WebSocket disconnected, reconnecting in 2 seconds...")
         except Exception as e:
@@ -296,6 +319,7 @@ def gen_frames_cam0():
             draw_compass(f, mavlink_data.get('yaw', 0), 0, h - 130, 120)
             draw_attitude_indicator(f, mavlink_data.get('roll', 0), mavlink_data.get('pitch', 0), x=w - 130, y=h - 130, size=120)
             draw_battery_widget(f, mavlink_data.get('battery_remaining', 0), position=(10, 10), width=60, height=20)
+            draw_throttle_widget(f, mavlink_data.get('throttle', 0), position=(10, 40), width=60, height=20)
             draw_telemetry_text(f, mavlink_data)
         except Exception as e:
             # Don't let telemetry/overlay errors break the video stream; log and continue
@@ -394,6 +418,16 @@ def gen_frames_cam1():
         yield b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + entry['last_jpeg'] + b'\r\n'
 
 
+def gen_frames_hq():
+    while True:
+        if frame_hq is None:
+            continue
+        entry = frame_hq
+        f = entry['frame'].copy()
+        _, jpeg = cv2.imencode('.jpg', f, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        yield b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + jpeg.tobytes() + b'\r\n'
+
+
 # ===== Flask Routes =====
 @app.route('/')
 def index():
@@ -419,6 +453,11 @@ def video_feed_cam0():
 @app.route('/video_feed_cam1')
 def video_feed_cam1():
     return Response(gen_frames_cam1(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+
+@app.route('/video_feed_hq')
+def video_feed_hq():
+    return Response(gen_frames_hq(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 
 @app.route('/telemetry')
@@ -608,6 +647,7 @@ if __name__ == '__main__':
 
     Thread(target=lambda: asyncio.run(receive_video(0, CAM0_PORT)), daemon=True).start()
     Thread(target=lambda: asyncio.run(receive_video(1, CAM1_PORT)), daemon=True).start()
+    Thread(target=lambda: asyncio.run(receive_video(2, HQ_PORT)), daemon=True).start()
     Thread(target=lambda: asyncio.run(receive_telemetry()), daemon=True).start()
     Thread(target=receive_mavlink, daemon=True).start()
     Thread(target=status_monitor, daemon=True).start()

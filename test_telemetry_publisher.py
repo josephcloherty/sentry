@@ -31,8 +31,8 @@ async def producer():
             # Simulated GPS-based heading: we'll compute yaw from motion direction
             roll = 5.0 * math.sin(t * 1.5)  # +/-5 deg
             pitch = 3.0 * math.sin(t * 1.2)  # +/-3 deg
-            # Throttle: pseudo throttle oscillating 20-80%
-            throttle = 50.0 + 30.0 * math.sin(t * 0.5)
+            # Throttle: pseudo throttle oscillating 5-95%
+            throttle = 50.0 + 45.0 * math.sin(t * 5)
             # Battery: slow decreasing cyclic battery level between 20-100%
             battery = 60.0 + 40.0 * math.sin(t * 0.03)
             # Simulated GPS: circular motion around a base point
