@@ -400,7 +400,7 @@ async def main():
         print(f"  - Video cam0: ws://0.0.0.0:{VIDEO_PORT_1}")
         print(f"  - Video cam1: ws://0.0.0.0:{VIDEO_PORT_2}")
         print(f"  - Telemetry:  ws://0.0.0.0:{TELEMETRY_PORT} ({TELEMETRY_HZ}Hz)")
-     print(f"  - Commands:   ws://0.0.0.0:{COMMAND_PORT}")
+        print(f"  - Commands:   ws://0.0.0.0:{COMMAND_PORT}")
         print(f"  - UDP legacy: broadcast:5000 (10Hz)")
         asyncio.create_task(mavlink_broadcast())
         asyncio.create_task(broadcast_telemetry())

@@ -22,6 +22,7 @@ from functions.compass import draw_compass
 # ===== Configuration =====
 STATUS_UPDATE_INTERVAL_MS = 2000
 STATUS_TIMEOUT = 3.0
+LATENCY_SAMPLE_SIZE = 200
 
 # Toggle test mode to use local test telemetry/streams (set True to enable)
 # When enabled: telemetry WS -> ws://localhost:8888, cam0 -> localhost:8886, cam1 -> localhost:8887
@@ -42,6 +43,14 @@ else:
 VALID_USERNAME = 'argus'
 VALID_PASSWORD = 'sentry'
 
+# Camera function tabs (shown on right side of camera cards)
+# Each entry must match a command id in templates/index.html COMMAND_DEFS
+CAMERA_FUNCTION_TABS = {
+    'cam0': ['go_dark', 'drop_gps_pin', 'emergency'],
+    'cam1': ['go_dark', 'night_vision', 'loiter', 'emergency'],
+    'hq': ['landing_mode', 'loiter', 'drop_gps_pin','emergency']
+}
+
 # ===== Global State =====
 app = Flask(__name__, static_folder='templates', static_url_path='')
 
@@ -50,8 +59,8 @@ frame_cam0 = None
 frame_cam1 = None
 
 # Per-camera latency sample buffers (store tuples of (network_ms, render_ms))
-cam0_latency_samples = deque(maxlen=200)
-cam1_latency_samples = deque(maxlen=200)
+cam0_latency_samples = deque(maxlen=LATENCY_SAMPLE_SIZE)
+cam1_latency_samples = deque(maxlen=LATENCY_SAMPLE_SIZE)
 
 # Connection timestamps
 last_cam0_time = 0
@@ -378,7 +387,8 @@ def index():
         hq_online=hq_online,
         map_online=is_map_online(),
         map_html=generate_map_html(mavlink_data['lat'], mavlink_data['lon'], mavlink_data['yaw'], test_mode=TEST_MODE),
-        status_update_interval_ms=STATUS_UPDATE_INTERVAL_MS
+        status_update_interval_ms=STATUS_UPDATE_INTERVAL_MS,
+        camera_function_tabs=CAMERA_FUNCTION_TABS
     )
 
 
@@ -419,7 +429,7 @@ def api_video_latency():
     
     Returns:
         - network_latency_ms: Time from server capture to client receipt
-        - processing_latency_ms: Backend processing (overlays + JPEG encoding)
+        - processing_latency_ms: Gateway processing (overlays + JPEG encoding)
         - render_latency_ms: Frontend rendering (measured by browser)
         - Total latency = network + processing + render
     """

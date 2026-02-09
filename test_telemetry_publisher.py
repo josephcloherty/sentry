@@ -37,8 +37,8 @@ async def producer():
             battery = 60.0 + 40.0 * math.sin(t * 0.03)
             # Simulated GPS: circular motion around a base point
             # Base coordinate (example): somewhere in mid-latitude
-            base_lat = 18.3002
-            base_lon = -64.8252
+            base_lat = 53.406581
+            base_lon = -2.966903
             # radius in meters and convert to degrees (~111320 m per degree latitude)
             radius_m = 50.0
             deg_per_meter = 1.0 / 111320.0

@@ -64,6 +64,7 @@
             <div class="media">
                 <img id="stream_cam0" src="{{ url_for('video_feed_cam0') }}">
             </div>
+            <div class="camera-function-rail" data-function-rail data-camera-id="cam0" aria-label="Pilot camera functions"></div>
             <div class="desc">Front facing camera for BVLOS piloting</div>
         </div>
 
@@ -76,6 +77,7 @@
             <div class="media">
                 <img id="stream_cam1" src="{{ url_for('video_feed_cam1') }}">
             </div>
+            <div class="camera-function-rail" data-function-rail data-camera-id="cam1" aria-label="Landing camera functions"></div>
             <div class="desc">Infrared camera for landing assistance</div>
         </div>
 
@@ -88,6 +90,7 @@
             <div class="media empty">
                 <div class="placeholder">EMPTY</div>
             </div>
+            <div class="camera-function-rail" data-function-rail data-camera-id="hq" aria-label="High quality camera functions"></div>
             <div class="desc">High Quality camera for detailed imaging (Gimbal)</div>
         </div>
 
@@ -111,85 +114,148 @@
             </div>
             <div class="media latency-content">
                 <div class="latency-dashboard">
-                    <div class="latency-section">
-                        <h3>Pilot Camera (cam0)</h3>
-                        <div class="latency-metrics">
-                            <div class="latency-row">
-                                <span class="latency-label">Network:</span>
-                                <span id="cam0-network-latency" class="latency-value">--</span>
-                                <span class="latency-unit">ms</span>
+                    <div class="latency-group" data-latency-group="cam0">
+                        <div class="latency-group-header">
+                            <div class="latency-group-title">
+                                <h3>Pilot Camera</h3>
+                                <p class="latency-subtitle">Capture → Screen</p>
                             </div>
-                            <div class="latency-row">
-                                <span class="latency-label">Render:</span>
-                                <span id="cam0-render-latency" class="latency-value">--</span>
-                                <span class="latency-unit">ms</span>
-                            </div>
-                            <div class="latency-row total">
-                                <span class="latency-label">Total E2E:</span>
-                                <span id="cam0-total-latency" class="latency-value">--</span>
+                            <div class="latency-group-total">
+                                <span id="cam0-total-latency" class="latency-total-value">--</span>
                                 <span class="latency-unit">ms</span>
                             </div>
                         </div>
-                        <div class="latency-bar-container">
-                            <div id="cam0-latency-bar" class="latency-bar"></div>
+                        <div class="latency-e2e-bar">
+                            <div id="cam0-e2e-bar" class="latency-e2e-fill"></div>
                         </div>
-                    </div>
-                    <div class="latency-section">
-                        <h3>Landing Camera (cam1)</h3>
-                        <div class="latency-metrics">
-                            <div class="latency-row">
-                                <span class="latency-label">Network:</span>
-                                <span id="cam1-network-latency" class="latency-value">--</span>
-                                <span class="latency-unit">ms</span>
+                        <div class="latency-breakdown">
+                            <div class="latency-breakdown-row" id="cam0-uplink-row">
+                                <div class="latency-breakdown-label">
+                                    <span>Uplink (capture → gateway)</span>
+                                </div>
+                                <div class="latency-breakdown-metrics">
+                                    <span id="cam0-uplink-latency" class="latency-value">--</span>
+                                    <span class="latency-unit">ms</span>
+                                </div>
                             </div>
-                            <div class="latency-row">
-                                <span class="latency-label">Render:</span>
-                                <span id="cam1-render-latency" class="latency-value">--</span>
-                                <span class="latency-unit">ms</span>
+                            <div class="latency-breakdown-row" id="cam0-processing-row">
+                                <div class="latency-breakdown-label">
+                                    <span>Gateway processing</span>
+                                </div>
+                                <div class="latency-breakdown-metrics">
+                                    <span id="cam0-processing-latency" class="latency-value">--</span>
+                                    <span class="latency-unit">ms</span>
+                                </div>
                             </div>
-                            <div class="latency-row total">
-                                <span class="latency-label">Total E2E:</span>
-                                <span id="cam1-total-latency" class="latency-value">--</span>
-                                <span class="latency-unit">ms</span>
+                            <div class="latency-breakdown-row" id="cam0-delivery-row">
+                                <div class="latency-breakdown-label">
+                                    <span>Browser delivery + decode</span>
+                                </div>
+                                <div class="latency-breakdown-metrics">
+                                    <span id="cam0-delivery-latency" class="latency-value">--</span>
+                                    <span class="latency-unit">ms</span>
+                                </div>
                             </div>
-                        </div>
-                        <div class="latency-bar-container">
-                            <div id="cam1-latency-bar" class="latency-bar"></div>
                         </div>
                     </div>
-                    <!-- MAVLink telemetry card (latency only, with bar) -->
-                    <div class="latency-section">
-                        <h3>MAVLink Telemetry</h3>
-                        <div class="latency-metrics">
-                            <div class="latency-row">
-                                <span class="latency-label">Latency:</span>
-                                <span id="mavlink-latency" class="latency-value">--</span>
+                    <div class="latency-group" data-latency-group="cam1">
+                        <div class="latency-group-header">
+                            <div class="latency-group-title">
+                                <h3>Landing Camera</h3>
+                                <p class="latency-subtitle">Capture → Screen</p>
+                            </div>
+                            <div class="latency-group-total">
+                                <span id="cam1-total-latency" class="latency-total-value">--</span>
                                 <span class="latency-unit">ms</span>
                             </div>
                         </div>
-                        <div class="latency-bar-container">
-                            <div id="mavlink-latency-bar" class="latency-bar"></div>
+                        <div class="latency-e2e-bar">
+                            <div id="cam1-e2e-bar" class="latency-e2e-fill"></div>
+                        </div>
+                        <div class="latency-breakdown">
+                            <div class="latency-breakdown-row" id="cam1-uplink-row">
+                                <div class="latency-breakdown-label">
+                                    <span>Uplink (capture → gateway)</span>
+                                </div>
+                                <div class="latency-breakdown-metrics">
+                                    <span id="cam1-uplink-latency" class="latency-value">--</span>
+                                    <span class="latency-unit">ms</span>
+                                </div>
+                            </div>
+                            <div class="latency-breakdown-row" id="cam1-processing-row">
+                                <div class="latency-breakdown-label">
+                                    <span>Gateway processing</span>
+                                </div>
+                                <div class="latency-breakdown-metrics">
+                                    <span id="cam1-processing-latency" class="latency-value">--</span>
+                                    <span class="latency-unit">ms</span>
+                                </div>
+                            </div>
+                            <div class="latency-breakdown-row" id="cam1-delivery-row">
+                                <div class="latency-breakdown-label">
+                                    <span>Browser delivery + decode</span>
+                                </div>
+                                <div class="latency-breakdown-metrics">
+                                    <span id="cam1-delivery-latency" class="latency-value">--</span>
+                                    <span class="latency-unit">ms</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="latency-group" data-latency-group="telemetry">
+                        <div class="latency-group-header">
+                            <div class="latency-group-title">
+                                <h3>MAVLink Telemetry</h3>
+                                <p class="latency-subtitle">Sensor → Dashboard</p>
+                            </div>
+                            <div class="latency-group-total">
+                                <span id="telemetry-total-latency" class="latency-total-value">--</span>
+                                <span class="latency-unit">ms</span>
+                            </div>
+                        </div>
+                        <div class="latency-e2e-bar">
+                            <div id="telemetry-e2e-bar" class="latency-e2e-fill"></div>
+                        </div>
+                        <div class="latency-breakdown">
+                            <div class="latency-breakdown-row" id="telemetry-uplink-row">
+                                <div class="latency-breakdown-label">
+                                    <span>Uplink (MAVLink → gateway)</span>
+                                </div>
+                                <div class="latency-breakdown-metrics">
+                                    <span id="telemetry-uplink-latency" class="latency-value">--</span>
+                                    <span class="latency-unit">ms</span>
+                                </div>
+                            </div>
+                            <div class="latency-breakdown-row" id="telemetry-delivery-row">
+                                <div class="latency-breakdown-label">
+                                    <span>Browser delivery + parse</span>
+                                </div>
+                                <div class="latency-breakdown-metrics">
+                                    <span id="telemetry-delivery-latency" class="latency-value">--</span>
+                                    <span class="latency-unit">ms</span>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     <div class="latency-stats">
                         <div class="stat-item">
-                            <span class="stat-label">Update Rate:</span>
+                            <span class="stat-label">Update Rate</span>
                             <span id="latency-update-rate" class="stat-value">--</span>
                         </div>
                         <div class="stat-item">
-                            <span class="stat-label">Last Update:</span>
+                            <span class="stat-label">Last Update</span>
                             <span id="latency-last-update" class="stat-value">--</span>
                         </div>
                     </div>
                 </div>
             </div>
-            <div class="desc">End-to-end video latency monitoring</div>
+            <div class="desc">End-to-end latency with component breakdown</div>
         </div>
 
         <div class="card command-card" data-card data-card-id="commands">
             <div class="card-header" data-header>
                 <span id="commands-status-dot" class="status-dot on"></span>
-                <h2>Function Suite</h2>
+                <h2>SENTRY Controls</h2>
                 <button class="minimize" data-minimize>Minimize</button>
             </div>
             <div class="media command-suite">
@@ -200,11 +266,7 @@
         </div>
     </div>
 
-    <!-- Minimap tab (left) and minimap overlay (bottom-right) -->
-    <div id="minimap-tab" class="minimap-tab" aria-hidden="true">
-        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"></path><circle cx="12" cy="10" r="3"></circle></svg>
-    </div>
-
+    <!-- Minimap overlay (bottom-right) - toggle button is now inside camera rails -->
     <div id="minimap" class="minimap" aria-hidden="true">
         <div class="minimap-bar" id="minimap-bar"></div>
         <div class="minimap-content" id="minimap-content">
@@ -214,7 +276,11 @@
 
     <script>
         // ===== GLOBAL CONFIGURATION =====
+        const CAMERA_FUNCTION_TABS = {{ camera_function_tabs | tojson }};
         const LATENCY_UPDATE_INTERVAL_MS = 2000;
+        const LATENCY_SNAPSHOT_TIMEOUT_MS = 1500;
+        const LATENCY_THRESHOLD_GOOD_MS = 100;
+        const LATENCY_THRESHOLD_WARNING_MS = 300;
         const STATUS_UPDATE_INTERVAL_MS = 30000;
         
         // ===== GLOBAL DOM ELEMENTS =====
@@ -225,27 +291,40 @@
         const logoutBtn = document.getElementById('logoutBtn');
         
         // ===== GLOBAL STATE =====
-        let videoLatencyData = {
-            cam0_network_latency_ms: 0,
-            cam1_network_latency_ms: 0,
-            cam0_render_latency_ms: 0,
-            cam1_render_latency_ms: 0,
-            cam0_total_latency_ms: 0,
-            cam1_total_latency_ms: 0
+        let latencyState = {
+            cam0: {
+                network_ms: 0,
+                processing_ms: 0,
+                delivery_ms: 0,
+                total_ms: 0,
+                samples: 0,
+                online: false
+            },
+            cam1: {
+                network_ms: 0,
+                processing_ms: 0,
+                delivery_ms: 0,
+                total_ms: 0,
+                samples: 0,
+                online: false
+            },
+            telemetry: {
+                uplink_ms: 0,
+                delivery_ms: 0,
+                total_ms: 0
+            }
         };
-        let telemetryData = {};
-        let telemetryLatencyMs = 0;
-        let cam0FrameLoadTime = 0;
-        let cam1FrameLoadTime = 0;
-        let cam0FrameRenderTime = 0;
-        let cam1FrameRenderTime = 0;
 
         // ===== HELPER FUNCTIONS =====
         function getLatencyClass(latencyMs) {
             if (latencyMs <= 0) return '';
-            if (latencyMs < 100) return 'good';
-            if (latencyMs < 250) return 'warning';
+            if (latencyMs < LATENCY_THRESHOLD_GOOD_MS) return 'good';
+            if (latencyMs < LATENCY_THRESHOLD_WARNING_MS) return 'warning';
             return 'critical';
+        }
+
+        function normalizeLatency(value) {
+            return Number.isFinite(value) ? Math.max(0, value) : 0;
         }
 
         function updateStatusDot(elementId, isOnline) {
@@ -260,89 +339,145 @@
             if (!el) return;
             el.textContent = value > 0 ? value.toFixed(1) : '--';
             if (applyClass) {
-                el.className = 'latency-value ' + getLatencyClass(value);
+                el.classList.remove('good', 'warning', 'critical');
+                const cls = getLatencyClass(value);
+                if (cls) el.classList.add(cls);
             }
         }
 
-        function updateLatencyBar(elementId, latencyMs, maxMs = 500) {
+        function updateE2EBar(elementId, latencyMs, maxMs = 800) {
             const el = document.getElementById(elementId);
             if (!el) return;
-            const barWidth = Math.min(100, (latencyMs / maxMs) * 100);
-            el.style.width = barWidth + '%';
+            const width = Math.min(100, (latencyMs / maxMs) * 100);
+            el.style.width = `${width}%`;
+            el.classList.remove('good', 'warning', 'critical');
+            const cls = getLatencyClass(latencyMs);
+            if (cls) el.classList.add(cls);
         }
 
-        // ===== VIDEO LATENCY FUNCTIONS =====
-        function measureRenderLatency() {
-            if (cam0FrameLoadTime > 0 && cam0FrameRenderTime > 0) {
-                videoLatencyData.cam0_render_latency_ms = Math.max(0, cam0FrameRenderTime - cam0FrameLoadTime);
-            }
-            if (cam1FrameLoadTime > 0 && cam1FrameRenderTime > 0) {
-                videoLatencyData.cam1_render_latency_ms = Math.max(0, cam1FrameRenderTime - cam1FrameLoadTime);
+        async function fetchWithTimeout(url, options = {}, timeoutMs = 1500) {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), timeoutMs);
+            try {
+                return await fetch(url, { ...options, signal: controller.signal });
+            } finally {
+                clearTimeout(timer);
             }
         }
-        
-        function setupImageLoadTracking() {
-            const setupCameraTracking = (camId) => {
-                const img = document.getElementById(`stream_${camId}`);
-                if (!img) return;
-                
-                img.addEventListener('load', () => {
-                    if (camId === 'cam0') {
-                        cam0FrameLoadTime = performance.now();
-                        requestAnimationFrame(() => cam0FrameRenderTime = performance.now());
-                    } else {
-                        cam1FrameLoadTime = performance.now();
-                        requestAnimationFrame(() => cam1FrameRenderTime = performance.now());
-                    }
-                });
-            };
-            
-            setupCameraTracking('cam0');
-            setupCameraTracking('cam1');
+
+        // ===== LATENCY FUNCTIONS =====
+        function updateLatencyGroup(groupId, components) {
+            const total = components.reduce((sum, item) => sum + item.value, 0);
+            updateLatencyValue(`${groupId}-total-latency`, total, true);
+            updateE2EBar(`${groupId}-e2e-bar`, total);
+
+            components.forEach(item => {
+                updateLatencyValue(`${groupId}-${item.key}-latency`, item.value);
+            });
+
+            return total;
         }
-        
-        function updateLatencyDisplay() {
-            // Calculate totals
-            videoLatencyData.cam0_total_latency_ms = videoLatencyData.cam0_network_latency_ms + videoLatencyData.cam0_render_latency_ms;
-            videoLatencyData.cam1_total_latency_ms = videoLatencyData.cam1_network_latency_ms + videoLatencyData.cam1_render_latency_ms;
-            
-            // Update cam0
-            updateLatencyValue('cam0-network-latency', videoLatencyData.cam0_network_latency_ms, true);
-            updateLatencyValue('cam0-render-latency', videoLatencyData.cam0_render_latency_ms);
-            updateLatencyValue('cam0-total-latency', videoLatencyData.cam0_total_latency_ms, true);
-            updateLatencyBar('cam0-latency-bar', videoLatencyData.cam0_total_latency_ms);
-            
-            // Update cam1
-            updateLatencyValue('cam1-network-latency', videoLatencyData.cam1_network_latency_ms, true);
-            updateLatencyValue('cam1-render-latency', videoLatencyData.cam1_render_latency_ms);
-            updateLatencyValue('cam1-total-latency', videoLatencyData.cam1_total_latency_ms, true);
-            updateLatencyBar('cam1-latency-bar', videoLatencyData.cam1_total_latency_ms);
-            
-            // Update stats
+
+        function refreshLatencyUI() {
+            const cam0Total = updateLatencyGroup('cam0', [
+                { key: 'uplink', value: latencyState.cam0.network_ms },
+                { key: 'processing', value: latencyState.cam0.processing_ms },
+                { key: 'delivery', value: latencyState.cam0.delivery_ms }
+            ]);
+            const cam1Total = updateLatencyGroup('cam1', [
+                { key: 'uplink', value: latencyState.cam1.network_ms },
+                { key: 'processing', value: latencyState.cam1.processing_ms },
+                { key: 'delivery', value: latencyState.cam1.delivery_ms }
+            ]);
+            const telemetryTotal = updateLatencyGroup('telemetry', [
+                { key: 'uplink', value: latencyState.telemetry.uplink_ms },
+                { key: 'delivery', value: latencyState.telemetry.delivery_ms }
+            ]);
+
+            latencyState.cam0.total_ms = cam0Total;
+            latencyState.cam1.total_ms = cam1Total;
+            latencyState.telemetry.total_ms = telemetryTotal;
+
             const updateRateEl = document.getElementById('latency-update-rate');
             const lastUpdateEl = document.getElementById('latency-last-update');
-            if (updateRateEl) updateRateEl.textContent = LATENCY_UPDATE_INTERVAL_MS + 'ms';
+            if (updateRateEl) updateRateEl.textContent = `${LATENCY_UPDATE_INTERVAL_MS}ms`;
             if (lastUpdateEl) lastUpdateEl.textContent = new Date().toLocaleTimeString();
-            
-            // Update status dot
-            const hasData = videoLatencyData.cam0_network_latency_ms > 0 || videoLatencyData.cam1_network_latency_ms > 0 || telemetryLatencyMs > 0;
-            updateStatusDot('latency-status-dot', hasData);
 
-            // Update MAVLink telemetry latency display and bar
-            updateLatencyValue('mavlink-latency', telemetryLatencyMs || 0, true);
-            updateLatencyBar('mavlink-latency-bar', telemetryLatencyMs || 0);
+            const hasData = cam0Total > 0 || cam1Total > 0 || telemetryTotal > 0;
+            updateStatusDot('latency-status-dot', hasData);
         }
-        
-        function fetchVideoLatency() {
-            fetch('/api/video_latency')
-                .then(response => response.json())
-                .then(data => {
-                    videoLatencyData.cam0_network_latency_ms = data.cam0_network_latency_ms || 0;
-                    videoLatencyData.cam1_network_latency_ms = data.cam1_network_latency_ms || 0;
-                    measureRenderLatency();
-                    updateLatencyDisplay();
-                })
-                .catch(err => console.error('Failed to fetch video latency:', err));
+
+        async function fetchVideoLatency() {
+            try {
+                const response = await fetchWithTimeout('/api/video_latency', { cache: 'no-store' }, LATENCY_SNAPSHOT_TIMEOUT_MS);
+                if (!response.ok) return;
+                const data = await response.json();
+                latencyState.cam0.network_ms = normalizeLatency(data.cam0_network_latency_ms);
+                latencyState.cam1.network_ms = normalizeLatency(data.cam1_network_latency_ms);
+                latencyState.cam0.processing_ms = normalizeLatency(data.cam0_processing_latency_ms);
+                latencyState.cam1.processing_ms = normalizeLatency(data.cam1_processing_latency_ms);
+                latencyState.cam0.samples = data.cam0_samples || 0;
+                latencyState.cam1.samples = data.cam1_samples || 0;
+                latencyState.cam0.online = Boolean(data.cam0_online);
+                latencyState.cam1.online = Boolean(data.cam1_online);
+            } catch (err) {
+                console.error('Failed to fetch video latency:', err);
+            }
+        }
+
+        async function fetchSnapshotLatency(camId) {
+            const camIndex = camId === 'cam0' ? 0 : 1;
+            try {
+                const start = performance.now();
+                const response = await fetchWithTimeout(`/api/snapshot_cam${camIndex}?t=${Date.now()}`, { cache: 'no-store' }, LATENCY_SNAPSHOT_TIMEOUT_MS);
+                if (!response.ok || response.status === 204) {
+                    latencyState[camId].delivery_ms = 0;
+                    return;
+                }
+
+                const blob = await response.blob();
+                const img = new Image();
+                const objectUrl = URL.createObjectURL(blob);
+                img.src = objectUrl;
+                try {
+                    await img.decode();
+                } catch (e) {
+                    await new Promise(resolve => {
+                        img.onload = resolve;
+                        img.onerror = resolve;
+                    });
+                }
+                URL.revokeObjectURL(objectUrl);
+                const end = performance.now();
+                latencyState[camId].delivery_ms = normalizeLatency(end - start);
+            } catch (err) {
+                latencyState[camId].delivery_ms = 0;
+            }
+        }
+
+        async function fetchTelemetryLatency() {
+            try {
+                const start = performance.now();
+                const response = await fetchWithTimeout('/telemetry', { cache: 'no-store' }, LATENCY_SNAPSHOT_TIMEOUT_MS);
+                if (!response.ok) return;
+                const data = await response.json();
+                const end = performance.now();
+                latencyState.telemetry.uplink_ms = normalizeLatency(data.client_latency_ms);
+                latencyState.telemetry.delivery_ms = normalizeLatency(end - start);
+            } catch (err) {
+                latencyState.telemetry.uplink_ms = 0;
+                latencyState.telemetry.delivery_ms = 0;
+            }
+        }
+
+        async function refreshLatencyData() {
+            await Promise.allSettled([
+                fetchVideoLatency(),
+                fetchSnapshotLatency('cam0'),
+                fetchSnapshotLatency('cam1'),
+                fetchTelemetryLatency()
+            ]);
+            refreshLatencyUI();
         }
         
         // ===== STATUS UPDATE FUNCTIONS =====
@@ -357,77 +492,6 @@
                     updateStatusDot('map-status-dot', status.map_online);
                 })
                 .catch(err => console.error('Failed to fetch status:', err));
-        }
-        
-        // ===== TELEMETRY WEBSOCKET FUNCTIONS =====
-        
-        function connectTelemetryWebSocket() {
-            const urls = [
-                'ws://100.112.223.17:8764',
-                `ws://localhost:8888`
-            ];
-            let urlIndex = 0;
-            let reconnectAttempts = 0;
-            const maxReconnectAttempts = 3;
-            
-            function attemptConnection() {
-                console.log(`Attempting to connect to ${urls[urlIndex]} (attempt ${reconnectAttempts + 1})`);
-                
-                const telemetryWs = new WebSocket(urls[urlIndex]);
-                const connectionTimeout = setTimeout(() => {
-                    console.warn(`Connection timeout for ${urls[urlIndex]}`);
-                    telemetryWs.close();
-                }, 3000);
-                
-                telemetryWs.onopen = () => {
-                    clearTimeout(connectionTimeout);
-                    console.log(`✓ Connected to telemetry at ${urls[urlIndex]}`);
-                    reconnectAttempts = 0;
-                };
-                
-                telemetryWs.onmessage = (event) => {
-                    try {
-                        const data = JSON.parse(event.data);
-                        telemetryData = data;
-                        
-                        const clientTime = Date.now() / 1000;
-                        const roundTripLatency = (clientTime - data.timestamp) * 1000;
-                        telemetryLatencyMs = roundTripLatency + (data.server_latency_ms || 0);
-                        
-                        if (Math.random() < 0.01) {
-                            console.log(`[Telemetry] Latency: ${telemetryLatencyMs.toFixed(1)}ms (client: ${roundTripLatency.toFixed(1)}ms + server: ${(data.server_latency_ms || 0).toFixed(1)}ms)`);
-                        }
-                    } catch (e) {
-                        console.error('Failed to parse telemetry data:', e);
-                    }
-                };
-                
-                telemetryWs.onerror = (error) => {
-                    clearTimeout(connectionTimeout);
-                    console.error(`WebSocket error for ${urls[urlIndex]}:`, error);
-                };
-                
-                telemetryWs.onclose = () => {
-                    clearTimeout(connectionTimeout);
-                    console.log(`✗ Connection closed for ${urls[urlIndex]}`);
-                    
-                    reconnectAttempts++;
-                    if (reconnectAttempts >= maxReconnectAttempts) {
-                        console.log('Max attempts reached, trying next URL');
-                        urlIndex++;
-                        reconnectAttempts = 0;
-                        
-                        if (urlIndex >= urls.length) {
-                            console.log('All telemetry URLs exhausted, restarting from first URL');
-                            urlIndex = 0;
-                        }
-                    }
-                    
-                    setTimeout(attemptConnection, 1000);
-                };
-            }
-            
-            setTimeout(attemptConnection, 300);
         }
         
         // ===== MAP CONTROL FUNCTIONS =====
@@ -471,8 +535,8 @@
         function updateMinimapVisibility() {
             const expandedCard = document.querySelector('.card.expanded');
             const showTab = expandedCard && ['cam0', 'cam1', 'hq'].includes(expandedCard.getAttribute('data-card-id'));
-            const tab = document.getElementById('minimap-tab');
-            if (tab) tab.style.display = showTab ? 'flex' : 'none';
+            // minimap toggle is rendered inside the camera function rail; when the
+            // expanded card is not a camera we close the minimap overlay.
             if (!showTab) {
                 minimapOpen = false;
                 const mm = document.getElementById('minimap');
@@ -599,13 +663,13 @@
                 id: 'auto_rth',
                 label: 'Autonomous RTH',
                 type: 'toggle',
-                icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12l9-9 9 9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M9 21V9h6v12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>'
+                icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640"><!--!Font Awesome Free v7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free Copyright 2026 Fonticons, Inc.--><path d="M304 70.1C313.1 61.9 326.9 61.9 336 70.1L568 278.1C577.9 286.9 578.7 302.1 569.8 312C560.9 321.9 545.8 322.7 535.9 313.8L527.9 306.6L527.9 511.9C527.9 547.2 499.2 575.9 463.9 575.9L175.9 575.9C140.6 575.9 111.9 547.2 111.9 511.9L111.9 306.6L103.9 313.8C94 322.6 78.9 321.8 70 312C61.1 302.2 62 287 71.8 278.1L304 70.1zM320 120.2L160 263.7L160 512C160 520.8 167.2 528 176 528L224 528L224 424C224 384.2 256.2 352 296 352L344 352C383.8 352 416 384.2 416 424L416 528L464 528C472.8 528 480 520.8 480 512L480 263.7L320 120.3zM272 528L368 528L368 424C368 410.7 357.3 400 344 400L296 400C282.7 400 272 410.7 272 424L272 528z"/></svg>'
             },
             {
                 id: 'drop_gps_pin',
                 label: 'Drop GPS Pin',
                 type: 'pulse',
-                icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-6-6-6-11a6 6 0 0 1 12 0c0 5-6 11-6 11Z" fill="none" stroke="currentColor" stroke-width="2"></path><circle cx="12" cy="10" r="2" fill="currentColor"></circle></svg>'
+                icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 11C13.1046 11 14 10.1046 14 9C14 7.89543 13.1046 7 12 7C10.8954 7 10 7.89543 10 9C10 10.1046 10.8954 11 12 11Z" fill="currentColor"/><path fill-rule="evenodd" clip-rule="evenodd" d="M18 9C18 11.973 15.8377 14.441 13 14.917V20H16C16.5523 20 17 20.4477 17 21C17 21.5523 16.5523 22 16 22H8C7.44772 22 7 21.5523 7 21C7 20.4477 7.44772 20 8 20H11V14.917C8.16229 14.441 6 11.973 6 9C6 5.68629 8.68629 3 12 3C15.3137 3 18 5.68629 18 9ZM12 13C14.2091 13 16 11.2091 16 9C16 6.79086 14.2091 5 12 5C9.79086 5 8 6.79086 8 9C8 11.2091 9.79086 13 12 13Z" fill="currentColor"/></svg>'
             },
             {
                 id: 'emergency',
@@ -646,6 +710,8 @@
             const btn = document.createElement('button');
             btn.type = 'button';
             btn.className = 'command-btn';
+            // mark emergency button for targeted styling
+            if (def.id === 'emergency') btn.classList.add('emergency-btn');
             btn.dataset.commandId = def.id;
             btn.dataset.commandType = def.type;
             if (def.type === 'pulse') btn.classList.add('is-pulse');
@@ -657,6 +723,28 @@
                 e.stopPropagation();
                 await sendCommand(def);
             });
+            return btn;
+        }
+
+        function buildCameraFunctionButton(def) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'camera-function-tab';
+            if (def.id === 'emergency') btn.classList.add('emergency-btn');
+            btn.dataset.commandId = def.id;
+            btn.dataset.commandType = def.type;
+            if (def.type === 'pulse') btn.classList.add('is-pulse');
+            // icons-only: render only the icon in the tab, keep label for accessibility
+            btn.innerHTML = `<span class="camera-tab-icon">${def.icon}</span>`;
+            btn.setAttribute('aria-label', def.label);
+            btn.setAttribute('aria-pressed', 'false');
+
+            btn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                await sendCommand(def);
+            });
+            
             return btn;
         }
 
@@ -678,8 +766,34 @@
             });
         }
 
+        function renderCameraFunctionTabs() {
+            document.querySelectorAll('[data-function-rail]').forEach(rail => {
+                const cameraId = rail.dataset.cameraId;
+                const selectedIds = (CAMERA_FUNCTION_TABS && CAMERA_FUNCTION_TABS[cameraId]) || [];
+                rail.innerHTML = '';
+
+                selectedIds.forEach(id => {
+                    const def = getCommandDef(id);
+                    if (def) rail.appendChild(buildCameraFunctionButton(def));
+                });
+
+                // add minimap toggle into the rail so tab is part of camera rails
+                const minimapBtn = document.createElement('button');
+                minimapBtn.type = 'button';
+                minimapBtn.className = 'camera-function-tab rail-minimap-tab';
+                minimapBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"></path><circle cx="12" cy="10" r="3"></circle></svg>';
+                minimapBtn.setAttribute('aria-label', 'Minimap');
+                minimapBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleMinimap(); });
+                rail.appendChild(minimapBtn);
+
+                rail.classList.toggle('is-empty', selectedIds.length === 0);
+            });
+        }
+
+        /* Hover floating label removed — hover/tooltip UI is handled externally */
+
         function applyCommandStateToUI() {
-            document.querySelectorAll('.command-btn').forEach(btn => {
+            document.querySelectorAll('.command-btn, .camera-function-tab').forEach(btn => {
                 const id = btn.dataset.commandId;
                 const isActive = Boolean(commandState[id]);
                 btn.classList.toggle('is-active', isActive);
@@ -709,11 +823,17 @@
             const nextValue = isPulse ? true : !Boolean(commandState[def.id]);
 
             if (isPulse) {
-                const btn = document.querySelector(`.command-btn[data-command-id="${def.id}"]`);
-                if (btn) {
+                const buttons = document.querySelectorAll(`.command-btn[data-command-id="${def.id}"], .camera-function-tab[data-command-id="${def.id}"]`);
+                buttons.forEach(btn => {
                     btn.classList.add('is-pending');
                     setTimeout(() => btn.classList.remove('is-pending'), 400);
-                }
+                });
+            }
+
+            // Optimistically update toggle buttons locally for immediate feedback
+            if (!isPulse) {
+                commandState[def.id] = nextValue;
+                applyCommandStateToUI();
             }
 
             try {
@@ -858,23 +978,19 @@
 
         // ===== INITIALIZATION =====
         function initialize() {
-            setupImageLoadTracking();
             setupCardExpansion();
             setupLoginHandlers();
             updateMapControls();
             updateMinimapVisibility();
-            // wire minimap UI (tab toggles open/close)
-            const tab = document.getElementById('minimap-tab');
-            if (tab) tab.addEventListener('click', (e) => { e.stopPropagation(); toggleMinimap(); });
+            // minimap toggle buttons are created inside each camera function rail
 
             renderCommandSuite();
+            renderCameraFunctionTabs();
             fetchCommandState();
             setInterval(fetchCommandState, 2000);
-            
-            connectTelemetryWebSocket();
-            
-            setInterval(fetchVideoLatency, LATENCY_UPDATE_INTERVAL_MS);
-            fetchVideoLatency();
+
+            refreshLatencyData();
+            setInterval(refreshLatencyData, LATENCY_UPDATE_INTERVAL_MS);
             
             setInterval(updateStatusDots, STATUS_UPDATE_INTERVAL_MS);
             updateStatusDots();

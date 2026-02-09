@@ -1,0 +1,4 @@
+---
+applyTo: '**'
+---
+Provide project context and coding guidelines that AI should follow when generating code, answering questions, or reviewing changes. Thoroughly explore the best approach to this problem and only implement the most user friendly one that meets the specifications here. Adjust both the frontend and backend code to ensure the correct information is shown to the user. Ensure that your implementation DOES NOT interfere with or break any other features. I will check and give feedback if required, do not run any commands yourself. Consider keeping your format in line with the style of the rest of the app. Place all variables I may need to adjust at the top of the file.
