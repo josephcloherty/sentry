@@ -26,7 +26,7 @@ LATENCY_SAMPLE_SIZE = 200
 
 # Toggle test mode to use local test telemetry/streams (set True to enable)
 # When enabled: telemetry WS -> ws://localhost:8888, cam0 -> localhost:8886, cam1 -> localhost:8887
-TEST_MODE = True
+TEST_MODE = False
 
 if TEST_MODE:
     SERVER_IP = 'localhost'

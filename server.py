@@ -57,24 +57,7 @@ sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
 
-# ===== Mock Camera =====
-class MockCamera:
-    """Fallback camera generating synthetic frames when Picamera2 unavailable."""
-    def __init__(self, width, height, color=True):
-        self.w, self.h, self.color, self._t = width, height, color, 0
-
-    def capture_array(self):
-        self._t += 1
-        cx = int((self._t * 5) % (self.w + 40)) - 20
-        if self.color:
-            img = np.zeros((self.h, self.w, 3), dtype=np.uint8)
-            cv2.circle(img, (max(0, cx), self.h // 2), 20, (255, 255, 255), -1)
-        else:
-            img = np.zeros((self.h, self.w), dtype=np.uint8)
-            cv2.circle(img, (max(0, cx), self.h // 2), 20, 255, -1)
-        return img
-
-
+# ===== Camera Initialization =====
 # ===== Camera Initialization =====
 def detect_camera_type(cam_id):
     """Detect if camera is a regular Pi Cam or Pi Cam Noir."""
@@ -111,8 +94,8 @@ def init_camera(cam_id, formats, color=True):
             except Exception:
                 continue
     except Exception as e:
-        print(f"Warning: cam{cam_id} Picamera2 init failed: {e}. Using MockCamera.")
-    return MockCamera(VIDEO_WIDTH, VIDEO_HEIGHT, color=color), 'MOCK'
+        print(f"Warning: cam{cam_id} Picamera2 init failed: {e}.")
+    return None, None
 
 
 # Detect available cameras and their types
@@ -152,17 +135,31 @@ if cam1_id is None and available_cameras:
             cam1_id = cam_info['id']
             break
 
-# Default to 0 and 1 if detection failed
-if cam0_id is None:
-    cam0_id = 0
-if cam1_id is None:
-    cam1_id = 1
+# If only one camera was detected, assign it to the correct feed; leave the other None.
+if len(available_cameras) == 0:
+    cam0_id = None
+    cam1_id = None
+
+if len(available_cameras) == 1:
+    only = available_cameras[0]
+    if only['is_noir']:
+        cam0_id = None
+        cam1_id = only['id']
+    else:
+        cam0_id = only['id']
+        cam1_id = None
 
 print(f"Assigning cam0 (color) to camera ID {cam0_id}")
 print(f"Assigning cam1 (noir/IR) to camera ID {cam1_id}")
 
-cam0, _ = init_camera(cam0_id, ['XRGB8888'], color=True)
-cam1, cam1_format = init_camera(cam1_id, ['YUV420', 'XRGB8888'], color=False)
+# Initialize cameras only if an ID was selected; otherwise leave as None
+cam0 = None
+cam1 = None
+cam1_format = None
+if cam0_id is not None:
+    cam0, _ = init_camera(cam0_id, ['XRGB8888'], color=True)
+if cam1_id is not None:
+    cam1, cam1_format = init_camera(cam1_id, ['YUV420', 'XRGB8888'], color=False)
 
 
 # ===== Helper Functions =====
@@ -225,6 +222,15 @@ def draw_crosshair(frame, center, radius):
 # ===== Video Streaming =====
 async def stream_cam0(ws):
     print("Client connected to video stream (cam0).")
+    if cam0 is None:
+        print("cam0 not available; closing connection")
+        try:
+            await ws.send(json.dumps({'type': 'error', 'message': 'cam0 not available'}))
+        except Exception:
+            pass
+        await ws.close()
+        return
+
     while True:
         frame = cam0.capture_array()
         await ws.send(encode_frame_with_timestamp(frame))
@@ -233,6 +239,15 @@ async def stream_cam0(ws):
 
 async def stream_cam1(ws):
     print("Client connected to video stream (cam1).")
+    if cam1 is None:
+        print("cam1 not available; closing connection")
+        try:
+            await ws.send(json.dumps({'type': 'error', 'message': 'cam1 not available'}))
+        except Exception:
+            pass
+        await ws.close()
+        return
+
     while True:
         frame = cam1.capture_array()
         
