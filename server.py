@@ -8,6 +8,8 @@ import time
 import cv2
 import numpy as np
 import websockets
+import traceback
+import traceback
 from picamera2 import Picamera2
 from pymavlink import mavutil
 
@@ -333,9 +335,12 @@ async def stream_hq(ws):
         await ws.close()
         return
 
+    frame_count = 0
     while True:
         try:
             ret, frame = await asyncio.to_thread(gopro_capture.read)
+            frame_count += 1
+
             if not ret or frame is None:
                 print("Warning: GoPro frame read failed, attempting reinit")
                 try:
@@ -345,12 +350,39 @@ async def stream_hq(ws):
                 gopro_capture = init_gopro_capture()
                 await asyncio.sleep(1.0)
                 continue
+
+            # Ensure frame size matches expected resolution to avoid huge payloads
+            try:
+                if frame.shape[1] != HQ_VIDEO_WIDTH or frame.shape[0] != HQ_VIDEO_HEIGHT:
+                    frame = cv2.resize(frame, (HQ_VIDEO_WIDTH, HQ_VIDEO_HEIGHT))
+            except Exception:
+                # If resize fails, continue with whatever we have
+                pass
+
+            # Send the JPEG payload
             await ws.send(encode_frame_with_timestamp(frame, quality=HQ_JPEG_QUALITY))
+
+            # Periodic lightweight heartbeat (JSON string) so clients can detect activity
+            if frame_count % int(max(1, HQ_VIDEO_FPS)) == 0:
+                try:
+                    await ws.send(json.dumps({'type': 'heartbeat', 'ts': time.time(), 'frame_count': frame_count}))
+                except Exception:
+                    # ignore heartbeat send issues
+                    pass
+
+            # Occasional debug print (every 60 frames)
+            if frame_count % 60 == 0:
+                try:
+                    print(f"HQ: sent {frame_count} frames, last_frame_shape={frame.shape}")
+                except Exception:
+                    print(f"HQ: sent {frame_count} frames")
+
             await asyncio.sleep(1.0 / HQ_VIDEO_FPS)
         except websockets.exceptions.ConnectionClosed:
             break
         except Exception as e:
-            print(f"GoPro stream error: {e}")
+            print("GoPro stream error:")
+            traceback.print_exc()
             await asyncio.sleep(0.5)
 
 
@@ -451,7 +483,6 @@ async def mavlink_broadcast():
             await asyncio.sleep(0.005)
 
     asyncio.create_task(read_mavlink())
-
     while True:
         att = latest_msgs.get('ATTITUDE')
         gps = latest_msgs.get('GLOBAL_POSITION_INT')
@@ -490,6 +521,18 @@ async def main():
                websockets.serve(stream_hq, '0.0.0.0', HQ_VIDEO_PORT), \
                websockets.serve(stream_telemetry, '0.0.0.0', TELEMETRY_PORT), \
                websockets.serve(command_handler, '0.0.0.0', COMMAND_PORT):
+        # Try to open GoPro capture at server start so failures are visible in logs
+        global gopro_capture
+        try:
+            gopro_capture = init_gopro_capture()
+            if gopro_capture is not None and gopro_capture.isOpened():
+                print("GoPro capture initialized at startup.")
+            else:
+                print("GoPro not initialized at startup; will init on first client connect.")
+        except Exception:
+            print("GoPro init at startup failed:")
+            traceback.print_exc()
+
         print(f"Server running:")
         print(f"  - Video cam0: ws://0.0.0.0:{VIDEO_PORT_1}")
         print(f"  - Video cam1: ws://0.0.0.0:{VIDEO_PORT_2}")
