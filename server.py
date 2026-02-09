@@ -93,7 +93,8 @@ async def stream_cam0(ws):
 async def stream_cam1(ws):
     print("Client connected to video stream (cam1).")
     while True:
-        frame = cam1.capture_array()
+        frame_o = cam1.capture_array()
+        frame = frame_o[0:VIDEO_HEIGHT, 0:VIDEO_WIDTH] 
         # Handle multiple possible frame layouts robustly
         try:
             if isinstance(frame, np.ndarray):
