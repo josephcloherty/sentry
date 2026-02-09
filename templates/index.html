@@ -287,15 +287,11 @@
         const STATUS_UPDATE_INTERVAL_MS = 30000;
         
         // ===== GLOBAL DOM ELEMENTS =====
-        const $ = (id) => document.getElementById(id);
-        const qs = (sel, root = document) => root.querySelector(sel);
-        const qsa = (sel, root = document) => Array.from(root.querySelectorAll(sel));
-
-        const bannerSlot = $('banner-slot');
-        const loginModal = $('loginModal');
-        const loginForm = $('loginForm');
-        const loginError = $('loginError');
-        const logoutBtn = $('logoutBtn');
+        const bannerSlot = document.getElementById('banner-slot');
+        const loginModal = document.getElementById('loginModal');
+        const loginForm = document.getElementById('loginForm');
+        const loginError = document.getElementById('loginError');
+        const logoutBtn = document.getElementById('logoutBtn');
         
         // ===== GLOBAL STATE =====
         let latencyState = {
@@ -335,14 +331,14 @@
         }
 
         function updateStatusDot(elementId, isOnline) {
-            const dot = $(elementId);
+            const dot = document.getElementById(elementId);
             if (!dot) return;
             dot.classList.remove('on', 'off');
             dot.classList.add(isOnline ? 'on' : 'off');
         }
 
         function updateLatencyValue(elementId, value, applyClass = false) {
-            const el = $(elementId);
+            const el = document.getElementById(elementId);
             if (!el) return;
             el.textContent = value > 0 ? value.toFixed(1) : '--';
             if (applyClass) {
@@ -353,7 +349,7 @@
         }
 
         function updateE2EBar(elementId, latencyMs, maxMs = 800) {
-            const el = $(elementId);
+            const el = document.getElementById(elementId);
             if (!el) return;
             const width = Math.min(100, (latencyMs / maxMs) * 100);
             el.style.width = `${width}%`;
@@ -405,8 +401,8 @@
             latencyState.cam1.total_ms = cam1Total;
             latencyState.telemetry.total_ms = telemetryTotal;
 
-            const updateRateEl = $('latency-update-rate');
-            const lastUpdateEl = $('latency-last-update');
+            const updateRateEl = document.getElementById('latency-update-rate');
+            const lastUpdateEl = document.getElementById('latency-last-update');
             if (updateRateEl) updateRateEl.textContent = `${LATENCY_UPDATE_INTERVAL_MS}ms`;
             if (lastUpdateEl) lastUpdateEl.textContent = new Date().toLocaleTimeString();
 
@@ -504,7 +500,7 @@
         // ===== MAP CONTROL FUNCTIONS =====
         
         function getMapIframe() {
-            const mapCard = qs('[data-card-id="map"]');
+            const mapCard = document.querySelector('[data-card-id="map"]');
             return mapCard?.querySelector('iframe');
         }
 
@@ -524,7 +520,7 @@
                 const doc = iframe.contentDocument || iframe.contentWindow?.document;
                 if (!doc) return;
                 
-                const mapCard = qs('[data-card-id="map"]');
+                const mapCard = document.querySelector('[data-card-id="map"]');
                 const isExpanded = mapCard?.classList.contains('expanded');
                 
                 doc.querySelectorAll('.leaflet-control').forEach(el => {
@@ -540,25 +536,25 @@
         let minimapOpen = false;
 
         function updateMinimapVisibility() {
-            const expandedCard = qs('.card.expanded');
+            const expandedCard = document.querySelector('.card.expanded');
             const showTab = expandedCard && ['cam0', 'cam1', 'hq'].includes(expandedCard.getAttribute('data-card-id'));
             // minimap toggle is rendered inside the camera function rail; when the
             // expanded card is not a camera we close the minimap overlay.
             if (!showTab) {
                 minimapOpen = false;
-                const mm = $('minimap');
+                const mm = document.getElementById('minimap');
                 if (mm) mm.classList.remove('open');
-                const content = $('minimap-content');
+                const content = document.getElementById('minimap-content');
                 if (content) content.querySelectorAll('iframe').forEach(n => n.remove());
             }
         }
 
         function showMinimap() {
             minimapOpen = true;
-            const mm = $('minimap');
+            const mm = document.getElementById('minimap');
             if (mm) mm.classList.add('open');
 
-            const content = $('minimap-content');
+            const content = document.getElementById('minimap-content');
             if (!content) return;
             content.querySelectorAll('iframe, .map-clone').forEach(n => n.remove());
 
@@ -601,7 +597,7 @@
                 }
             }
 
-            const mapCard = qs('[data-card-id="map"]');
+            const mapCard = document.querySelector('[data-card-id="map"]');
             const mapContainer = mapCard?.querySelector('.map-container');
             if (mapContainer) {
                 const wrapper = document.createElement('div');
@@ -628,9 +624,9 @@
 
         function hideMinimap() {
             minimapOpen = false;
-            const mm = $('minimap');
+            const mm = document.getElementById('minimap');
             if (mm) mm.classList.remove('open');
-            const content = $('minimap-content');
+            const content = document.getElementById('minimap-content');
             if (content) content.querySelectorAll('iframe').forEach(n => n.remove());
         }
 
@@ -756,8 +752,8 @@
         }
 
         function renderCommandSuite() {
-            const compactEl = $('command-compact');
-            const fullEl = $('command-full');
+            const compactEl = document.getElementById('command-compact');
+            const fullEl = document.getElementById('command-full');
             if (!compactEl || !fullEl) return;
 
             compactEl.innerHTML = '';
@@ -774,7 +770,7 @@
         }
 
         function renderCameraFunctionTabs() {
-            qsa('[data-function-rail]').forEach(rail => {
+            document.querySelectorAll('[data-function-rail]').forEach(rail => {
                 const cameraId = rail.dataset.cameraId;
                 const selectedIds = (CAMERA_FUNCTION_TABS && CAMERA_FUNCTION_TABS[cameraId]) || [];
                 rail.innerHTML = '';
@@ -800,7 +796,7 @@
         /* Hover floating label removed — hover/tooltip UI is handled externally */
 
         function applyCommandStateToUI() {
-            qsa('.command-btn, .camera-function-tab').forEach(btn => {
+            document.querySelectorAll('.command-btn, .camera-function-tab').forEach(btn => {
                 const id = btn.dataset.commandId;
                 const isActive = Boolean(commandState[id]);
                 btn.classList.toggle('is-active', isActive);
@@ -830,7 +826,7 @@
             const nextValue = isPulse ? true : !Boolean(commandState[def.id]);
 
             if (isPulse) {
-                const buttons = qsa(`.command-btn[data-command-id="${def.id}"], .camera-function-tab[data-command-id="${def.id}"]`);
+                const buttons = document.querySelectorAll(`.command-btn[data-command-id="${def.id}"], .camera-function-tab[data-command-id="${def.id}"]`);
                 buttons.forEach(btn => {
                     btn.classList.add('is-pending');
                     setTimeout(() => btn.classList.remove('is-pending'), 400);
@@ -861,7 +857,7 @@
 
         function clearExpanded() {
             bannerSlot.innerHTML = '';
-            qsa('.card.expanded').forEach(c => c.classList.remove('expanded'));
+            document.querySelectorAll('.card.expanded').forEach(c => c.classList.remove('expanded'));
             document.body.classList.remove('expanded');
             document.exitFullscreen?.().catch(() => {});
             updateMapControls();
@@ -891,7 +887,7 @@
                 }
             }, true);
 
-            qsa('[data-card]').forEach(card => {
+            document.querySelectorAll('[data-card]').forEach(card => {
                 const header = card.querySelector('[data-header]');
                 card.addEventListener('click', () => {
                     if (!card.classList.contains('expanded')) {
@@ -908,7 +904,7 @@
                 });
             });
 
-            qs('#banner img').addEventListener('click', e => {
+            document.querySelector('#banner img').addEventListener('click', e => {
                 e.stopPropagation();
                 location.reload();
             });
@@ -918,7 +914,7 @@
         function showLoginModal() {
             loginModal.classList.remove('hidden');
             document.body.style.overflow = 'hidden';
-            $('username').focus();
+            document.getElementById('username').focus();
         }
 
         function hideLoginModal() {
@@ -936,9 +932,9 @@
             loginForm.addEventListener('submit', async (e) => {
                 e.preventDefault();
                 
-                const username = $('username').value.trim();
-                const password = $('password').value.trim();
-                const rememberMe = $('rememberMe').checked;
+                const username = document.getElementById('username').value.trim();
+                const password = document.getElementById('password').value.trim();
+                const rememberMe = document.getElementById('rememberMe').checked;
 
                 try {
                     const response = await fetch('/api/authenticate', {
@@ -960,8 +956,8 @@
                     } else {
                         loginError.textContent = data.message || 'Invalid username or password';
                         loginError.classList.remove('hidden');
-                        $('password').value = '';
-                        $('password').focus();
+                        document.getElementById('password').value = '';
+                        document.getElementById('password').focus();
                     }
                 } catch (error) {
                     loginError.textContent = 'An error occurred. Please try again.';

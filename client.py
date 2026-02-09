@@ -111,56 +111,13 @@ sock.setblocking(False)
 
 
 # ===== Helper Functions =====
-def _is_recent(ts, timeout=STATUS_TIMEOUT):
-    return ts > 0 and (time.time() - ts) < timeout
-
-
-def _median(values):
-    return statistics.median(values) if values else 0
-
-
-def _update_latency(samples, network_ms, processing_ms):
-    samples.append((network_ms, processing_ms))
-    nets = [n for n, p in samples if n is not None]
-    procs = [p for n, p in samples if p is not None]
-    return _median(nets), _median(procs)
-
-
-def _encode_jpeg(frame, quality=90):
-    _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
-    return jpeg
-
-
-def _store_frame_entry(entry, jpeg, processing_ms):
-    try:
-        entry['last_jpeg'] = jpeg.tobytes()
-        entry['last_processing_ms'] = processing_ms
-        entry['last_server_ts'] = entry.get('server_ts')
-        entry['last_network_ms'] = entry.get('network_ms')
-    except Exception:
-        pass
-
-
-def _snapshot_response(entry):
-    if not (entry and isinstance(entry, dict) and entry.get('last_jpeg')):
-        return ('', 204)
-    headers = {}
-    try:
-        if entry.get('last_server_ts'):
-            headers['X-Frame-Ts'] = str(entry.get('last_server_ts'))
-        if entry.get('last_processing_ms') is not None:
-            headers['X-Processing-Ms'] = str(entry.get('last_processing_ms'))
-        if entry.get('last_network_ms') is not None:
-            headers['X-Network-Ms'] = str(entry.get('last_network_ms'))
-    except Exception:
-        pass
-    return Response(entry['last_jpeg'], mimetype='image/jpeg', headers=headers)
 def update_connection_status():
     """Update connection status based on last received data timestamps."""
     global cam0_online, cam1_online, mav_online
-    cam0_online = _is_recent(last_cam0_time)
-    cam1_online = _is_recent(last_cam1_time)
-    mav_online = _is_recent(last_mav_time)
+    current_time = time.time()
+    cam0_online = last_cam0_time > 0 and (current_time - last_cam0_time) < STATUS_TIMEOUT
+    cam1_online = last_cam1_time > 0 and (current_time - last_cam1_time) < STATUS_TIMEOUT
+    mav_online = last_mav_time > 0 and (current_time - last_mav_time) < STATUS_TIMEOUT
 
 
 def is_main_online():
@@ -181,31 +138,6 @@ def decode_video_frame(data):
         jpeg_data = data
     frame = cv2.imdecode(np.frombuffer(jpeg_data, np.uint8), cv2.IMREAD_COLOR)
     return frame, timestamp
-
-
-def _store_camera_frame(cam_id, frame, timestamp, receive_time):
-    """Store latest frame and timing details for a camera."""
-    global frame_cam0, frame_cam1, last_cam0_time, last_cam1_time
-    global cam0_frame_timestamp, cam1_frame_timestamp
-
-    network_ms = (receive_time - timestamp) * 1000 if timestamp else None
-    entry = {
-        'frame': frame,
-        'server_ts': timestamp,
-        'receive_time': receive_time,
-        'network_ms': network_ms
-    }
-
-    if cam_id == 0:
-        frame_cam0 = entry
-        last_cam0_time = receive_time
-        if timestamp:
-            cam0_frame_timestamp = timestamp
-    else:
-        frame_cam1 = entry
-        last_cam1_time = receive_time
-        if timestamp:
-            cam1_frame_timestamp = timestamp
 
 
 def draw_telemetry_text(frame, data):
@@ -243,6 +175,9 @@ def draw_telemetry_text(frame, data):
 # ===== Video Receivers =====
 async def receive_video(cam_id, port):
     """Generic video receiver for a camera."""
+    global frame_cam0, frame_cam1, last_cam0_time, last_cam1_time
+    global video_latency_cam0_ms, video_latency_cam1_ms, cam0_frame_timestamp, cam1_frame_timestamp
+    
     while True:
         try:
             async with websockets.connect(f'ws://{SERVER_IP}:{port}') as ws:
@@ -251,7 +186,30 @@ async def receive_video(cam_id, port):
                     data = await ws.recv()
                     receive_time = time.time()
                     frame, timestamp = decode_video_frame(data)
-                    _store_camera_frame(cam_id, frame, timestamp, receive_time)
+                    
+                    # Store frame along with timing info so we can compute network + render latency later
+                    if cam_id == 0:
+                        network_ms = (receive_time - timestamp) * 1000 if timestamp else None
+                        frame_cam0 = {
+                            'frame': frame,
+                            'server_ts': timestamp,
+                            'receive_time': receive_time,
+                            'network_ms': network_ms
+                        }
+                        last_cam0_time = receive_time
+                        if timestamp:
+                            cam0_frame_timestamp = timestamp
+                    else:
+                        network_ms = (receive_time - timestamp) * 1000 if timestamp else None
+                        frame_cam1 = {
+                            'frame': frame,
+                            'server_ts': timestamp,
+                            'receive_time': receive_time,
+                            'network_ms': network_ms
+                        }
+                        last_cam1_time = receive_time
+                        if timestamp:
+                            cam1_frame_timestamp = timestamp
         except websockets.exceptions.ConnectionClosed:
             print(f"Camera {cam_id} WebSocket disconnected, reconnecting in 2 seconds...")
         except Exception as e:
@@ -330,7 +288,11 @@ def gen_frames_cam0():
         entry = frame_cam0
         f = entry['frame'].copy()
         h, w = f.shape[:2]
+        
+        # Start timing backend processing
         processing_start = time.time()
+        
+        # Draw overlays
         try:
             draw_compass(f, mavlink_data.get('yaw', 0), 0, h - 130, 120)
             draw_attitude_indicator(f, mavlink_data.get('roll', 0), mavlink_data.get('pitch', 0), x=w - 130, y=h - 130, size=120)
@@ -340,12 +302,29 @@ def gen_frames_cam0():
         except Exception as e:
             # Don't let telemetry/overlay errors break the video stream; log and continue
             print(f"Overlay drawing error (cam0): {e}")
-        jpeg = _encode_jpeg(f)
-        processing_ms = (time.time() - processing_start) * 1000
+        
+        # Encode to JPEG
+        _, jpeg = cv2.imencode('.jpg', f, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        
+        # Compute backend processing latency (overlays + encoding)
+        processing_time = time.time()
+        processing_ms = (processing_time - processing_start) * 1000
         network_ms = entry.get('network_ms')
-        video_latency_cam0_ms, cam0_processing_latency_ms = _update_latency(
-            cam0_latency_samples, network_ms, processing_ms
-        )
+        
+        # Record samples: (network_latency, backend_processing_latency)
+        cam0_latency_samples.append((network_ms, processing_ms))
+
+        # Update median stats for network latency
+        nets = [n for n, r in cam0_latency_samples if n is not None]
+        procs = [r for n, r in cam0_latency_samples if r is not None]
+        if procs:
+            cam0_processing_latency_ms = statistics.median(procs)
+        else:
+            cam0_processing_latency_ms = 0
+        if nets:
+            video_latency_cam0_ms = statistics.median(nets)
+        else:
+            video_latency_cam0_ms = 0
 
         # Expose latest frame timestamp
         try:
@@ -353,7 +332,16 @@ def gen_frames_cam0():
         except NameError:
             cam0_frame_timestamp = entry.get('server_ts')
 
-        _store_frame_entry(entry, jpeg, processing_ms)
+        # Store latest JPEG bytes and per-frame metadata for one-shot snapshot endpoint
+        try:
+            entry['last_jpeg'] = jpeg.tobytes()
+            entry['last_processing_ms'] = processing_ms
+            entry['last_server_ts'] = entry.get('server_ts')
+            # preserve the network latency computed when frame was received via websocket
+            entry['last_network_ms'] = entry.get('network_ms')
+        except Exception:
+            pass
+
         yield b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + entry['last_jpeg'] + b'\r\n'
 
 
@@ -364,20 +352,47 @@ def gen_frames_cam1():
             continue
         entry = frame_cam1
         f = entry['frame'].copy()
+
+        # Start timing backend processing
         processing_start = time.time()
-        jpeg = _encode_jpeg(f)
-        processing_ms = (time.time() - processing_start) * 1000
+        
+        # Encode to JPEG (no overlays for cam1)
+        _, jpeg = cv2.imencode('.jpg', f, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        
+        # Compute backend processing latency
+        processing_time = time.time()
+        processing_ms = (processing_time - processing_start) * 1000
         network_ms = entry.get('network_ms')
-        video_latency_cam1_ms, cam1_processing_latency_ms = _update_latency(
-            cam1_latency_samples, network_ms, processing_ms
-        )
+        
+        # Record samples
+        cam1_latency_samples.append((network_ms, processing_ms))
+
+        # Update median stats
+        nets = [n for n, r in cam1_latency_samples if n is not None]
+        procs = [r for n, r in cam1_latency_samples if r is not None]
+        if procs:
+            cam1_processing_latency_ms = statistics.median(procs)
+        else:
+            cam1_processing_latency_ms = 0
+        if nets:
+            video_latency_cam1_ms = statistics.median(nets)
+        else:
+            video_latency_cam1_ms = 0
 
         try:
             cam1_frame_timestamp = entry.get('server_ts') or cam1_frame_timestamp
         except NameError:
             cam1_frame_timestamp = entry.get('server_ts')
 
-        _store_frame_entry(entry, jpeg, processing_ms)
+        # Store latest JPEG bytes and per-frame metadata for one-shot snapshot endpoint
+        try:
+            entry['last_jpeg'] = jpeg.tobytes()
+            entry['last_processing_ms'] = processing_ms
+            entry['last_server_ts'] = entry.get('server_ts')
+            entry['last_network_ms'] = entry.get('network_ms')
+        except Exception:
+            pass
+
         yield b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + entry['last_jpeg'] + b'\r\n'
 
 
@@ -542,13 +557,38 @@ def api_command_toggle():
 @app.route('/api/snapshot_cam0')
 def api_snapshot_cam0():
     """Return the latest JPEG snapshot for cam0 (one-shot)."""
-    return _snapshot_response(frame_cam0)
+    if frame_cam0 and isinstance(frame_cam0, dict) and frame_cam0.get('last_jpeg'):
+        headers = {}
+        # include per-frame metadata if available
+        try:
+            if frame_cam0.get('last_server_ts'):
+                headers['X-Frame-Ts'] = str(frame_cam0.get('last_server_ts'))
+            if frame_cam0.get('last_processing_ms') is not None:
+                headers['X-Processing-Ms'] = str(frame_cam0.get('last_processing_ms'))
+            if frame_cam0.get('last_network_ms') is not None:
+                headers['X-Network-Ms'] = str(frame_cam0.get('last_network_ms'))
+        except Exception:
+            pass
+        return Response(frame_cam0['last_jpeg'], mimetype='image/jpeg', headers=headers)
+    return ('', 204)
 
 
 @app.route('/api/snapshot_cam1')
 def api_snapshot_cam1():
     """Return the latest JPEG snapshot for cam1 (one-shot)."""
-    return _snapshot_response(frame_cam1)
+    if frame_cam1 and isinstance(frame_cam1, dict) and frame_cam1.get('last_jpeg'):
+        headers = {}
+        try:
+            if frame_cam1.get('last_server_ts'):
+                headers['X-Frame-Ts'] = str(frame_cam1.get('last_server_ts'))
+            if frame_cam1.get('last_processing_ms') is not None:
+                headers['X-Processing-Ms'] = str(frame_cam1.get('last_processing_ms'))
+            if frame_cam1.get('last_network_ms') is not None:
+                headers['X-Network-Ms'] = str(frame_cam1.get('last_network_ms'))
+        except Exception:
+            pass
+        return Response(frame_cam1['last_jpeg'], mimetype='image/jpeg', headers=headers)
+    return ('', 204)
 
 
 @app.route('/map_embed')
