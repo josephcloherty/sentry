@@ -3,16 +3,8 @@ import json
 import math
 import socket
 import struct
-import time
-
-import cv2
-import numpy as np
-import websockets
-import traceback
-import glob
-import traceback
-from picamera2 import Picamera2
-from pymavlink import mavutil
+from infrared import process_ir_frame
+from fiducial_tracker import process_fiducial_frame
 
 from functions.infrared import process_ir_frame
 
@@ -32,8 +24,8 @@ HQ_DEVICE_CANDIDATES = ['/dev/video0', '/dev/video1', '/dev/video2', 0, 1, 2]
 # None = try preferred backends (v4l2, ffmpeg) then default
 HQ_CAPTURE_BACKEND = None
 TELEMETRY_PORT = 8764
-TELEMETRY_HZ = 50
-COMMAND_PORT = 8763
+TELEMETRY_HZ = 50  # 50Hz = 20ms interval for low latency
+USE_FIDUCIAL = True  # set to False to disable AprilTag/QR detection and use IR-only
 
 # ===== Global State =====
 mavlink_data = {
@@ -346,11 +338,75 @@ async def stream_cam1(ws):
         except Exception as e:
             print(f"Warning: failed to convert frame to gray: {e}")
             gray = np.zeros((VIDEO_HEIGHT, VIDEO_WIDTH), dtype=np.uint8)
-        
-        ir = process_ir_frame(gray)
+        # Attempt fiducial-based lock first (AprilTag/QR). If disabled or not locked,
+        # fallback to IR processing, then brightest-region heuristic.
         display_frame = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-        
-        if ir.locked:
+
+        fid = None
+        if USE_FIDUCIAL:
+            try:
+                fid = process_fiducial_frame(display_frame)
+            except Exception as e:
+                print(f"Warning: fiducial processing failed: {e}")
+                fid = None
+
+        # Always compute IR result too so we can fallback if fiducial isn't available.
+        ir = process_ir_frame(gray)
+
+        # Fallback: if neither fiducial nor IR locked, locate the brightest region
+        fallback_center = None
+        fallback_radius = None
+        try:
+            if not (fid and fid.locked) and not ir.locked:
+                minV, maxV, minLoc, maxLoc = cv2.minMaxLoc(gray)
+                # require a reasonably bright peak to consider
+                if maxV >= 180:
+                    thresh_val = int(maxV * 0.65)
+                    _, th = cv2.threshold(gray, thresh_val, 255, cv2.THRESH_BINARY)
+                    contours, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    if contours:
+                        c = max(contours, key=cv2.contourArea)
+                        area = cv2.contourArea(c)
+                        if area > 10:
+                            M = cv2.moments(c)
+                            if M.get('m00', 0) != 0:
+                                cx = int(M['m10'] / M['m00'])
+                                cy = int(M['m01'] / M['m00'])
+                                fallback_center = (cx, cy)
+                                fallback_radius = max(5, int(math.sqrt(area) / 2))
+        except Exception as e:
+            print(f"Warning: brightest-region fallback failed: {e}")
+
+        # Draw overlays: prefer fiducial, then IR, then brightest-region
+        h, w = display_frame.shape[:2]
+        cx_img, cy_img = w // 2, h // 2
+        if fid and fid.locked:
+            # Prefer drawing the detected polygon if available (red square/quad)
+            if hasattr(fid, 'corners') and getattr(fid, 'corners') is not None:
+                try:
+                    pts = getattr(fid, 'corners').reshape((-1, 2)).astype(int)
+                    cv2.polylines(display_frame, [pts], True, (0, 0, 255), 2)
+                    M = cv2.moments(pts)
+                    if M.get('m00', 0) != 0:
+                        cx = int(M['m10'] / M['m00'])
+                        cy = int(M['m01'] / M['m00'])
+                        cv2.line(display_frame, (cx-10, cy), (cx+10, cy), (0,0,255),1)
+                        cv2.line(display_frame, (cx, cy-10), (cx, cy+10), (0,0,255),1)
+                except Exception:
+                    # Fallback to centre-based drawing
+                    cx = int(cx_img * (1.0 + fid.error_x))
+                    cy = int(cy_img * (1.0 + fid.error_y))
+                    size = max(5, int(math.sqrt(max(1, fid.area)) / 2))
+                    cv2.rectangle(display_frame, (cx-size, cy-size), (cx+size, cy+size), (0,0,255), 2)
+            else:
+                cx = int(cx_img * (1.0 + fid.error_x))
+                cy = int(cy_img * (1.0 + fid.error_y))
+                size = max(5, int(math.sqrt(max(1, fid.area)) / 2))
+                cv2.rectangle(display_frame, (cx-size, cy-size), (cx+size, cy+size), (0,0,255), 2)
+            id_text = f"ID:{fid.fiducial_id if fid.fiducial_id is not None else '?'}"
+            conf_text = f"C:{fid.confidence:.2f} A:{int(fid.area)}"
+            cv2.putText(display_frame, id_text + ' ' + conf_text, (10, h-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255),1)
+        elif ir.locked:
             center = (int(ir.cx), int(ir.cy))
             radius = max(5, int(math.sqrt(ir.area) / 2))
             draw_crosshair(display_frame, center, radius)
