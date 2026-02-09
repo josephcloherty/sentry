@@ -64,6 +64,7 @@
             <div class="media">
                 <img id="stream_cam0" src="{{ url_for('video_feed_cam0') }}">
             </div>
+            <div class="camera-function-rail" data-function-rail data-camera-id="cam0" aria-label="Pilot camera functions"></div>
             <div class="desc">Front facing camera for BVLOS piloting</div>
         </div>
 
@@ -76,6 +77,7 @@
             <div class="media">
                 <img id="stream_cam1" src="{{ url_for('video_feed_cam1') }}">
             </div>
+            <div class="camera-function-rail" data-function-rail data-camera-id="cam1" aria-label="Landing camera functions"></div>
             <div class="desc">Infrared camera for landing assistance</div>
         </div>
 
@@ -88,6 +90,7 @@
             <div class="media empty">
                 <div class="placeholder">EMPTY</div>
             </div>
+            <div class="camera-function-rail" data-function-rail data-camera-id="hq" aria-label="High quality camera functions"></div>
             <div class="desc">High Quality camera for detailed imaging (Gimbal)</div>
         </div>
 
@@ -106,464 +109,812 @@
         <div class="card latency-card" data-card data-card-id="latency">
             <div class="card-header" data-header>
                 <span id="latency-status-dot" class="status-dot off"></span>
-                <h2>Video Latency</h2>
+                <h2>Latency Monitoring</h2>
                 <button class="minimize" data-minimize>Minimize</button>
             </div>
             <div class="media latency-content">
                 <div class="latency-dashboard">
-                    <div class="latency-section">
-                        <h3>Pilot Camera (cam0)</h3>
-                        <div class="latency-metrics">
-                            <div class="latency-row">
-                                <span class="latency-label">Network:</span>
-                                <span id="cam0-network-latency" class="latency-value">--</span>
-                                <span class="latency-unit">ms</span>
+                    <div class="latency-group" data-latency-group="cam0">
+                        <div class="latency-group-header">
+                            <div class="latency-group-title">
+                                <h3>Pilot Camera</h3>
+                                <p class="latency-subtitle">Capture → Screen</p>
                             </div>
-                            <div class="latency-row">
-                                <span class="latency-label">Render:</span>
-                                <span id="cam0-render-latency" class="latency-value">--</span>
-                                <span class="latency-unit">ms</span>
-                            </div>
-                            <div class="latency-row total">
-                                <span class="latency-label">Total E2E:</span>
-                                <span id="cam0-total-latency" class="latency-value">--</span>
+                            <div class="latency-group-total">
+                                <span id="cam0-total-latency" class="latency-total-value">--</span>
                                 <span class="latency-unit">ms</span>
                             </div>
                         </div>
-                        <div class="latency-bar-container">
-                            <div id="cam0-latency-bar" class="latency-bar"></div>
+                        <div class="latency-e2e-bar">
+                            <div id="cam0-e2e-bar" class="latency-e2e-fill"></div>
+                        </div>
+                        <div class="latency-breakdown">
+                            <div class="latency-breakdown-row" id="cam0-uplink-row">
+                                <div class="latency-breakdown-label">
+                                    <span>Uplink (capture → gateway)</span>
+                                </div>
+                                <div class="latency-breakdown-metrics">
+                                    <span id="cam0-uplink-latency" class="latency-value">--</span>
+                                    <span class="latency-unit">ms</span>
+                                </div>
+                            </div>
+                            <div class="latency-breakdown-row" id="cam0-processing-row">
+                                <div class="latency-breakdown-label">
+                                    <span>Gateway processing</span>
+                                </div>
+                                <div class="latency-breakdown-metrics">
+                                    <span id="cam0-processing-latency" class="latency-value">--</span>
+                                    <span class="latency-unit">ms</span>
+                                </div>
+                            </div>
+                            <div class="latency-breakdown-row" id="cam0-delivery-row">
+                                <div class="latency-breakdown-label">
+                                    <span>Browser delivery + decode</span>
+                                </div>
+                                <div class="latency-breakdown-metrics">
+                                    <span id="cam0-delivery-latency" class="latency-value">--</span>
+                                    <span class="latency-unit">ms</span>
+                                </div>
+                            </div>
                         </div>
                     </div>
-                    <div class="latency-section">
-                        <h3>Landing Camera (cam1)</h3>
-                        <div class="latency-metrics">
-                            <div class="latency-row">
-                                <span class="latency-label">Network:</span>
-                                <span id="cam1-network-latency" class="latency-value">--</span>
-                                <span class="latency-unit">ms</span>
+                    <div class="latency-group" data-latency-group="cam1">
+                        <div class="latency-group-header">
+                            <div class="latency-group-title">
+                                <h3>Landing Camera</h3>
+                                <p class="latency-subtitle">Capture → Screen</p>
                             </div>
-                            <div class="latency-row">
-                                <span class="latency-label">Render:</span>
-                                <span id="cam1-render-latency" class="latency-value">--</span>
-                                <span class="latency-unit">ms</span>
-                            </div>
-                            <div class="latency-row total">
-                                <span class="latency-label">Total E2E:</span>
-                                <span id="cam1-total-latency" class="latency-value">--</span>
+                            <div class="latency-group-total">
+                                <span id="cam1-total-latency" class="latency-total-value">--</span>
                                 <span class="latency-unit">ms</span>
                             </div>
                         </div>
-                        <div class="latency-bar-container">
-                            <div id="cam1-latency-bar" class="latency-bar"></div>
+                        <div class="latency-e2e-bar">
+                            <div id="cam1-e2e-bar" class="latency-e2e-fill"></div>
+                        </div>
+                        <div class="latency-breakdown">
+                            <div class="latency-breakdown-row" id="cam1-uplink-row">
+                                <div class="latency-breakdown-label">
+                                    <span>Uplink (capture → gateway)</span>
+                                </div>
+                                <div class="latency-breakdown-metrics">
+                                    <span id="cam1-uplink-latency" class="latency-value">--</span>
+                                    <span class="latency-unit">ms</span>
+                                </div>
+                            </div>
+                            <div class="latency-breakdown-row" id="cam1-processing-row">
+                                <div class="latency-breakdown-label">
+                                    <span>Gateway processing</span>
+                                </div>
+                                <div class="latency-breakdown-metrics">
+                                    <span id="cam1-processing-latency" class="latency-value">--</span>
+                                    <span class="latency-unit">ms</span>
+                                </div>
+                            </div>
+                            <div class="latency-breakdown-row" id="cam1-delivery-row">
+                                <div class="latency-breakdown-label">
+                                    <span>Browser delivery + decode</span>
+                                </div>
+                                <div class="latency-breakdown-metrics">
+                                    <span id="cam1-delivery-latency" class="latency-value">--</span>
+                                    <span class="latency-unit">ms</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="latency-group" data-latency-group="telemetry">
+                        <div class="latency-group-header">
+                            <div class="latency-group-title">
+                                <h3>MAVLink Telemetry</h3>
+                                <p class="latency-subtitle">Sensor → Dashboard</p>
+                            </div>
+                            <div class="latency-group-total">
+                                <span id="telemetry-total-latency" class="latency-total-value">--</span>
+                                <span class="latency-unit">ms</span>
+                            </div>
+                        </div>
+                        <div class="latency-e2e-bar">
+                            <div id="telemetry-e2e-bar" class="latency-e2e-fill"></div>
+                        </div>
+                        <div class="latency-breakdown">
+                            <div class="latency-breakdown-row" id="telemetry-uplink-row">
+                                <div class="latency-breakdown-label">
+                                    <span>Uplink (MAVLink → gateway)</span>
+                                </div>
+                                <div class="latency-breakdown-metrics">
+                                    <span id="telemetry-uplink-latency" class="latency-value">--</span>
+                                    <span class="latency-unit">ms</span>
+                                </div>
+                            </div>
+                            <div class="latency-breakdown-row" id="telemetry-delivery-row">
+                                <div class="latency-breakdown-label">
+                                    <span>Browser delivery + parse</span>
+                                </div>
+                                <div class="latency-breakdown-metrics">
+                                    <span id="telemetry-delivery-latency" class="latency-value">--</span>
+                                    <span class="latency-unit">ms</span>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     <div class="latency-stats">
                         <div class="stat-item">
-                            <span class="stat-label">Update Rate:</span>
+                            <span class="stat-label">Update Rate</span>
                             <span id="latency-update-rate" class="stat-value">--</span>
                         </div>
                         <div class="stat-item">
-                            <span class="stat-label">Last Update:</span>
+                            <span class="stat-label">Last Update</span>
                             <span id="latency-last-update" class="stat-value">--</span>
                         </div>
                     </div>
                 </div>
             </div>
-            <div class="desc">End-to-end video latency monitoring</div>
+            <div class="desc">End-to-end latency with component breakdown</div>
+        </div>
+
+        <div class="card command-card" data-card data-card-id="commands">
+            <div class="card-header" data-header>
+                <span id="commands-status-dot" class="status-dot on"></span>
+                <h2>SENTRY Controls</h2>
+                <button class="minimize" data-minimize>Minimize</button>
+            </div>
+            <div class="media command-suite">
+                <div class="command-grid compact-view" id="command-compact"></div>
+                <div class="command-grid full-view" id="command-full"></div>
+            </div>
+            <div class="desc">Command switches for onboard functions and mission actions</div>
         </div>
     </div>
 
+    <!-- Minimap overlay (bottom-right) - toggle button is now inside camera rails -->
+    <div id="minimap" class="minimap" aria-hidden="true">
+        <div class="minimap-bar" id="minimap-bar"></div>
+        <div class="minimap-content" id="minimap-content">
+            <!-- iframe cloned here when available; no text per design -->
+        </div>
+    </div>
+
+    <script type="application/json" id="camera-function-tabs-data">{{ camera_function_tabs | tojson }}</script>
+
     <script>
+        // ===== GLOBAL CONFIGURATION =====
+        const CAMERA_FUNCTION_TABS_DATA_ID = 'camera-function-tabs-data';
+        const CAMERA_FUNCTION_TABS = JSON.parse(document.getElementById(CAMERA_FUNCTION_TABS_DATA_ID)?.textContent || '{}');
+        const LATENCY_UPDATE_INTERVAL_MS = 500;
+        const LATENCY_SNAPSHOT_TIMEOUT_MS = 1500;
+        const LATENCY_THRESHOLD_GOOD_MS = 100;
+        const LATENCY_THRESHOLD_WARNING_MS = 300;
+        const STATUS_UPDATE_INTERVAL_MS = 30000;
+        
+        // ===== GLOBAL DOM ELEMENTS =====
         const bannerSlot = document.getElementById('banner-slot');
+        const loginModal = document.getElementById('loginModal');
+        const loginForm = document.getElementById('loginForm');
+        const loginError = document.getElementById('loginError');
+        const logoutBtn = document.getElementById('logoutBtn');
         
-        // ===== Configuration =====
-        const LATENCY_UPDATE_INTERVAL_MS = 500;  // How often to poll video latency (milliseconds)
-        const STATUS_UPDATE_INTERVAL_MS = 30000;   // How often to poll connection status (milliseconds)
-        
-        // ===== VIDEO LATENCY MEASUREMENT =====
-        let videoLatencyData = {
-            cam0_network_latency_ms: 0,
-            cam1_network_latency_ms: 0,
-            cam0_render_latency_ms: 0,
-            cam1_render_latency_ms: 0,
-            cam0_total_latency_ms: 0,
-            cam1_total_latency_ms: 0
+        // ===== GLOBAL STATE =====
+        let latencyState = {
+            cam0: {
+                network_ms: 0,
+                processing_ms: 0,
+                delivery_ms: 0,
+                total_ms: 0,
+                samples: 0,
+                online: false
+            },
+            cam1: {
+                network_ms: 0,
+                processing_ms: 0,
+                delivery_ms: 0,
+                total_ms: 0,
+                samples: 0,
+                online: false
+            },
+            telemetry: {
+                uplink_ms: 0,
+                delivery_ms: 0,
+                total_ms: 0
+            }
         };
-        let latencyUpdateCount = 0;
-        let lastLatencyUpdateTime = Date.now();
-        let cam0LastFrameTime = 0;
-        let cam1LastFrameTime = 0;
-        let cam0FrameLoadTime = 0;
-        let cam1FrameLoadTime = 0;
-        let cam0FrameRenderTime = 0;
-        let cam1FrameRenderTime = 0;
-        
-        // Track render latency by measuring frame load and paint times
-        function measureRenderLatency() {
-            const cam0Img = document.getElementById('stream_cam0');
-            const cam1Img = document.getElementById('stream_cam1');
-            
-            // Calculate render latency as the time between frame load and actual render
-            // This uses the difference between when the image was fetched and when it was painted
-            if (cam0FrameLoadTime > 0 && cam0FrameRenderTime > 0) {
-                const cam0RenderTime = cam0FrameRenderTime - cam0FrameLoadTime;
-                videoLatencyData.cam0_render_latency_ms = Math.max(0, cam0RenderTime);
-            }
-            
-            if (cam1FrameLoadTime > 0 && cam1FrameRenderTime > 0) {
-                const cam1RenderTime = cam1FrameRenderTime - cam1FrameLoadTime;
-                videoLatencyData.cam1_render_latency_ms = Math.max(0, cam1RenderTime);
-            }
-        }
-        
-        // Setup image load event listeners to track when frames arrive and are rendered
-        function setupImageLoadTracking() {
-            const cam0Img = document.getElementById('stream_cam0');
-            const cam1Img = document.getElementById('stream_cam1');
-            
-            if (cam0Img) {
-                cam0Img.addEventListener('load', function() {
-                    cam0FrameLoadTime = performance.now();
-                    // Schedule a check after the next paint to get render time
-                    requestAnimationFrame(function() {
-                        cam0FrameRenderTime = performance.now();
-                    });
-                });
-            }
-            
-            if (cam1Img) {
-                cam1Img.addEventListener('load', function() {
-                    cam1FrameLoadTime = performance.now();
-                    // Schedule a check after the next paint to get render time
-                    requestAnimationFrame(function() {
-                        cam1FrameRenderTime = performance.now();
-                    });
-                });
-            }
-        }
-        
-        function updateLatencyDisplay() {
-            const cam0NetworkEl = document.getElementById('cam0-network-latency');
-            const cam0RenderEl = document.getElementById('cam0-render-latency');
-            const cam0TotalEl = document.getElementById('cam0-total-latency');
-            const cam0BarEl = document.getElementById('cam0-latency-bar');
-            
-            const cam1NetworkEl = document.getElementById('cam1-network-latency');
-            const cam1RenderEl = document.getElementById('cam1-render-latency');
-            const cam1TotalEl = document.getElementById('cam1-total-latency');
-            const cam1BarEl = document.getElementById('cam1-latency-bar');
-            
-            const updateRateEl = document.getElementById('latency-update-rate');
-            const lastUpdateEl = document.getElementById('latency-last-update');
-            const statusDotEl = document.getElementById('latency-status-dot');
-            
-            // Calculate totals
-            videoLatencyData.cam0_total_latency_ms = videoLatencyData.cam0_network_latency_ms + videoLatencyData.cam0_render_latency_ms;
-            videoLatencyData.cam1_total_latency_ms = videoLatencyData.cam1_network_latency_ms + videoLatencyData.cam1_render_latency_ms;
-            
-            // Update cam0 display
-            if (cam0NetworkEl) {
-                const networkVal = videoLatencyData.cam0_network_latency_ms;
-                cam0NetworkEl.textContent = networkVal > 0 ? networkVal.toFixed(1) : '--';
-                cam0NetworkEl.className = 'latency-value ' + getLatencyClass(networkVal);
-            }
-            if (cam0RenderEl) {
-                cam0RenderEl.textContent = videoLatencyData.cam0_render_latency_ms.toFixed(1);
-            }
-            if (cam0TotalEl) {
-                const totalVal = videoLatencyData.cam0_total_latency_ms;
-                cam0TotalEl.textContent = totalVal > 0 ? totalVal.toFixed(1) : '--';
-                cam0TotalEl.className = 'latency-value ' + getLatencyClass(totalVal);
-            }
-            if (cam0BarEl) {
-                // Scale bar: 0-500ms maps to 0-100%
-                const barWidth = Math.min(100, (videoLatencyData.cam0_total_latency_ms / 500) * 100);
-                cam0BarEl.style.width = barWidth + '%';
-            }
-            
-            // Update cam1 display
-            if (cam1NetworkEl) {
-                const networkVal = videoLatencyData.cam1_network_latency_ms;
-                cam1NetworkEl.textContent = networkVal > 0 ? networkVal.toFixed(1) : '--';
-                cam1NetworkEl.className = 'latency-value ' + getLatencyClass(networkVal);
-            }
-            if (cam1RenderEl) {
-                cam1RenderEl.textContent = videoLatencyData.cam1_render_latency_ms.toFixed(1);
-            }
-            if (cam1TotalEl) {
-                const totalVal = videoLatencyData.cam1_total_latency_ms;
-                cam1TotalEl.textContent = totalVal > 0 ? totalVal.toFixed(1) : '--';
-                cam1TotalEl.className = 'latency-value ' + getLatencyClass(totalVal);
-            }
-            if (cam1BarEl) {
-                const barWidth = Math.min(100, (videoLatencyData.cam1_total_latency_ms / 500) * 100);
-                cam1BarEl.style.width = barWidth + '%';
-            }
-            
-            // Update stats
-            if (updateRateEl) {
-                updateRateEl.textContent = LATENCY_UPDATE_INTERVAL_MS + 'ms';
-            }
-            if (lastUpdateEl) {
-                lastUpdateEl.textContent = new Date().toLocaleTimeString();
-            }
-            
-            // Update status dot - green if any camera is providing data
-            if (statusDotEl) {
-                const hasData = videoLatencyData.cam0_network_latency_ms > 0 || videoLatencyData.cam1_network_latency_ms > 0;
-                statusDotEl.classList.remove('on', 'off');
-                statusDotEl.classList.add(hasData ? 'on' : 'off');
-            }
-        }
-        
+
+        // ===== HELPER FUNCTIONS =====
         function getLatencyClass(latencyMs) {
             if (latencyMs <= 0) return '';
-            if (latencyMs < 100) return 'good';
-            if (latencyMs < 250) return 'warning';
+            if (latencyMs < LATENCY_THRESHOLD_GOOD_MS) return 'good';
+            if (latencyMs < LATENCY_THRESHOLD_WARNING_MS) return 'warning';
             return 'critical';
         }
-        
-        function fetchVideoLatency() {
-            fetch('/api/video_latency')
-                .then(response => response.json())
-                .then(data => {
-                    // Capture the moment we receive the API response
-                    const receiveTime = Date.now() / 1000;
-                    
-                    // Network latency from server
-                    videoLatencyData.cam0_network_latency_ms = data.cam0_network_latency_ms || 0;
-                    videoLatencyData.cam1_network_latency_ms = data.cam1_network_latency_ms || 0;
-                    
-                    // Measure render latency
-                    measureRenderLatency();
-                    
-                    // Update display
-                    latencyUpdateCount++;
-                    lastLatencyUpdateTime = Date.now();
-                    updateLatencyDisplay();
-                })
-                .catch(err => {
-                    console.error('Failed to fetch video latency:', err);
-                });
+
+        function normalizeLatency(value) {
+            return Number.isFinite(value) ? Math.max(0, value) : 0;
         }
-        
-        // Poll video latency at configured interval
-        setInterval(fetchVideoLatency, LATENCY_UPDATE_INTERVAL_MS);
-        fetchVideoLatency(); // Initial fetch
-        
-        // ===== TELEMETRY WEBSOCKET CONNECTION =====
-        let telemetryData = {};
-        let telemetryLatencyMs = 0;
-        
-        function connectTelemetryWebSocket() {
-            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const telemetryWs = new WebSocket(`${protocol}//${window.location.hostname}:8764`);
-            
-            telemetryWs.onmessage = (event) => {
-                try {
-                    const data = JSON.parse(event.data);
-                    telemetryData = data;
-                    
-                    // Calculate round-trip latency (including server-side latency)
-                    const clientTime = Date.now() / 1000;
-                    const serverTime = data.timestamp;
-                    const roundTripLatency = (clientTime - serverTime) * 1000;
-                    telemetryLatencyMs = roundTripLatency + (data.server_latency_ms || 0);
-                    
-                    // Log latency periodically
-                    if (Math.random() < 0.01) { // 1% of messages
-                        console.log(`[Telemetry] Latency: ${telemetryLatencyMs.toFixed(1)}ms (client: ${roundTripLatency.toFixed(1)}ms + server: ${(data.server_latency_ms || 0).toFixed(1)}ms)`);
-                    }
-                } catch (e) {
-                    console.error('Failed to parse telemetry data:', e);
+
+        function updateStatusDot(elementId, isOnline) {
+            const dot = document.getElementById(elementId);
+            if (!dot) return;
+            dot.classList.remove('on', 'off');
+            dot.classList.add(isOnline ? 'on' : 'off');
+        }
+
+        function updateLatencyValue(elementId, value, applyClass = false) {
+            const el = document.getElementById(elementId);
+            if (!el) return;
+            el.textContent = value > 0 ? value.toFixed(1) : '--';
+            if (applyClass) {
+                el.classList.remove('good', 'warning', 'critical');
+                const cls = getLatencyClass(value);
+                if (cls) el.classList.add(cls);
+            }
+        }
+
+        function updateE2EBar(elementId, latencyMs, maxMs = 800) {
+            const el = document.getElementById(elementId);
+            if (!el) return;
+            const width = Math.min(100, (latencyMs / maxMs) * 100);
+            el.style.width = `${width}%`;
+            el.classList.remove('good', 'warning', 'critical');
+            const cls = getLatencyClass(latencyMs);
+            if (cls) el.classList.add(cls);
+        }
+
+        async function fetchWithTimeout(url, options = {}, timeoutMs = 1500) {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), timeoutMs);
+            try {
+                return await fetch(url, { ...options, signal: controller.signal });
+            } finally {
+                clearTimeout(timer);
+            }
+        }
+
+        // ===== LATENCY FUNCTIONS =====
+        function updateLatencyGroup(groupId, components) {
+            const total = components.reduce((sum, item) => sum + item.value, 0);
+            updateLatencyValue(`${groupId}-total-latency`, total, true);
+            updateE2EBar(`${groupId}-e2e-bar`, total);
+
+            components.forEach(item => {
+                updateLatencyValue(`${groupId}-${item.key}-latency`, item.value);
+            });
+
+            return total;
+        }
+
+        function refreshLatencyUI() {
+            const cam0Total = updateLatencyGroup('cam0', [
+                { key: 'uplink', value: latencyState.cam0.network_ms },
+                { key: 'processing', value: latencyState.cam0.processing_ms },
+                { key: 'delivery', value: latencyState.cam0.delivery_ms }
+            ]);
+            const cam1Total = updateLatencyGroup('cam1', [
+                { key: 'uplink', value: latencyState.cam1.network_ms },
+                { key: 'processing', value: latencyState.cam1.processing_ms },
+                { key: 'delivery', value: latencyState.cam1.delivery_ms }
+            ]);
+            const telemetryTotal = updateLatencyGroup('telemetry', [
+                { key: 'uplink', value: latencyState.telemetry.uplink_ms },
+                { key: 'delivery', value: latencyState.telemetry.delivery_ms }
+            ]);
+
+            latencyState.cam0.total_ms = cam0Total;
+            latencyState.cam1.total_ms = cam1Total;
+            latencyState.telemetry.total_ms = telemetryTotal;
+
+            const updateRateEl = document.getElementById('latency-update-rate');
+            const lastUpdateEl = document.getElementById('latency-last-update');
+            if (updateRateEl) updateRateEl.textContent = `${LATENCY_UPDATE_INTERVAL_MS}ms`;
+            if (lastUpdateEl) lastUpdateEl.textContent = new Date().toLocaleTimeString();
+
+            const hasData = cam0Total > 0 || cam1Total > 0 || telemetryTotal > 0;
+            updateStatusDot('latency-status-dot', hasData);
+        }
+
+        async function fetchVideoLatency() {
+            try {
+                const response = await fetchWithTimeout('/api/video_latency', { cache: 'no-store' }, LATENCY_SNAPSHOT_TIMEOUT_MS);
+                if (!response.ok) return;
+                const data = await response.json();
+                latencyState.cam0.network_ms = normalizeLatency(data.cam0_network_latency_ms);
+                latencyState.cam1.network_ms = normalizeLatency(data.cam1_network_latency_ms);
+                latencyState.cam0.processing_ms = normalizeLatency(data.cam0_processing_latency_ms);
+                latencyState.cam1.processing_ms = normalizeLatency(data.cam1_processing_latency_ms);
+                latencyState.cam0.samples = data.cam0_samples || 0;
+                latencyState.cam1.samples = data.cam1_samples || 0;
+                latencyState.cam0.online = Boolean(data.cam0_online);
+                latencyState.cam1.online = Boolean(data.cam1_online);
+            } catch (err) {
+                console.error('Failed to fetch video latency:', err);
+            }
+        }
+
+        async function fetchSnapshotLatency(camId) {
+            const camIndex = camId === 'cam0' ? 0 : 1;
+            try {
+                const start = performance.now();
+                const response = await fetchWithTimeout(`/api/snapshot_cam${camIndex}?t=${Date.now()}`, { cache: 'no-store' }, LATENCY_SNAPSHOT_TIMEOUT_MS);
+                if (!response.ok || response.status === 204) {
+                    latencyState[camId].delivery_ms = 0;
+                    return;
                 }
-            };
-            
-            telemetryWs.onerror = (error) => {
-                console.error('Telemetry WebSocket error:', error);
-            };
-            
-            telemetryWs.onopen = () => {
-                console.log('Telemetry WebSocket connected');
-            };
-            
-            telemetryWs.onclose = () => {
-                console.warn('Telemetry WebSocket disconnected, attempting to reconnect in 2 seconds...');
-                setTimeout(connectTelemetryWebSocket, 2000);
-            };
+
+                const blob = await response.blob();
+                const img = new Image();
+                const objectUrl = URL.createObjectURL(blob);
+                img.src = objectUrl;
+                try {
+                    await img.decode();
+                } catch (e) {
+                    await new Promise(resolve => {
+                        img.onload = resolve;
+                        img.onerror = resolve;
+                    });
+                }
+                URL.revokeObjectURL(objectUrl);
+                const end = performance.now();
+                latencyState[camId].delivery_ms = normalizeLatency(end - start);
+            } catch (err) {
+                latencyState[camId].delivery_ms = 0;
+            }
+        }
+
+        async function fetchTelemetryLatency() {
+            try {
+                const start = performance.now();
+                const response = await fetchWithTimeout('/telemetry', { cache: 'no-store' }, LATENCY_SNAPSHOT_TIMEOUT_MS);
+                if (!response.ok) return;
+                const data = await response.json();
+                const end = performance.now();
+                latencyState.telemetry.uplink_ms = normalizeLatency(data.client_latency_ms);
+                latencyState.telemetry.delivery_ms = normalizeLatency(end - start);
+            } catch (err) {
+                latencyState.telemetry.uplink_ms = 0;
+                latencyState.telemetry.delivery_ms = 0;
+            }
+        }
+
+        async function refreshLatencyData() {
+            await Promise.allSettled([
+                fetchVideoLatency(),
+                fetchSnapshotLatency('cam0'),
+                fetchSnapshotLatency('cam1'),
+                fetchTelemetryLatency()
+            ]);
+            refreshLatencyUI();
         }
         
-        // Connect to telemetry WebSocket
-        connectTelemetryWebSocket();
-        
-        // Setup image load tracking for render latency measurement
-        setupImageLoadTracking();
-        
-        // ===== STATUS UPDATE FUNCTION =====
+        // ===== STATUS UPDATE FUNCTIONS =====
         function updateStatusDots() {
             fetch('/api/status')
                 .then(response => response.json())
                 .then(status => {
-                    // Update all status dots
-                    const mainDot = document.getElementById('main-status-dot');
-                    const cam0Dot = document.getElementById('cam0-status-dot');
-                    const cam1Dot = document.getElementById('cam1-status-dot');
-                    const hqDot = document.getElementById('hq-status-dot');
-                    const mapDot = document.getElementById('map-status-dot');
-                    
-                    if (mainDot) {
-                        mainDot.classList.remove('on', 'off');
-                        mainDot.classList.add(status.main_online ? 'on' : 'off');
-                    }
-                    if (cam0Dot) {
-                        cam0Dot.classList.remove('on', 'off');
-                        cam0Dot.classList.add(status.cam0_online ? 'on' : 'off');
-                    }
-                    if (cam1Dot) {
-                        cam1Dot.classList.remove('on', 'off');
-                        cam1Dot.classList.add(status.cam1_online ? 'on' : 'off');
-                    }
-                    if (hqDot) {
-                        hqDot.classList.remove('on', 'off');
-                        hqDot.classList.add(status.hq_online ? 'on' : 'off');
-                    }
-                    if (mapDot) {
-                        mapDot.classList.remove('on', 'off');
-                        mapDot.classList.add(status.map_online ? 'on' : 'off');
-                    }
+                    updateStatusDot('main-status-dot', status.main_online);
+                    updateStatusDot('cam0-status-dot', status.cam0_online);
+                    updateStatusDot('cam1-status-dot', status.cam1_online);
+                    updateStatusDot('hq-status-dot', status.hq_online);
+                    updateStatusDot('map-status-dot', status.map_online);
                 })
                 .catch(err => console.error('Failed to fetch status:', err));
         }
         
-        // Update status at configured interval
-        setInterval(updateStatusDots, STATUS_UPDATE_INTERVAL_MS);
-        updateStatusDots(); // Initial update
+        // ===== MAP CONTROL FUNCTIONS =====
         
-        const updateMapControls = () => {
+        function getMapIframe() {
             const mapCard = document.querySelector('[data-card-id="map"]');
-            const iframe = mapCard?.querySelector('iframe');
-            if (!mapCard || !iframe) return;
+            return mapCard?.querySelector('iframe');
+        }
 
-            const apply = () => {
+        function executeOnIframe(callback) {
+            const iframe = getMapIframe();
+            if (!iframe) return;
+
+            if (iframe.contentDocument?.readyState === 'complete') {
+                callback(iframe);
+            } else {
+                iframe.addEventListener('load', () => callback(iframe), { once: true });
+            }
+        }
+
+        function updateMapControls() {
+            executeOnIframe((iframe) => {
                 const doc = iframe.contentDocument || iframe.contentWindow?.document;
                 if (!doc) return;
-                const isExpanded = mapCard.classList.contains('expanded');
                 
-                // Hide leaflet controls when not expanded
+                const mapCard = document.querySelector('[data-card-id="map"]');
+                const isExpanded = mapCard?.classList.contains('expanded');
+                
                 doc.querySelectorAll('.leaflet-control').forEach(el => {
                     el.style.display = isExpanded ? '' : 'none';
                 });
                 
-                // Show/hide reset button
                 const resetBtn = doc.getElementById('reset-btn');
-                if (resetBtn) {
-                    resetBtn.style.display = isExpanded ? 'block' : 'none';
+                if (resetBtn) resetBtn.style.display = isExpanded ? 'block' : 'none';
+            });
+        }
+
+        // ===== MINIMAP (small persistent map) =====
+        let minimapOpen = false;
+
+        function updateMinimapVisibility() {
+            const expandedCard = document.querySelector('.card.expanded');
+            const showTab = expandedCard && ['cam0', 'cam1', 'hq'].includes(expandedCard.getAttribute('data-card-id'));
+            // minimap toggle is rendered inside the camera function rail; when the
+            // expanded card is not a camera we close the minimap overlay.
+            if (!showTab) {
+                minimapOpen = false;
+                const mm = document.getElementById('minimap');
+                if (mm) mm.classList.remove('open');
+                const content = document.getElementById('minimap-content');
+                if (content) content.querySelectorAll('iframe').forEach(n => n.remove());
+            }
+        }
+
+        function showMinimap() {
+            minimapOpen = true;
+            const mm = document.getElementById('minimap');
+            if (mm) mm.classList.add('open');
+
+            const content = document.getElementById('minimap-content');
+            if (!content) return;
+            content.querySelectorAll('iframe, .map-clone').forEach(n => n.remove());
+
+            const iframe = getMapIframe();
+            if (iframe && iframe.src) {
+                try {
+                    const clone = document.createElement('iframe');
+                    clone.src = iframe.src;
+                    clone.style.width = '100%';
+                    clone.style.height = '100%';
+                    clone.style.border = '0';
+                    clone.className = 'map-clone';
+                    // when iframe loads, hide leaflet controls inside it
+                    clone.addEventListener('load', () => {
+                        try {
+                            const doc = clone.contentDocument || clone.contentWindow.document;
+                            if (doc) {
+                                const removeControls = () => {
+                                    doc.querySelectorAll('.leaflet-control, #reset-btn, .leaflet-control-zoom, .leaflet-control-container').forEach(el => {
+                                        try { el.style.display = 'none'; el.remove?.(); } catch(e) {}
+                                    });
+                                };
+                                removeControls();
+                                // in case controls are added later, observe and remove
+                                try {
+                                    const obs = new MutationObserver(removeControls);
+                                    obs.observe(doc.body, { childList: true, subtree: true });
+                                    setTimeout(() => obs.disconnect(), 3000);
+                                } catch (e) {}
+                            }
+                        } catch (e) {
+                            console.warn('Unable to hide controls in cloned iframe minimap', e);
+                        }
+                    }, { once: true });
+
+                    content.appendChild(clone);
+                    return;
+                } catch (e) {
+                    console.warn('Failed to clone map iframe for minimap', e);
                 }
-            };
-
-            if (iframe.contentDocument?.readyState === 'complete') {
-                apply();
-            } else {
-                iframe.addEventListener('load', apply, { once: true });
             }
-        };
 
-        const fitMapToBounds = () => {
             const mapCard = document.querySelector('[data-card-id="map"]');
-            const iframe = mapCard?.querySelector('iframe');
-            const mapWin = iframe?.contentWindow;
-            if (!mapWin) return;
-
-            const doFit = () => mapWin.fitBoundsView?.();
-            if (iframe?.contentDocument?.readyState === 'complete') {
-                setTimeout(doFit, 0);
-            } else {
-                iframe?.addEventListener('load', () => setTimeout(doFit, 0), { once: true });
+            const mapContainer = mapCard?.querySelector('.map-container');
+            if (mapContainer) {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'map-clone';
+                wrapper.style.width = '100%';
+                wrapper.style.height = '100%';
+                wrapper.style.overflow = 'hidden';
+                wrapper.innerHTML = mapContainer.innerHTML;
+                // remove/hide leaflet controls in the copied HTML and watch for late additions
+                const removeInlineControls = () => {
+                    wrapper.querySelectorAll('.leaflet-control, #reset-btn, .leaflet-control-zoom, .leaflet-control-container').forEach(el => {
+                        try { el.remove(); } catch (e) {}
+                    });
+                };
+                removeInlineControls();
+                try {
+                    const obs = new MutationObserver(removeInlineControls);
+                    obs.observe(wrapper, { childList: true, subtree: true });
+                    setTimeout(() => obs.disconnect(), 3000);
+                } catch (e) {}
+                content.appendChild(wrapper);
             }
-        };
+        }
 
-        const resetMapView = () => {
-            const mapCard = document.querySelector('[data-card-id="map"]');
-            const iframe = mapCard?.querySelector('iframe');
-            const mapWin = iframe?.contentWindow;
-            if (!mapWin) return;
+        function hideMinimap() {
+            minimapOpen = false;
+            const mm = document.getElementById('minimap');
+            if (mm) mm.classList.remove('open');
+            const content = document.getElementById('minimap-content');
+            if (content) content.querySelectorAll('iframe').forEach(n => n.remove());
+        }
 
-            const doReset = () => mapWin.resetView?.();
-            if (iframe?.contentDocument?.readyState === 'complete') {
-                setTimeout(doReset, 0);
-            } else {
-                iframe?.addEventListener('load', () => setTimeout(doReset, 0), { once: true });
+        function toggleMinimap() {
+            if (minimapOpen) hideMinimap(); else showMinimap();
+        }
+
+        function callMapMethod(methodName) {
+            executeOnIframe((iframe) => {
+                setTimeout(() => iframe.contentWindow?.[methodName]?.(), 0);
+            });
+        }
+
+        function fitMapToBounds() {
+            callMapMethod('fitBoundsView');
+        }
+
+        function resetMapView() {
+            callMapMethod('resetView');
+        }
+
+        // ===== COMMAND SUITE FUNCTIONS =====
+        const COMMAND_DEFS = [
+            {
+                id: 'go_dark',
+                label: 'Go Dark',
+                type: 'toggle',
+                icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.4A8 8 0 1 1 11.6 3a7 7 0 0 0 9.4 9.4Z" fill="currentColor"></path></svg>'
+            },
+            {
+                id: 'night_vision',
+                label: 'Night Vision Mode',
+                type: 'toggle',
+                icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s4-6 10-6 10 6 10 6-4 6-10 6-10-6-10-6Z" fill="none" stroke="currentColor" stroke-width="2"></path><circle cx="12" cy="12" r="3" fill="currentColor"></circle></svg>'
+            },
+            {
+                id: 'auto_rth',
+                label: 'Autonomous RTH',
+                type: 'toggle',
+                icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640"><!--!Font Awesome Free v7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free Copyright 2026 Fonticons, Inc.--><path d="M304 70.1C313.1 61.9 326.9 61.9 336 70.1L568 278.1C577.9 286.9 578.7 302.1 569.8 312C560.9 321.9 545.8 322.7 535.9 313.8L527.9 306.6L527.9 511.9C527.9 547.2 499.2 575.9 463.9 575.9L175.9 575.9C140.6 575.9 111.9 547.2 111.9 511.9L111.9 306.6L103.9 313.8C94 322.6 78.9 321.8 70 312C61.1 302.2 62 287 71.8 278.1L304 70.1zM320 120.2L160 263.7L160 512C160 520.8 167.2 528 176 528L224 528L224 424C224 384.2 256.2 352 296 352L344 352C383.8 352 416 384.2 416 424L416 528L464 528C472.8 528 480 520.8 480 512L480 263.7L320 120.3zM272 528L368 528L368 424C368 410.7 357.3 400 344 400L296 400C282.7 400 272 410.7 272 424L272 528z"/></svg>'
+            },
+            {
+                id: 'drop_gps_pin',
+                label: 'Drop GPS Pin',
+                type: 'pulse',
+                icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 11C13.1046 11 14 10.1046 14 9C14 7.89543 13.1046 7 12 7C10.8954 7 10 7.89543 10 9C10 10.1046 10.8954 11 12 11Z" fill="currentColor"/><path fill-rule="evenodd" clip-rule="evenodd" d="M18 9C18 11.973 15.8377 14.441 13 14.917V20H16C16.5523 20 17 20.4477 17 21C17 21.5523 16.5523 22 16 22H8C7.44772 22 7 21.5523 7 21C7 20.4477 7.44772 20 8 20H11V14.917C8.16229 14.441 6 11.973 6 9C6 5.68629 8.68629 3 12 3C15.3137 3 18 5.68629 18 9ZM12 13C14.2091 13 16 11.2091 16 9C16 6.79086 14.2091 5 12 5C9.79086 5 8 6.79086 8 9C8 11.2091 9.79086 13 12 13Z" fill="currentColor"/></svg>'
+            },
+            {
+                id: 'emergency',
+                label: 'Emergency',
+                type: 'toggle',
+                icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 2 20h20L12 2Z" fill="none" stroke="currentColor" stroke-width="2"></path><path d="M12 8v6" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path><circle cx="12" cy="17" r="1.5" fill="currentColor"></circle></svg>'
+            },
+            {
+                id: 'loiter',
+                label: 'Loiter',
+                type: 'toggle',
+                icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5a7 7 0 1 1-6.2 3.8" fill="none" stroke="currentColor" stroke-width="2"></path><path d="M5 5v4h4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>'
+            },
+            {
+                id: 'landing_mode',
+                label: 'Landing Mode',
+                type: 'pulse',
+                icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path><path d="M7 10l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M4 21h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path></svg>'
             }
-        };
+        ];
 
-        const clearExpanded = () => {
+        const COMMAND_MINIMIZED_ORDER = [
+            'go_dark',
+            'night_vision',
+            'auto_rth',
+            'drop_gps_pin',
+            'emergency',
+            'loiter'
+        ];
+
+        let commandState = {};
+
+        function getCommandDef(id) {
+            return COMMAND_DEFS.find(cmd => cmd.id === id);
+        }
+
+        function buildCommandButton(def) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'command-btn';
+            // mark emergency button for targeted styling
+            if (def.id === 'emergency') btn.classList.add('emergency-btn');
+            btn.dataset.commandId = def.id;
+            btn.dataset.commandType = def.type;
+            if (def.type === 'pulse') btn.classList.add('is-pulse');
+            btn.innerHTML = `<span class="command-icon">${def.icon}</span><span class="command-label">${def.label}</span>`;
+            btn.setAttribute('aria-pressed', 'false');
+
+            btn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                await sendCommand(def);
+            });
+            return btn;
+        }
+
+        function buildCameraFunctionButton(def) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'camera-function-tab';
+            if (def.id === 'emergency') btn.classList.add('emergency-btn');
+            btn.dataset.commandId = def.id;
+            btn.dataset.commandType = def.type;
+            if (def.type === 'pulse') btn.classList.add('is-pulse');
+            // icons-only: render only the icon in the tab, keep label for accessibility
+            btn.innerHTML = `<span class="camera-tab-icon">${def.icon}</span>`;
+            btn.setAttribute('aria-label', def.label);
+            btn.setAttribute('aria-pressed', 'false');
+
+            btn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                await sendCommand(def);
+            });
+            
+            return btn;
+        }
+
+        function renderCommandSuite() {
+            const compactEl = document.getElementById('command-compact');
+            const fullEl = document.getElementById('command-full');
+            if (!compactEl || !fullEl) return;
+
+            compactEl.innerHTML = '';
+            fullEl.innerHTML = '';
+
+            COMMAND_MINIMIZED_ORDER.forEach(id => {
+                const def = getCommandDef(id);
+                if (def) compactEl.appendChild(buildCommandButton(def));
+            });
+
+            COMMAND_DEFS.forEach(def => {
+                fullEl.appendChild(buildCommandButton(def));
+            });
+        }
+
+        function renderCameraFunctionTabs() {
+            document.querySelectorAll('[data-function-rail]').forEach(rail => {
+                const cameraId = rail.dataset.cameraId;
+                const selectedIds = (CAMERA_FUNCTION_TABS && CAMERA_FUNCTION_TABS[cameraId]) || [];
+                rail.innerHTML = '';
+
+                selectedIds.forEach(id => {
+                    const def = getCommandDef(id);
+                    if (def) rail.appendChild(buildCameraFunctionButton(def));
+                });
+
+                // add minimap toggle into the rail so tab is part of camera rails
+                const minimapBtn = document.createElement('button');
+                minimapBtn.type = 'button';
+                minimapBtn.className = 'camera-function-tab rail-minimap-tab';
+                minimapBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"></path><circle cx="12" cy="10" r="3"></circle></svg>';
+                minimapBtn.setAttribute('aria-label', 'Minimap');
+                minimapBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleMinimap(); });
+                rail.appendChild(minimapBtn);
+
+                rail.classList.toggle('is-empty', selectedIds.length === 0);
+            });
+        }
+
+        /* Hover floating label removed — hover/tooltip UI is handled externally */
+
+        function applyCommandStateToUI() {
+            document.querySelectorAll('.command-btn, .camera-function-tab').forEach(btn => {
+                const id = btn.dataset.commandId;
+                const isActive = Boolean(commandState[id]);
+                btn.classList.toggle('is-active', isActive);
+                btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+            });
+
+            if (commandState.emergency) {
+                document.body.classList.add('emergency-mode');
+            } else {
+                document.body.classList.remove('emergency-mode');
+            }
+        }
+
+        async function fetchCommandState() {
+            try {
+                const res = await fetch('/api/commands');
+                const data = await res.json();
+                commandState = { ...commandState, ...data };
+                applyCommandStateToUI();
+            } catch (e) {
+                console.error('Failed to fetch command state:', e);
+            }
+        }
+
+        async function sendCommand(def) {
+            const isPulse = def.type === 'pulse';
+            const nextValue = isPulse ? true : !Boolean(commandState[def.id]);
+
+            if (isPulse) {
+                const buttons = document.querySelectorAll(`.command-btn[data-command-id="${def.id}"], .camera-function-tab[data-command-id="${def.id}"]`);
+                buttons.forEach(btn => {
+                    btn.classList.add('is-pending');
+                    setTimeout(() => btn.classList.remove('is-pending'), 400);
+                });
+            }
+
+            // Optimistically update toggle buttons locally for immediate feedback
+            if (!isPulse) {
+                commandState[def.id] = nextValue;
+                applyCommandStateToUI();
+            }
+
+            try {
+                const res = await fetch('/api/command', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: def.id, value: nextValue, pulse: isPulse })
+                });
+                const data = await res.json();
+                if (data.success && data.commands) {
+                    commandState = { ...commandState, ...data.commands };
+                    applyCommandStateToUI();
+                }
+            } catch (e) {
+                console.error('Failed to send command:', e);
+            }
+        }
+
+        function clearExpanded() {
             bannerSlot.innerHTML = '';
             document.querySelectorAll('.card.expanded').forEach(c => c.classList.remove('expanded'));
             document.body.classList.remove('expanded');
             document.exitFullscreen?.().catch(() => {});
             updateMapControls();
-        };
-
-        // Handle minimize button clicks first with capturing phase
-        document.addEventListener('click', e => {
-            if (e.target.closest('[data-minimize]')) {
-                e.preventDefault();
-                e.stopPropagation();
-                clearExpanded();
-                return;
-            }
-        }, true);
-
-        document.querySelectorAll('[data-card]').forEach(card => {
-            const header = card.querySelector('[data-header]');
-            card.addEventListener('click', e => {
-                if (!card.classList.contains('expanded')) {
-                    clearExpanded();
-                    card.classList.add('expanded');
-                    document.body.classList.add('expanded');
-                    const headerClone = header.cloneNode(true);
-                    headerClone.classList.add('in-banner');
-                    bannerSlot.appendChild(headerClone);
-                    document.documentElement.requestFullscreen?.().catch(() => {});
-                    updateMapControls();
-                }
-            });
-        });
-        document.querySelector('#banner img').addEventListener('click', e => {
-            e.stopPropagation();
-            location.reload();
-        });
-
-        // Initial setup for map controls
-        updateMapControls();
-
-        // ===== LOGIN SYSTEM =====
-        const loginModal = document.getElementById('loginModal');
-        const loginForm = document.getElementById('loginForm');
-        const loginError = document.getElementById('loginError');
-        const logoutBtn = document.getElementById('logoutBtn');
-        const usernameInput = document.getElementById('username');
-        const passwordInput = document.getElementById('password');
-        const rememberMeCheckbox = document.getElementById('rememberMe');
-
-        // Check if user is already logged in
-        function initializeLogin() {
-            const cachedToken = localStorage.getItem('sentryToken');
-            const cachedUsername = localStorage.getItem('sentryUsername');
-            
-            if (cachedToken && cachedUsername) {
-                // User is already logged in
-                hideLoginModal();
-            } else {
-                // User needs to log in
-                showLoginModal();
-            }
+            updateMinimapVisibility();
         }
 
+        // ===== CARD EXPANSION HANDLERS =====
+        function setupCardExpansion() {
+            document.addEventListener('click', e => {
+                if (e.target.closest('[data-minimize]')) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    
+                    // Check if we're minimizing the map card and enable follow mode
+                    const card = e.target.closest('[data-card]');
+                    if (card && card.getAttribute('data-card-id') === 'map') {
+                        // Enable follow mode when map is minimized
+                        executeOnIframe((iframe) => {
+                            const win = iframe.contentWindow;
+                            if (win && win.isFollowing !== undefined) {
+                                win.isFollowing = true;
+                            }
+                        });
+                    }
+                    
+                    clearExpanded();
+                }
+            }, true);
+
+            document.querySelectorAll('[data-card]').forEach(card => {
+                const header = card.querySelector('[data-header]');
+                card.addEventListener('click', () => {
+                    if (!card.classList.contains('expanded')) {
+                        clearExpanded();
+                        card.classList.add('expanded');
+                        document.body.classList.add('expanded');
+                        const headerClone = header.cloneNode(true);
+                        headerClone.classList.add('in-banner');
+                        bannerSlot.appendChild(headerClone);
+                        document.documentElement.requestFullscreen?.().catch(() => {});
+                        updateMapControls();
+                            updateMinimapVisibility();
+                    }
+                });
+            });
+
+            document.querySelector('#banner img').addEventListener('click', e => {
+                e.stopPropagation();
+                location.reload();
+            });
+        }
+
+        // ===== LOGIN FUNCTIONS =====
         function showLoginModal() {
             loginModal.classList.remove('hidden');
             document.body.style.overflow = 'hidden';
-            usernameInput.focus();
+            document.getElementById('username').focus();
         }
 
         function hideLoginModal() {
@@ -571,77 +922,90 @@
             document.body.style.overflow = 'auto';
         }
 
-        // Handle login form submission
-        loginForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            
-            const username = usernameInput.value.trim();
-            const password = passwordInput.value.trim();
-            const rememberMe = rememberMeCheckbox.checked;
+        function initializeLogin() {
+            const cachedToken = localStorage.getItem('sentryToken');
+            const cachedUsername = localStorage.getItem('sentryUsername');
+            (cachedToken && cachedUsername) ? hideLoginModal() : showLoginModal();
+        }
 
-            try {
-                const response = await fetch('/api/authenticate', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ username, password })
-                });
+        function setupLoginHandlers() {
+            loginForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                
+                const username = document.getElementById('username').value.trim();
+                const password = document.getElementById('password').value.trim();
+                const rememberMe = document.getElementById('rememberMe').checked;
 
-                const data = await response.json();
+                try {
+                    const response = await fetch('/api/authenticate', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ username, password })
+                    });
 
-                if (data.success) {
-                    // Store credentials if remember me is checked
-                    if (rememberMe) {
-                        localStorage.setItem('sentryToken', data.token);
-                        localStorage.setItem('sentryUsername', username);
+                    const data = await response.json();
+
+                    if (data.success) {
+                        if (rememberMe) {
+                            localStorage.setItem('sentryToken', data.token);
+                            localStorage.setItem('sentryUsername', username);
+                        }
+                        loginForm.reset();
+                        loginError.classList.add('hidden');
+                        hideLoginModal();
+                    } else {
+                        loginError.textContent = data.message || 'Invalid username or password';
+                        loginError.classList.remove('hidden');
+                        document.getElementById('password').value = '';
+                        document.getElementById('password').focus();
                     }
-                    
-                    // Clear form
-                    loginForm.reset();
-                    loginError.classList.add('hidden');
-                    
-                    // Hide login modal
-                    hideLoginModal();
-                } else {
-                    // Show error message
-                    loginError.textContent = data.message || 'Invalid username or password';
+                } catch (error) {
+                    loginError.textContent = 'An error occurred. Please try again.';
                     loginError.classList.remove('hidden');
-                    passwordInput.value = '';
-                    passwordInput.focus();
+                    console.error('Login error:', error);
                 }
-            } catch (error) {
-                loginError.textContent = 'An error occurred. Please try again.';
-                loginError.classList.remove('hidden');
-                console.error('Login error:', error);
-            }
-        });
+            });
 
-        // Handle logout
-        logoutBtn.addEventListener('click', async () => {
-            try {
-                await fetch('/api/logout', { method: 'POST' });
-            } catch (error) {
-                console.error('Logout error:', error);
-            }
-            
-            // Clear stored credentials
-            localStorage.removeItem('sentryToken');
-            localStorage.removeItem('sentryUsername');
-            
-            // Show login modal
-            loginForm.reset();
-            showLoginModal();
-        });
+            logoutBtn.addEventListener('click', async () => {
+                try {
+                    await fetch('/api/logout', { method: 'POST' });
+                } catch (error) {
+                    console.error('Logout error:', error);
+                }
+                localStorage.removeItem('sentryToken');
+                localStorage.removeItem('sentryUsername');
+                loginForm.reset();
+                showLoginModal();
+            });
+        }
 
-        // Initialize login on page load
-        document.addEventListener('DOMContentLoaded', initializeLogin);
-        
-        // Also run immediately in case DOM is already loaded
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', initializeLogin);
-        } else {
+        // ===== INITIALIZATION =====
+        function initialize() {
+            setupCardExpansion();
+            setupLoginHandlers();
+            updateMapControls();
+            updateMinimapVisibility();
+            // minimap toggle buttons are created inside each camera function rail
+
+            renderCommandSuite();
+            renderCameraFunctionTabs();
+            fetchCommandState();
+            setInterval(fetchCommandState, 2000);
+
+            refreshLatencyData();
+            setInterval(refreshLatencyData, LATENCY_UPDATE_INTERVAL_MS);
+            
+            setInterval(updateStatusDots, STATUS_UPDATE_INTERVAL_MS);
+            updateStatusDots();
+            
             initializeLogin();
+            updateMapControls();  // Ensure map controls are properly initialized
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initialize);
+        } else {
+            initialize();
         }
     </script>
 </body>

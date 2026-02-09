@@ -312,6 +312,71 @@
             min-height: 400px;
         }
 
+        /* Minimap tab + overlay styles */
+        .minimap-tab {
+            position: fixed;
+            top: 50%;
+            right: 40px;
+            transform: translateY(-50%);
+            width: 28px;
+            height: 80px;
+            background: #1e40af; /* blue */
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            cursor: pointer;
+            z-index: 1200;
+            box-shadow: 0 6px 18px rgba(30,64,175,0.25);
+        }
+
+        .minimap {
+            position: fixed;
+            right: 1.5rem;
+            bottom: 1.5rem;
+            width: 320px;
+            height: 220px;
+            background: #071033;
+            border: 2px solid #1e40af;
+            border-radius: 8px;
+            overflow: hidden;
+            display: none;
+            z-index: 1250;
+            box-shadow: 0 10px 40px rgba(2,6,23,0.6);
+        }
+
+        .minimap.open {
+            display: block;
+        }
+
+        .minimap .minimap-bar {
+            position: absolute;
+            right: 0;
+            top: 0;
+            bottom: 0;
+            width: 28px;
+            background: #2563eb; /* persist blue bar */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            cursor: pointer;
+        }
+
+        .minimap .minimap-content {
+            position: absolute;
+            left: 0;
+            right: 28px;
+            top: 0;
+            bottom: 0;
+            padding: 0;
+            display: flex;
+            align-items: stretch;
+            justify-content: stretch;
+            color: #cbd5e1;
+        }
+
         .map-placeholder {
             width: 100%;
             height: 100%;
@@ -389,6 +454,7 @@
             activeCamera: null,
             cameraSize: 'normal',
             showMap: false,
+            minimapOpen: false,
             irIlluminatorsOn: false
         };
 
@@ -507,6 +573,15 @@
                                 <small>ID: ${camera.id}-video-feed</small>
                             </div>
                         </div>
+
+                        ${state.cameraSize === 'maximized' ? `
+                        <div id="minimap-tab" class="minimap-tab">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+                        </div>
+                        <div id="minimap" class="minimap ${state.minimapOpen ? 'open' : ''}">
+                            <div class="minimap-content" id="minimap-content"></div>
+                        </div>
+                        ` : ''}
 
                         <div class="function-buttons">
                             ${functions.map((func, index) => {
@@ -656,6 +731,15 @@
                 });
             });
         }
+            // Minimap tab toggles open/close
+            const minimapTab = document.getElementById('minimap-tab');
+            if (minimapTab) {
+                minimapTab.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    state.minimapOpen = !state.minimapOpen;
+                    render();
+                });
+            }
 
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {

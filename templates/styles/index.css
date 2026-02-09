@@ -8,6 +8,100 @@ body {
     width: 100%;
     margin: 0;
     background-color: #f0f0f0;
+    position: relative;
+    transition: box-shadow 0.3s ease;
+}
+
+:root {
+    /* Emergency appearance variables - adjust these at top of file */
+    --emergency-color: rgba(239, 68, 68, 1); /* main red */
+    --emergency-glow-rgba: 239, 68, 68; /* RGB for easier rgba construction */
+    --emergency-pulse-duration: 2s; /* pulse cycle duration */
+    --emergency-body-glow-strength: 0.25; /* body inset glow opacity (min) */
+    --emergency-body-glow-strength-max: 0.45; /* body inset glow opacity (max) */
+    --emergency-border-opacity: 0.6;
+
+    /* Camera function tab appearance variables */
+    --camera-tab-width: 30px;
+    --camera-tab-expanded-width: 170px;
+    --camera-tab-height: 90px;
+    --camera-tab-gap: 12px;
+    --camera-tab-bg: #1e40af;
+    --camera-tab-color: #ffffff;
+    --camera-tab-active-bg: #1e3c72;
+    --camera-tab-active-color: #ffffff;
+    --camera-tab-shadow: 0 6px 18px rgba(30, 64, 175, 0.25);
+}
+
+/* Emergency mode - red glow effect */
+body.emergency-mode {
+    box-shadow: inset 0 0 80px 20px rgba(var(--emergency-glow-rgba), var(--emergency-body-glow-strength));
+    animation: emergency-body-pulse var(--emergency-pulse-duration) ease-in-out infinite;
+}
+
+body.emergency-mode::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    border: 4px solid rgba(var(--emergency-glow-rgba), var(--emergency-border-opacity));
+    pointer-events: none;
+    z-index: 9999;
+    animation: emergency-border-pulse var(--emergency-pulse-duration) ease-in-out infinite;
+}
+
+@keyframes emergency-body-pulse {
+    0%, 100% { 
+        box-shadow: inset 0 0 80px 20px rgba(var(--emergency-glow-rgba), var(--emergency-body-glow-strength));
+    }
+    50% { 
+        box-shadow: inset 0 0 100px 30px rgba(var(--emergency-glow-rgba), var(--emergency-body-glow-strength-max));
+    }
+}
+
+@keyframes emergency-border-pulse {
+    0%, 100% { 
+        border-color: rgba(var(--emergency-glow-rgba), calc(var(--emergency-border-opacity) * 0.8));
+        box-shadow: inset 0 0 40px rgba(var(--emergency-glow-rgba), calc(var(--emergency-body-glow-strength) * 1.2)), 0 0 40px rgba(var(--emergency-glow-rgba), calc(var(--emergency-body-glow-strength) * 1.2));
+    }
+    50% { 
+        border-color: rgba(var(--emergency-glow-rgba), 0.95);
+        box-shadow: inset 0 0 60px rgba(var(--emergency-glow-rgba), calc(var(--emergency-body-glow-strength-max) * 1.2)), 0 0 60px rgba(var(--emergency-glow-rgba), calc(var(--emergency-body-glow-strength-max) * 1.2));
+    }
+}
+
+/* Emergency-specific command button styling */
+.command-btn[data-command-id="emergency"].is-active {
+    background: var(--emergency-color);
+    color: #ffffff;
+    border-color: rgba(var(--emergency-glow-rgba), 0.95);
+    box-shadow: 0 8px 30px rgba(var(--emergency-glow-rgba), 0.18), 0 0 0 0 rgba(var(--emergency-glow-rgba), 0.0);
+    animation: emergency-button-pulse calc(var(--emergency-pulse-duration) / 1.2) ease-in-out infinite;
+}
+
+.camera-function-tab[data-command-id="emergency"].is-active {
+    background: var(--emergency-color);
+    color: #ffffff;
+    border-color: rgba(var(--emergency-glow-rgba), 0.95);
+    box-shadow: 0 8px 30px rgba(var(--emergency-glow-rgba), 0.18), 0 0 0 0 rgba(var(--emergency-glow-rgba), 0.0);
+    animation: emergency-button-pulse calc(var(--emergency-pulse-duration) / 1.2) ease-in-out infinite;
+}
+
+@keyframes emergency-button-pulse {
+    0% {
+        transform: translateY(0);
+        box-shadow: 0 8px 30px rgba(var(--emergency-glow-rgba), 0.12), 0 0 0 0 rgba(var(--emergency-glow-rgba), 0.0);
+    }
+    50% {
+        transform: translateY(-2px);
+        box-shadow: 0 12px 40px rgba(var(--emergency-glow-rgba), 0.25), 0 0 24px rgba(var(--emergency-glow-rgba), 0.06);
+    }
+    100% {
+        transform: translateY(0);
+        box-shadow: 0 8px 30px rgba(var(--emergency-glow-rgba), 0.12), 0 0 0 0 rgba(var(--emergency-glow-rgba), 0.0);
+    }
 }
 
 /* ===== LOGIN MODAL STYLES ===== */
@@ -301,10 +395,244 @@ body {
     justify-content: center;
 }
 
+.media.command-suite {
+    background: #f5f7fb;
+    aspect-ratio: 4/3;
+}
+
 .media img {
     width: 100%;
     height: 100%;
     object-fit: cover;
+}
+
+/* ===== CAMERA FUNCTION TABS ===== */
+.camera-function-rail {
+    /* kept hidden by default; when card is expanded it will be positioned
+       absolutely inside the expanded card so it sits to the right of the
+       expanded media area and doesn't float globally. */
+    display: none;
+    flex-direction: column;
+    gap: var(--camera-tab-gap);
+    pointer-events: auto;
+}
+
+.camera-function-rail.is-empty {
+    display: none;
+}
+
+.card.expanded .camera-function-rail {
+    display: flex;
+    /* render fixed so the rail sits above the card and is not clipped by
+       the card's rounded border/overflow. Keep it aligned to the viewport
+       right where the minimap used to be. */
+    position: fixed;
+    right: 28px;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 2900; /* ensure rail overlays expanded card and minimap */
+    width: var(--camera-tab-width);
+}
+
+/* Remove dashed/dotted border for pulse buttons inside camera-function-rail */
+.camera-function-rail .camera-function-tab.is-pulse {
+    border-style: none;
+}
+
+/* Make camera-function switch tabs green when active (exclude emergency) */
+.camera-function-rail .camera-function-tab:not([data-command-id="emergency"]).is-active {
+    background: #10b981; /* green */
+    color: #ffffff;
+    border-color: #10b981;
+    box-shadow: 0 8px 22px rgba(16,185,129,0.18);
+}
+
+/* Use green pulse animation for pulse actions in camera rails */
+.camera-function-rail .camera-function-tab.is-pending {
+    animation: command-pulse-green 0.6s ease-out;
+}
+
+/* ensure rail occupies the same vertical flow so tabs don't jump when label appears */
+.camera-function-rail {
+    width: var(--camera-tab-width);
+}
+
+.camera-function-rail .camera-function-tab {
+    /* make tabs render in normal flow inside the rail; label was previously
+       absolute/floating but hover UI removed per request */
+    position: relative;
+}
+
+.camera-function-tab {
+    width: var(--camera-tab-width);
+    height: var(--camera-tab-height);
+    border-radius: 6px;
+    border: none;
+    background: var(--camera-tab-bg);
+    color: var(--camera-tab-color);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 0;
+    cursor: pointer;
+    overflow: hidden;
+    transition: background 0.2s ease, box-shadow 0.2s ease;
+    box-shadow: var(--camera-tab-shadow);
+    position: relative;
+}
+
+.camera-function-tab:hover,
+.camera-function-tab:focus-visible {
+    box-shadow: 0 10px 24px rgba(30, 64, 175, 0.35);
+}
+
+.camera-function-tab:active {
+    transform: translateY(0);
+}
+
+.camera-function-tab.is-active {
+    background: var(--camera-tab-active-bg);
+    color: var(--camera-tab-active-color);
+    border-color: var(--camera-tab-active-bg);
+}
+
+.camera-function-tab.is-pulse {
+    border-style: dashed;
+}
+
+.camera-function-tab.is-pending {
+    animation: command-pulse-green 0.6s ease-out;
+}
+
+.camera-tab-icon {
+    width: 18px;
+    height: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 18px;
+}
+
+.camera-tab-icon svg {
+    width: 18px;
+    height: 18px;
+}
+
+/* Hover labels removed - hover/tooltip UI is handled externally now. */
+
+
+/* ===== COMMAND SUITE ===== */
+.command-grid {
+    display: grid;
+    gap: 8px;
+    padding: 12px;
+    height: 100%;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.command-grid.compact-view {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-rows: 1fr;
+}
+
+.command-grid.full-view {
+    display: none;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-auto-rows: minmax(46px, 1fr);
+}
+
+.card.expanded .command-grid.compact-view {
+    display: none;
+}
+
+.card.expanded .command-grid.full-view {
+    display: grid;
+}
+
+.command-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid #dbe5f2;
+    background: #ffffff;
+    border-radius: 10px;
+    padding: 8px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #1e3c72;
+    cursor: pointer;
+    min-height: 42px;
+    transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease, transform 0.1s ease;
+    text-align: left;
+}
+
+.command-btn:hover {
+    border-color: #2a5298;
+    transform: translateY(-1px);
+}
+
+.command-btn:active {
+    transform: translateY(0);
+}
+
+.command-btn.is-active {
+    background: #1e3c72;
+    color: #ffffff;
+    border-color: #1e3c72;
+    box-shadow: 0 6px 16px rgba(30, 60, 114, 0.25);
+}
+
+.command-btn.is-pulse {
+    border-style: dashed;
+}
+
+.command-btn.is-pending {
+    animation: command-pulse-green 0.4s ease-out;
+}
+
+.command-icon {
+    width: 18px;
+    height: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: inherit;
+    flex: 0 0 18px;
+}
+
+.command-icon svg {
+    width: 18px;
+    height: 18px;
+}
+
+.command-label {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    line-height: 1.15;
+}
+
+@keyframes command-pulse {
+    0% { box-shadow: 0 0 0 0 rgba(30, 60, 114, 0.35); }
+    100% { box-shadow: 0 0 0 12px rgba(30, 60, 114, 0); }
+}
+
+@keyframes command-pulse-green {
+    0% {
+        box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.55);
+        transform: scale(1);
+    }
+    40% {
+        box-shadow: 0 8px 36px 20px rgba(16, 185, 129, 0.28);
+        transform: scale(1.04);
+    }
+    100% {
+        box-shadow: 0 20px 48px 36px rgba(16, 185, 129, 0);
+        transform: scale(1);
+    }
 }
 
 .media.empty {
@@ -377,7 +705,7 @@ body {
     position: fixed;
     inset: 90px 35px 20px 20px;
     margin: 0;
-    z-index: 999;
+    z-index: 2200;
     cursor: default;
 }
 
@@ -398,9 +726,167 @@ body {
 }
 
 .card.expanded .media img { object-fit: contain; }
+
+/* Reduce vertical deadspace for non-expanded map and latency cards */
+.card[data-card-id="map"]:not(.expanded) .media_map {
+    max-height: 260px; /* reduces map height when minimized */
+    overflow: hidden;
+}
+
+/* hide extra description under the map when minimized to save space */
+.card[data-card-id="map"]:not(.expanded) .desc_map {
+    display: none;
+}
+
+.card[data-card-id="latency"]:not(.expanded) .latency-content {
+    max-height: 260px; /* reduce latency card content height when minimized */
+    overflow: hidden;
+}
+
+/* Use flex layout for map and latency cards so header stays visible
+   and inner media/content can occupy 60% of the card height. */
+.card[data-card-id="map"],
+.card[data-card-id="latency"] {
+    display: flex;
+    flex-direction: column;
+}
+
+.card[data-card-id="map"] .media_map,
+.card[data-card-id="latency"] .latency-content {
+    /* Make the visual area occupy 60% of the card's height */
+    flex: 0 0 60%;
+    max-height: none; /* override earlier caps */
+}
+
+.card[data-card-id="latency"] .latency-dashboard {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    grid-auto-rows: minmax(120px, auto);
+}
+
+.card[data-card-id="latency"] .latency-group {
+    min-height: 140px;
+}
+
+.card[data-card-id="latency"]:not(.expanded) .latency-breakdown {
+    display: none;
+}
+
+.card[data-card-id="map"] .desc_map {
+    /* ensure remaining space used by description/footer */
+    flex: 1 1 auto;
+}
+
+/* Minimap tab + overlay styles (small persistent minimap for expanded camera views) */
+.minimap-tab {
+    position: fixed;
+    top: 50%;
+    right: 20px;
+    transform: translateY(-50%);
+    width: 30px;
+    height: 90px;
+    background: #1e40af;
+    border-radius: 6px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    cursor: pointer;
+    z-index: 2400;
+    box-shadow: 0 6px 18px rgba(30,64,175,0.25);
+    overflow: hidden;
+    transition: width 0.2s ease, box-shadow 0.2s ease;
+}
+
+.minimap-tab { }
+
+.minimap-tab .minimap-label {
+    position: absolute;
+    right: calc(100% + 12px);
+    top: 50%;
+    transform: translateY(-50%) translateX(12px);
+    background: #1e40af;
+    color: #fff;
+    padding: 12px 16px;
+    border-radius: 8px;
+    box-shadow: 0 10px 24px rgba(30, 64, 175, 0.35);
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s cubic-bezier(.2,.9,.3,1), transform 0.18s cubic-bezier(.2,.9,.3,1);
+    font-size: 13px;
+    font-weight: 600;
+    min-width: 100px;
+    z-index: 2300;
+}
+
+/* Floating labels and minimap hover labels removed; hover UI handled externally. */
+
+.minimap {
+    position: fixed;
+    right: 1.5rem;
+    bottom: 1.5rem;
+    width: 320px;
+    aspect-ratio: 16/9;
+    background: #071033;
+    border: 2px solid #1e40af;
+    border-radius: 8px;
+    overflow: hidden;
+    display: none;
+    z-index: 2600; /* ensure minimap overlays expanded card */
+    box-shadow: 0 10px 40px rgba(2,6,23,0.6);
+}
+
+.minimap.open { display: block; }
+
+.minimap .minimap-bar {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 32px;
+    background: #2563eb;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    cursor: pointer;
+}
+
+.minimap .minimap-content {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    padding: 0;
+    display: flex;
+    align-items: stretch;
+    justify-content: stretch;
+    color: #cbd5e1;
+}
+
+/* Hide leaflet controls inside minimap clones (inline HTML clones) */
+.minimap .leaflet-control,
+.minimap #reset-btn,
+.minimap .leaflet-control-zoom {
+    display: none !important;
+}
+
+/* Show the tab when body has class 'expanded' and target camera expanded (JS toggles inline style) */
 .card.expanded .desc { display: none; }
 .card.expanded .minimize { display: inline-block; }
 body.expanded { overflow: hidden; }
+
+/* When a card is expanded, unload/hide background content so only the
+   top banner and the expanded card + its functions are visible. This
+   removes background rendering (no dim overlay). */
+body.expanded .grid > .card:not(.expanded) {
+    display: none !important;
+}
+/* Hide any login modal and banner-slot extras */
+body.expanded .login-modal { display: none !important; }
+/* keep the banner slot visible (contains the cloned header/minimize button) */
+body.expanded #banner .banner-right > *:not(.main-status):not(#logoutBtn):not(#banner-slot) { display: none !important; }
 
 @media (max-width: 900px) {
     .grid { grid-template-columns: repeat(2, minmax(220px, 1fr)); }
@@ -417,100 +903,142 @@ body.expanded { overflow: hidden; }
 
 .latency-card .latency-content {
     background: linear-gradient(180deg, #1a1f2e 0%, #0d1117 100%);
-    padding: 20px;
+    padding: 16px;
     aspect-ratio: auto;
-    min-height: 240px;
+    min-height: 80px;
 }
 
 .latency-dashboard {
     width: 100%;
     height: 100%;
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    grid-template-rows: auto auto;
-    gap: 16px;
+    grid-template-columns: repeat(3, minmax(90px, 1fr));
+    grid-auto-rows: minmax(90px, auto);
+    gap: 12px;
 }
 
-.latency-section {
-    background: rgba(255, 255, 255, 0.05);
-    border-radius: 8px;
-    padding: 12px 16px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.latency-section h3 {
-    color: #9ca3af;
-    font-size: 12px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin: 0 0 10px 0;
-}
-
-.latency-metrics {
+.latency-group {
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 12px;
+    padding: 14px 14px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
     display: flex;
     flex-direction: column;
+    gap: 10px;
+    min-height: 160px;
+}
+
+.latency-group-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.latency-group-title h3 {
+    color: #e2e8f0;
+    font-size: 12px;
+    font-weight: 600;
+    margin: 0;
+    letter-spacing: 0.4px;
+}
+
+.latency-subtitle {
+    color: #6b7280;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    margin: 4px 0 0;
+}
+
+.latency-group-total {
+    display: flex;
+    align-items: baseline;
     gap: 6px;
 }
 
-.latency-row {
+.latency-total-value {
+    color: #3b82f6;
+    font-size: 24px;
+    font-weight: 700;
+    font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
+}
+
+.latency-total-value.good { color: #10b981; }
+.latency-total-value.warning { color: #f59e0b; }
+.latency-total-value.critical { color: #ef4444; }
+
+.latency-breakdown {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.latency-breakdown-row {
+    background: rgba(15, 23, 42, 0.5);
+    border-radius: 10px;
+    padding: 8px 10px;
+    border: 1px solid rgba(148, 163, 184, 0.15);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.latency-breakdown-label {
     display: flex;
     align-items: center;
-    gap: 8px;
+    justify-content: space-between;
+    gap: 10px;
+    color: #94a3b8;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
 }
 
-.latency-row.total {
-    margin-top: 4px;
-    padding-top: 8px;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.latency-label {
-    color: #6b7280;
-    font-size: 13px;
-    min-width: 70px;
+.latency-breakdown-metrics {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
 }
 
 .latency-value {
-    color: #10b981;
-    font-size: 18px;
+    color: #e2e8f0;
+    font-size: 16px;
     font-weight: 700;
     font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
-    min-width: 60px;
+    min-width: 52px;
     text-align: right;
-}
-
-.latency-row.total .latency-value {
-    color: #3b82f6;
-    font-size: 20px;
 }
 
 .latency-unit {
     color: #6b7280;
-    font-size: 12px;
+    font-size: 11px;
 }
 
-.latency-bar-container {
-    margin-top: 8px;
-    height: 6px;
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 3px;
+
+.latency-e2e-bar {
+    height: 8px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 999px;
     overflow: hidden;
 }
 
-.latency-bar {
+.latency-e2e-fill {
     height: 100%;
     width: 0%;
-    background: linear-gradient(90deg, #10b981 0%, #f59e0b 50%, #ef4444 100%);
-    border-radius: 3px;
+    background: #10b981;
+    border-radius: 999px;
     transition: width 0.3s ease;
 }
 
+.latency-e2e-fill.warning { background: #f59e0b; }
+.latency-e2e-fill.critical { background: #ef4444; }
+
 .latency-stats {
-    grid-column: span 2;
+    grid-column: 1 / -1; /* span full width under the three cards */
     display: flex;
     justify-content: space-between;
-    padding-top: 8px;
+    padding-top: 48px;
     border-top: 1px solid rgba(255, 255, 255, 0.1);
 }
 
@@ -543,23 +1071,284 @@ body.expanded { overflow: hidden; }
 }
 
 .card.expanded.latency-card .latency-dashboard {
-    max-width: 600px;
+    max-width: 900px;
     margin: 0 auto;
 }
 
-.card.expanded.latency-card .latency-section {
+.card.expanded.latency-card .latency-group {
     padding: 20px 24px;
 }
 
-.card.expanded.latency-card .latency-section h3 {
+.card.expanded.latency-card .latency-group-title h3 {
     font-size: 14px;
-    margin-bottom: 16px;
+}
+
+.card.expanded.latency-card .latency-total-value {
+    font-size: 30px;
 }
 
 .card.expanded.latency-card .latency-value {
-    font-size: 24px;
+    font-size: 20px;
 }
 
-.card.expanded.latency-card .latency-row.total .latency-value {
-    font-size: 28px;
+/* Reusable datacard styles for small info cards */
+.datacard {
+    background: #ffffff;
+    border: 2px solid #dfe7f3;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
+    padding: 12px;
+}
+
+/* Dark variant for use inside the latency panel */
+.datacard.dark {
+    background: rgba(255,255,255,0.02);
+    border: 1px solid rgba(255,255,255,0.06);
+    box-shadow: none;
+}
+
+/* Datacard & latency-dashboard rules are defined earlier and intentionally
+   consolidated above to keep a single source of truth for sizing and spacing. */
+
+/* ===== COMMAND FUNCTIONS CARD ===== */
+.commands-card .commands-content {
+    background: linear-gradient(180deg, #1a1f2e 0%, #0d1117 100%);
+    padding: 16px;
+    aspect-ratio: auto;
+    min-height: 200px;
+    display: flex;
+    align-items: stretch;
+    justify-content: stretch;
+}
+
+.commands-dashboard {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    align-content: start;
+}
+
+.cmd-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.03);
+    color: #9ca3af;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-family: inherit;
+    font-size: 13px;
+    text-align: left;
+    width: 100%;
+}
+
+.cmd-btn:hover {
+    background: rgba(255, 255, 255, 0.07);
+    border-color: rgba(255, 255, 255, 0.15);
+    color: #d1d5db;
+}
+
+.cmd-btn.active {
+    background: rgba(16, 185, 129, 0.12);
+    border-color: rgba(16, 185, 129, 0.4);
+    color: #10b981;
+}
+
+.cmd-btn.active:hover {
+    background: rgba(16, 185, 129, 0.2);
+    border-color: rgba(16, 185, 129, 0.6);
+}
+
+.cmd-btn.emergency-active {
+    background: rgba(239, 68, 68, 0.15);
+    border-color: rgba(239, 68, 68, 0.5);
+    color: #ef4444;
+    animation: emergency-pulse 1.5s ease-in-out infinite;
+}
+
+.cmd-btn.emergency-active:hover {
+    background: rgba(239, 68, 68, 0.25);
+    border-color: rgba(239, 68, 68, 0.7);
+}
+
+@keyframes emergency-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.3); }
+    50% { box-shadow: 0 0 12px 2px rgba(239, 68, 68, 0.25); }
+}
+
+.cmd-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.04);
+}
+
+/* Push button styling */
+.cmd-btn.push-btn {
+    background: rgba(59, 130, 246, 0.08);
+    border-color: rgba(59, 130, 246, 0.2);
+    color: #60a5fa;
+}
+
+.cmd-btn.push-btn:hover {
+    background: rgba(59, 130, 246, 0.15);
+    border-color: rgba(59, 130, 246, 0.4);
+}
+
+.cmd-btn.push-btn .cmd-icon {
+    background: rgba(59, 130, 246, 0.12);
+}
+
+.cmd-btn.push-btn .cmd-toggle {
+    background: rgba(59, 130, 246, 0.15);
+    color: #60a5fa;
+}
+
+.cmd-btn.pulsing {
+    animation: button-pulse 0.3s ease-out;
+}
+
+@keyframes button-pulse {
+    0% { 
+        transform: scale(1);
+        box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7);
+    }
+    50% {
+        transform: scale(1.05);
+        box-shadow: 0 0 0 8px rgba(59, 130, 246, 0);
+    }
+    100% { 
+        transform: scale(1);
+        box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
+    }
+}
+
+.cmd-btn.active .cmd-icon {
+    background: rgba(16, 185, 129, 0.15);
+}
+
+.cmd-btn.emergency-active .cmd-icon {
+    background: rgba(239, 68, 68, 0.2);
+}
+
+.cmd-label {
+    flex: 1;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.cmd-toggle {
+    font-size: 11px;
+    font-weight: 700;
+    font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
+    letter-spacing: 0.5px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.06);
+    flex-shrink: 0;
+}
+
+.cmd-btn.active .cmd-toggle {
+    background: rgba(16, 185, 129, 0.2);
+    color: #10b981;
+}
+
+.cmd-btn.emergency-active .cmd-toggle {
+    background: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+}
+
+/* Commands card uses flex like latency and map */
+.card[data-card-id="commands"] {
+    display: flex;
+    flex-direction: column;
+}
+
+.card[data-card-id="commands"]:not(.expanded) .commands-content {
+    flex: 0 0 60%;
+    max-height: none;
+    overflow: hidden;
+    padding: 10px;
+}
+
+.card[data-card-id="commands"]:not(.expanded) .commands-dashboard {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+    align-content: center;
+    height: 100%;
+}
+
+.card[data-card-id="commands"]:not(.expanded) .cmd-btn {
+    padding: 8px 10px;
+    gap: 6px;
+    font-size: 11px;
+    min-height: auto;
+    flex-direction: column;
+    text-align: center;
+}
+
+.card[data-card-id="commands"]:not(.expanded) .cmd-icon {
+    width: 22px;
+    height: 22px;
+}
+
+.card[data-card-id="commands"]:not(.expanded) .cmd-icon svg {
+    width: 14px;
+    height: 14px;
+}
+
+.card[data-card-id="commands"]:not(.expanded) .cmd-label {
+    font-size: 10px;
+    line-height: 1.2;
+}
+
+.card[data-card-id="commands"]:not(.expanded) .cmd-toggle {
+    font-size: 9px;
+    padding: 2px 5px;
+}
+
+/* Expanded commands card: show all buttons in a wider grid */
+.card.expanded.commands-card .commands-content {
+    min-height: calc(100vh - 180px);
+    padding: 24px;
+}
+
+.card.expanded.commands-card .commands-dashboard {
+    max-width: 600px;
+    margin: 0 auto;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 14px;
+    align-content: center;
+}
+
+.card.expanded.commands-card .cmd-btn {
+    padding: 18px 20px;
+    font-size: 15px;
+    border-radius: 12px;
+}
+
+.card.expanded.commands-card .cmd-icon {
+    width: 36px;
+    height: 36px;
+}
+
+.card.expanded.commands-card .cmd-icon svg {
+    width: 22px;
+    height: 22px;
+}
+
+.card.expanded.commands-card .cmd-toggle {
+    font-size: 13px;
+    padding: 4px 10px;
 }
