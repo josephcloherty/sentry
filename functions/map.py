@@ -28,7 +28,7 @@ def generate_map_html(lat, lon, yaw, test_mode=False):
     geojson_data = load_geodata()
 
     # Use default location or current telemetry
-    GPS_Location = [lat if lat != 0 else 53.4084, lon if lon != 0 else -2.9916]
+    GPS_Location = [lat if lat != 0 else 53.406241, lon if lon != 0 else -2.96737]
 
     m = folium.Map(
         location=GPS_Location,

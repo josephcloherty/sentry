@@ -146,16 +146,22 @@ def draw_telemetry_text(frame, data):
     scale, thickness = 0.4, 1
     x_margin = 10
     
+    # Use safe getters and coerce to numeric where appropriate so malformed
+    # telemetry won't crash overlay rendering.
+    def fnum(key, fmt, default=0):
+        return fmt.format(float(data.get(key, default)))
+
     lines = [
-        f"Roll: {data['roll']:.1f}",
-        f"Pitch: {data['pitch']:.1f}",
-        f"Yaw: {data['yaw']:.1f}",
-        f"Lat: {data['lat']:.6f}",
-        f"Lon: {data['lon']:.6f}",
-        f"Alt: {data['alt']:.1f}m",
-        f"Battery: {data['battery']:.2f}V ({data['battery_remaining']}%)",
-        f"GS: {data['ground_speed']:.1f}m/s",
-        f"Throttle: {data['throttle']}%",
+        fnum('roll', 'Roll: {:.1f}'),
+        fnum('pitch', 'Pitch: {:.1f}'),
+        fnum('yaw', 'Yaw: {:.1f}'),
+        fnum('lat', 'Lat: {:.6f}', default=0.0),
+        fnum('lon', 'Lon: {:.6f}', default=0.0),
+        fnum('alt', 'Alt: {:.1f}m', default=0.0),
+        (f"Battery: {float(data.get('battery', 0)):.2f}V ({int(data.get('battery_remaining', 0))}%)"
+         if data.get('battery') is not None else "Battery: N/A"),
+        fnum('ground_speed', 'GS: {:.1f}m/s', default=0.0),
+        fnum('throttle', 'Throttle: {:.0f}%', default=0),
     ]
     
     frame_width = frame.shape[1]
@@ -223,9 +229,18 @@ async def receive_telemetry():
                     try:
                         telemetry_msg = json.loads(data)
                         current_time = time.time()
-                        server_time = telemetry_msg.get('timestamp', current_time)
-                        telemetry_latency_ms = (current_time - server_time) * 1000
-                        mavlink_data = telemetry_msg
+                        # server may send either 'server_time' or 'timestamp'
+                        server_time = telemetry_msg.get('server_time', telemetry_msg.get('timestamp', current_time))
+                        try:
+                            telemetry_latency_ms = (current_time - float(server_time)) * 1000
+                        except Exception:
+                            telemetry_latency_ms = 0
+
+                        # Merge incoming telemetry into the existing dict instead
+                        # of replacing the object. This preserves any code that
+                        # holds references to `mavlink_data` and avoids races.
+                        if isinstance(telemetry_msg, dict):
+                            mavlink_data.update(telemetry_msg)
                         last_mav_time = current_time
                     except json.JSONDecodeError:
                         print(f"Failed to parse telemetry JSON: {data}")
@@ -277,10 +292,14 @@ def gen_frames_cam0():
         processing_start = time.time()
         
         # Draw overlays
-        draw_compass(f, mavlink_data['yaw'], 0, h - 130, 120)
-        draw_attitude_indicator(f, mavlink_data['roll'], mavlink_data['pitch'], x=w - 130, y=h - 130, size=120)
-        draw_battery_widget(f, mavlink_data['battery_remaining'], position=(10, 10), width=60, height=20)
-        draw_telemetry_text(f, mavlink_data)
+        try:
+            draw_compass(f, mavlink_data.get('yaw', 0), 0, h - 130, 120)
+            draw_attitude_indicator(f, mavlink_data.get('roll', 0), mavlink_data.get('pitch', 0), x=w - 130, y=h - 130, size=120)
+            draw_battery_widget(f, mavlink_data.get('battery_remaining', 0), position=(10, 10), width=60, height=20)
+            draw_telemetry_text(f, mavlink_data)
+        except Exception as e:
+            # Don't let telemetry/overlay errors break the video stream; log and continue
+            print(f"Overlay drawing error (cam0): {e}")
         
         # Encode to JPEG
         _, jpeg = cv2.imencode('.jpg', f, [cv2.IMWRITE_JPEG_QUALITY, 90])

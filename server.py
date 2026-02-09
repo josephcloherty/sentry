@@ -78,27 +78,36 @@ def detect_camera_type(cam_id):
         print(f"Warning: Could not detect camera {cam_id} type: {e}")
         return None
 
-
-def init_camera(cam_id, formats, color=True):
-    """Initialize camera with format fallback chain."""
-    try:
-        cam = Picamera2(cam_id)
-        for fmt in formats:
+        def init_camera(cam_id, formats, color=True):
+            """Initialize camera with format fallback chain."""
             try:
-                cam.configure(cam.create_preview_configuration(
-                    main={"format": fmt, "size": (VIDEO_WIDTH, VIDEO_HEIGHT)}
-                ))
-                cam.start()
-                print(f"cam{cam_id}: Picamera2 started ({fmt})")
-                return cam, fmt
-            except Exception:
-                continue
-    except Exception as e:
-        print(f"Warning: cam{cam_id} Picamera2 init failed: {e}.")
-    return None, None
+                cam = Picamera2(cam_id)
+                role = "color" if color else "ir"
+                for fmt in formats:
+                    try:
+                        preview_config = cam.create_preview_configuration(
+                            main={"format": fmt, "size": (VIDEO_WIDTH, VIDEO_HEIGHT)}
+                        )
+                        if cam_id == 1:
+                            preview_config.setdefault("controls", {})
+                            preview_config["controls"]["ScalerCrop"] = (
+                                0,
+                                0,
+                                VIDEO_WIDTH,
+                                VIDEO_HEIGHT,
+                            )
+                        cam.configure(preview_config)
+                        cam.start()
+                        print(f"cam{cam_id} ({role}): Picamera2 started ({fmt})")
+                        return cam, fmt
+                    except Exception:
+                        continue
+            except Exception as e:
+                print(f"Warning: cam{cam_id} Picamera2 init failed: {e}.")
+            return None, None
 
 
-# Detect available cameras and their types
+# Detect available cameras and their types..
 available_cameras = []
 for i in range(2):
     try:
