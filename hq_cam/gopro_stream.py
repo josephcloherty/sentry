@@ -19,19 +19,58 @@ output_frame = None
 class VideoCamera:
     def __init__(self, camera_index=0):
         """Initialize the camera"""
-        self.camera = cv2.VideoCapture(camera_index)
+        self.camera = None
+        
+        # Try different backends in order of preference
+        backends = [
+            (cv2.CAP_V4L2, "V4L2"),
+            (cv2.CAP_ANY, "ANY"),
+        ]
+        
+        for backend, name in backends:
+            print(f"Trying backend: {name}")
+            try:
+                self.camera = cv2.VideoCapture(camera_index, backend)
+                
+                if self.camera.isOpened():
+                    print(f"Successfully opened camera with {name} backend")
+                    break
+                else:
+                    print(f"{name} backend failed to open camera")
+                    if self.camera is not None:
+                        self.camera.release()
+                    self.camera = None
+            except Exception as e:
+                print(f"Error with {name} backend: {e}")
+                if self.camera is not None:
+                    self.camera.release()
+                self.camera = None
+        
+        if self.camera is None or not self.camera.isOpened():
+            raise ValueError(f"Unable to open camera at index {camera_index}")
         
         # Try to set camera properties for better quality
-        # GoPro typically supports high resolutions
-        self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-        self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+        # Start with lower resolution for better compatibility
+        print("Setting camera properties...")
+        self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         self.camera.set(cv2.CAP_PROP_FPS, 30)
+        self.camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Reduce buffer size for lower latency
+        
+        # Read actual properties
+        actual_width = self.camera.get(cv2.CAP_PROP_FRAME_WIDTH)
+        actual_height = self.camera.get(cv2.CAP_PROP_FRAME_HEIGHT)
+        actual_fps = self.camera.get(cv2.CAP_PROP_FPS)
+        
+        print(f"Camera opened at {actual_width}x{actual_height} @ {actual_fps}fps")
         
         # Warm up camera
-        time.sleep(2)
+        print("Warming up camera...")
+        for _ in range(5):
+            self.camera.read()
+        time.sleep(1)
         
-        if not self.camera.isOpened():
-            raise ValueError("Unable to open camera")
+        print("Camera initialization complete!")
     
     def __del__(self):
         """Release the camera when done"""
