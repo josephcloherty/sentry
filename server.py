@@ -11,7 +11,7 @@ import websockets
 from picamera2 import Picamera2
 from pymavlink import mavutil
 
-from infrared import process_ir_frame
+from functions.infrared import process_ir_frame
 
 # ===== Configuration =====
 VIDEO_FPS = 15
