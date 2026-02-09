@@ -28,7 +28,7 @@ LATENCY_SAMPLE_SIZE = 200
 
 # Toggle test mode to use local test telemetry/streams (set True to enable)
 # When enabled: telemetry WS -> ws://localhost:8888, cam0 -> localhost:8886, cam1 -> localhost:8887
-TEST_MODE = False
+TEST_MODE = True
 
 if TEST_MODE:
     SERVER_IP = 'localhost'
@@ -55,7 +55,7 @@ DEFAULT_CAMERA_FUNCTION_TABS = {
 
 # Per-user UI settings defaults
 DEFAULT_SETTINGS = {
-    'test_mode': False,
+    'test_mode': TEST_MODE,
     'latency_polling_rate_ms': 500,
     'status_update_interval_ms': 30000,
     'visible_tiles': {
@@ -494,6 +494,7 @@ def gen_frames_cam1():
 def index():
     update_connection_status()
     user_settings = get_settings_for_request()
+    effective_test_mode = bool(user_settings.get('test_mode')) or TEST_MODE
     return render_template(
         'index.html',
         main_online=is_main_online(),
@@ -505,7 +506,7 @@ def index():
             mavlink_data['lat'],
             mavlink_data['lon'],
             mavlink_data['yaw'],
-            test_mode=bool(user_settings.get('test_mode'))
+            test_mode=effective_test_mode
         ),
         status_update_interval_ms=user_settings.get('status_update_interval_ms', STATUS_UPDATE_INTERVAL_MS),
         camera_function_tabs=user_settings.get('camera_function_tabs', DEFAULT_CAMERA_FUNCTION_TABS),

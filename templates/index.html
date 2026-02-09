@@ -631,7 +631,7 @@
 
             const updateRateEl = document.getElementById('latency-update-rate');
             const lastUpdateEl = document.getElementById('latency-last-update');
-            if (updateRateEl) updateRateEl.textContent = `${LATENCY_UPDATE_INTERVAL_MS}ms`;
+            if (updateRateEl) updateRateEl.textContent = `${latencyUpdateIntervalMs}ms`;
             if (lastUpdateEl) lastUpdateEl.textContent = new Date().toLocaleTimeString();
 
             const hasData = cam0Total > 0 || cam1Total > 0 || telemetryTotal > 0;
@@ -757,6 +757,9 @@
                 
                 const resetBtn = doc.getElementById('reset-btn');
                 if (resetBtn) resetBtn.style.display = isExpanded ? 'block' : 'none';
+
+                const clearPinsBtn = doc.getElementById('clear-pins-btn');
+                if (clearPinsBtn) clearPinsBtn.style.display = isExpanded ? 'block' : 'none';
             });
         }
 
@@ -801,7 +804,7 @@
                             const doc = clone.contentDocument || clone.contentWindow.document;
                             if (doc) {
                                 const removeControls = () => {
-                                    doc.querySelectorAll('.leaflet-control, #reset-btn, .leaflet-control-zoom, .leaflet-control-container').forEach(el => {
+                                    doc.querySelectorAll('.leaflet-control, #reset-btn, #clear-pins-btn, .leaflet-control-zoom, .leaflet-control-container').forEach(el => {
                                         try { el.style.display = 'none'; el.remove?.(); } catch(e) {}
                                     });
                                 };
@@ -836,7 +839,7 @@
                 wrapper.innerHTML = mapContainer.innerHTML;
                 // remove/hide leaflet controls in the copied HTML and watch for late additions
                 const removeInlineControls = () => {
-                    wrapper.querySelectorAll('.leaflet-control, #reset-btn, .leaflet-control-zoom, .leaflet-control-container').forEach(el => {
+                    wrapper.querySelectorAll('.leaflet-control, #reset-btn, #clear-pins-btn, .leaflet-control-zoom, .leaflet-control-container').forEach(el => {
                         try { el.remove(); } catch (e) {}
                     });
                 };
@@ -1052,6 +1055,10 @@
         async function sendCommand(def) {
             const isPulse = def.type === 'pulse';
             const nextValue = isPulse ? true : !Boolean(commandState[def.id]);
+
+            if (def.id === 'drop_gps_pin') {
+                callMapMethod('dropGpsPin');
+            }
 
             if (isPulse) {
                 const buttons = document.querySelectorAll(`.command-btn[data-command-id="${def.id}"], .camera-function-tab[data-command-id="${def.id}"]`);

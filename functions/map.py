@@ -9,6 +9,13 @@ import geopandas as gpd
 from functools import lru_cache
 from pathlib import Path
 
+# ===== MAP UI CONFIG (adjustable) =====
+PIN_STORAGE_KEY = 'sentry_map_pins'
+PIN_MAX_COUNT = 500
+PIN_BUTTON_LABEL = 'Drop GPS Pin'
+CLEAR_PINS_BUTTON_LABEL = 'Clear Pins'
+FOLLOW_BUTTON_LABEL = 'Follow'
+
 
 @lru_cache(maxsize=1)
 def load_geodata():
@@ -67,8 +74,8 @@ def generate_map_html(lat, lon, yaw, test_mode=False):
 
     map_id = m.get_name()
     reset_button = f"""
-    <div id="reset-btn" style="position: absolute; top: 16px; right: 16px; z-index: 1000;">
-        <button onclick="resetView()" style="
+    <div id="map-action-buttons" style="position: absolute; top: 16px; right: 16px; z-index: 1000; display: flex; flex-direction: column; gap: 8px;">
+        <button id="reset-btn" onclick="resetView()" style="
             padding: 10px 15px;
             background: white;
             border: 2px solid rgba(0,0,0,0.2);
@@ -76,7 +83,16 @@ def generate_map_html(lat, lon, yaw, test_mode=False):
             cursor: pointer;
             font-weight: bold;
             box-shadow: 0 1px 5px rgba(0,0,0,0.4);
-        ">Follow</button>
+        ">{FOLLOW_BUTTON_LABEL}</button>
+        <button id="clear-pins-btn" onclick="clearPins()" style="
+            padding: 10px 15px;
+            background: white;
+            border: 2px solid rgba(0,0,0,0.2);
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            box-shadow: 0 1px 5px rgba(0,0,0,0.4);
+        ">{CLEAR_PINS_BUTTON_LABEL}</button>
     </div>
     """
     m.get_root().html.add_child(folium.Element(reset_button))
@@ -96,6 +112,9 @@ def generate_map_html(lat, lon, yaw, test_mode=False):
         var el = null;
         var marker = null;
         var mapObj = null;
+        var pinLayer = null;
+        var pinStorageKey = '""" + PIN_STORAGE_KEY + """';
+        var maxPins = """ + str(PIN_MAX_COUNT) + """;
         var isFollowing = true;  // Start with following enabled
         
         // Make isFollowing globally accessible
@@ -103,21 +122,105 @@ def generate_map_html(lat, lon, yaw, test_mode=False):
         var reconnectAttempts = 0;
         var maxReconnectAttempts = 3;
 
+        function readPins() {
+            try {
+                var raw = localStorage.getItem(pinStorageKey);
+                var pins = raw ? JSON.parse(raw) : [];
+                if (!Array.isArray(pins)) return [];
+                return pins.filter(function(p) {
+                    return p && typeof p.lat === 'number' && typeof p.lon === 'number';
+                });
+            } catch (e) {
+                return [];
+            }
+        }
+
+        function writePins(pins) {
+            try {
+                var trimmed = pins.slice(-maxPins);
+                localStorage.setItem(pinStorageKey, JSON.stringify(trimmed));
+            } catch (e) {
+                console.warn('Failed to persist pins', e);
+            }
+        }
+
+        function ensurePinLayer() {
+            if (!mapObj) return null;
+            if (!pinLayer) {
+                pinLayer = L.layerGroup().addTo(mapObj);
+            }
+            return pinLayer;
+        }
+
+        function renderPins(pins) {
+            var layer = ensurePinLayer();
+            if (!layer) return;
+            layer.clearLayers();
+            pins.forEach(function(p) {
+                L.marker([p.lat, p.lon]).addTo(layer);
+            });
+        }
+
+        function getCurrentLocation() {
+            if (marker) {
+                return marker.getLatLng();
+            }
+            if (mapObj) {
+                return mapObj.getCenter();
+            }
+            return null;
+        }
+
+        function dropGpsPin() {
+            var loc = getCurrentLocation();
+            if (!loc) return;
+            var pins = readPins();
+            pins.push({ lat: loc.lat, lon: loc.lng, ts: Date.now() });
+            writePins(pins);
+            renderPins(pins);
+        }
+
+        function clearPins() {
+            writePins([]);
+            renderPins([]);
+        }
+
+        // Make pin methods globally accessible
+        window.dropGpsPin = dropGpsPin;
+        window.clearPins = clearPins;
+
+        function resolveSentryMarker() {
+            if (!mapObj) return null;
+            var sentryMarker = null;
+            mapObj.eachLayer(function(layer) {
+                if (!(layer instanceof L.Marker)) return;
+                var el = typeof layer.getElement === 'function' ? layer.getElement() : null;
+                if (el && el.querySelector && el.querySelector('#sentry-icon')) {
+                    sentryMarker = layer;
+                }
+            });
+            return sentryMarker;
+        }
+
         // Initialize marker reference when DOM is ready
         document.addEventListener('DOMContentLoaded', function() {
             mapObj = window['""" + map_id + """'];
             if (mapObj) {
-                mapObj.eachLayer(function(layer) {
-                    if (layer instanceof L.Marker) {
-                        marker = layer;
-                    }
-                });
+                marker = resolveSentryMarker();
 
                 // Disable following when user drags the map
                 mapObj.on('dragstart', function() {
                     isFollowing = false;
                     window.isFollowing = false;
                 });
+
+                renderPins(readPins());
+            }
+        });
+
+        window.addEventListener('storage', function(evt) {
+            if (evt.key === pinStorageKey) {
+                renderPins(readPins());
             }
         });
 
@@ -158,6 +261,10 @@ def generate_map_html(lat, lon, yaw, test_mode=False):
                     var lat = data.lat || 0;
                     var lon = data.lon || 0;
                     var yaw = data.yaw || 0;
+
+                    if (!marker && mapObj) {
+                        marker = resolveSentryMarker();
+                    }
 
                     // Update marker position if we have valid coordinates
                     if (marker && lat !== 0 && lon !== 0) {
