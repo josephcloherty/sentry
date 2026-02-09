@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 import websockets
 import traceback
+import glob
 import traceback
 from picamera2 import Picamera2
 from pymavlink import mavutil
@@ -27,8 +28,9 @@ HQ_VIDEO_FPS = 30
 HQ_VIDEO_WIDTH = 1920
 HQ_VIDEO_HEIGHT = 1080
 HQ_JPEG_QUALITY = 80
-HQ_DEVICE_CANDIDATES = [0, 1, 2]
-HQ_CAPTURE_BACKEND = None  # None = default, or use cv2.CAP_V4L2/cv2.CAP_AVFOUNDATION
+HQ_DEVICE_CANDIDATES = ['/dev/video0', '/dev/video1', '/dev/video2', 0, 1, 2]
+# None = try preferred backends (v4l2, ffmpeg) then default
+HQ_CAPTURE_BACKEND = None
 TELEMETRY_PORT = 8764
 TELEMETRY_HZ = 50
 COMMAND_PORT = 8763
@@ -176,21 +178,66 @@ gopro_capture = None
 
 def init_gopro_capture():
     """Initialize GoPro USB capture using OpenCV VideoCapture."""
-    backend = HQ_CAPTURE_BACKEND
-    for device_id in HQ_DEVICE_CANDIDATES:
-        try:
-            cap = cv2.VideoCapture(device_id, backend) if backend is not None else cv2.VideoCapture(device_id)
-            if not cap or not cap.isOpened():
-                if cap:
+    # Build a set of candidates. If any are device paths, prefer using v4l2 backend.
+    candidates = list(HQ_DEVICE_CANDIDATES)
+    # Try preferred backends in order
+    preferred_backends = []
+    if HQ_CAPTURE_BACKEND is not None:
+        preferred_backends.append(HQ_CAPTURE_BACKEND)
+    # Add commonly useful backends on Linux
+    preferred_backends.extend([getattr(cv2, 'CAP_V4L2', 200), getattr(cv2, 'CAP_FFMPEG', 190)])
+
+    # Fallback resolutions to try (width, height)
+    fallback_sizes = [(HQ_VIDEO_WIDTH, HQ_VIDEO_HEIGHT), (1280, 720), (640, 480)]
+
+    for candidate in candidates:
+        for backend in preferred_backends + [None]:
+            try:
+                # Open capture
+                if backend is None:
+                    cap = cv2.VideoCapture(candidate)
+                    backend_name = 'default'
+                else:
+                    cap = cv2.VideoCapture(candidate, int(backend))
+                    backend_name = str(backend)
+
+                if not cap or not cap.isOpened():
+                    try:
+                        cap.release()
+                    except Exception:
+                        pass
+                    # debug log
+                    print(f"GoPro probe: candidate={candidate} backend={backend_name} -> not opened")
+                    continue
+
+                # Try resolutions until one yields a successful first frame
+                for (w, h) in fallback_sizes:
+                    try:
+                        cap.set(cv2.CAP_PROP_FRAME_WIDTH, int(w))
+                        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, int(h))
+                        cap.set(cv2.CAP_PROP_FPS, int(HQ_VIDEO_FPS))
+                        # Read a single frame to validate pipeline
+                        ret, frame = cap.read()
+                        if ret and frame is not None:
+                            actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+                            actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+                            print(f"GoPro capture opened on {candidate} backend={backend_name} size=({actual_w}x{actual_h})")
+                            return cap
+                        else:
+                            print(f"GoPro probe: opened {candidate} backend={backend_name} but read failed for size {w}x{h}")
+                    except Exception as e:
+                        print(f"GoPro probe: error reading from {candidate} backend={backend_name} size={w}x{h}: {e}")
+                # nothing worked for this open; release and continue
+                try:
                     cap.release()
-                continue
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, HQ_VIDEO_WIDTH)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, HQ_VIDEO_HEIGHT)
-            cap.set(cv2.CAP_PROP_FPS, HQ_VIDEO_FPS)
-            print(f"GoPro capture opened on device {device_id}")
-            return cap
-        except Exception as e:
-            print(f"Warning: GoPro capture init failed on device {device_id}: {e}")
+                except Exception:
+                    pass
+            except Exception as e:
+                print(f"Warning: GoPro capture init failed on candidate {candidate} backend={backend_name}: {e}")
+            # small delay to avoid tight retry loops
+            time.sleep(0.2)
+
+    print("GoPro probe: no usable capture device found")
     return None
 
 
