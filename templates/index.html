@@ -37,6 +37,70 @@
             </form>
         </div>
     </div>
+    <div id="settingsModal" class="settings-modal hidden" aria-hidden="true">
+        <div class="settings-container">
+            <div class="settings-header">
+                <div>
+                    <h2>Settings</h2>
+                    <p>Customize your dashboard experience</p>
+                </div>
+                <button type="button" id="settingsCloseBtn" class="settings-close">Close</button>
+            </div>
+            <form id="settingsForm" class="settings-form">
+                <div class="settings-section">
+                    <h3>System</h3>
+                    <div class="settings-row">
+                        <label class="settings-label" for="setting-test-mode">Test mode</label>
+                        <label class="switch">
+                            <input type="checkbox" id="setting-test-mode">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div class="settings-row">
+                        <label class="settings-label" for="setting-latency-rate">Latency polling rate (ms)</label>
+                        <input type="number" id="setting-latency-rate" min="200" max="5000" step="50">
+                    </div>
+                    <div class="settings-row">
+                        <label class="settings-label" for="setting-status-rate">Status update interval (ms)</label>
+                        <input type="number" id="setting-status-rate" min="2000" max="120000" step="500">
+                    </div>
+                </div>
+                <div class="settings-section">
+                    <h3>Home screen tiles</h3>
+                    <div id="settings-tiles" class="settings-checkbox-grid">
+                        <label><input type="checkbox" data-tile-id="cam0"> Pilot camera</label>
+                        <label><input type="checkbox" data-tile-id="cam1"> Landing camera</label>
+                        <label><input type="checkbox" data-tile-id="hq"> High quality camera</label>
+                        <label><input type="checkbox" data-tile-id="map"> GPS map</label>
+                        <label><input type="checkbox" data-tile-id="latency"> Latency monitoring</label>
+                        <label><input type="checkbox" data-tile-id="commands"> SENTRY controls</label>
+                    </div>
+                </div>
+                <div class="settings-section">
+                    <h3>Camera function buttons</h3>
+                    <div class="settings-camera-tabs" data-camera-tabs="cam0">
+                        <h4>Pilot camera</h4>
+                        <div class="settings-checkbox-grid" data-camera-options></div>
+                    </div>
+                    <div class="settings-camera-tabs" data-camera-tabs="cam1">
+                        <h4>Landing camera</h4>
+                        <div class="settings-checkbox-grid" data-camera-options></div>
+                    </div>
+                    <div class="settings-camera-tabs" data-camera-tabs="hq">
+                        <h4>High quality camera</h4>
+                        <div class="settings-checkbox-grid" data-camera-options></div>
+                    </div>
+                </div>
+                <div class="settings-actions">
+                    <button type="button" id="settingsLogoutBtn" class="settings-logout">Logout</button>
+                    <div class="settings-action-group">
+                        <button type="button" id="settingsCancelBtn" class="settings-secondary">Cancel</button>
+                        <button type="submit" id="settingsSaveBtn" class="settings-primary">Save settings</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
     <div id="banner">
         <div class="banner-left">
             <img src="images/Argus_Dark.png" alt="Argus Dynamics Logo">
@@ -48,8 +112,10 @@
                 <span>System Status</span>
             </div>
             <div id="banner-slot"></div>
-            <button id="logoutBtn" class="logout-button">
-                <img src="images/logout_white.png" alt="Logout" class="logout-logo">
+            <button id="settingsBtn" class="settings-button" aria-label="Open settings">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm9 3.5a7.1 7.1 0 0 0-.1-1l2.1-1.6-2-3.4-2.5 1a7.7 7.7 0 0 0-1.7-1l-.4-2.7h-4l-.4 2.7a7.7 7.7 0 0 0-1.7 1l-2.5-1-2 3.4 2.1 1.6a7.1 7.1 0 0 0 0 2l-2.1 1.6 2 3.4 2.5-1a7.7 7.7 0 0 0 1.7 1l.4 2.7h4l.4-2.7a7.7 7.7 0 0 0 1.7-1l2.5 1 2-3.4-2.1-1.6c.1-.3.1-.6.1-1Z" fill="currentColor"></path>
+                </svg>
             </button>
         </div>
     </div>
@@ -275,23 +341,50 @@
     </div>
 
     <script type="application/json" id="camera-function-tabs-data">{{ camera_function_tabs | tojson }}</script>
+    <script type="application/json" id="user-settings-data">{{ user_settings | tojson }}</script>
 
     <script>
         // ===== GLOBAL CONFIGURATION =====
         const CAMERA_FUNCTION_TABS_DATA_ID = 'camera-function-tabs-data';
-        const CAMERA_FUNCTION_TABS = JSON.parse(document.getElementById(CAMERA_FUNCTION_TABS_DATA_ID)?.textContent || '{}');
-        const LATENCY_UPDATE_INTERVAL_MS = 500;
+        const USER_SETTINGS_DATA_ID = 'user-settings-data';
+        const DEFAULT_CAMERA_FUNCTION_TABS = JSON.parse(document.getElementById(CAMERA_FUNCTION_TABS_DATA_ID)?.textContent || '{}');
+        const DEFAULT_USER_SETTINGS = {
+            test_mode: false,
+            latency_polling_rate_ms: 500,
+            status_update_interval_ms: 30000,
+            visible_tiles: {
+                cam0: true,
+                cam1: true,
+                hq: true,
+                map: true,
+                latency: true,
+                commands: true
+            },
+            camera_function_tabs: DEFAULT_CAMERA_FUNCTION_TABS
+        };
+        const SERVER_USER_SETTINGS = JSON.parse(document.getElementById(USER_SETTINGS_DATA_ID)?.textContent || 'null');
         const LATENCY_SNAPSHOT_TIMEOUT_MS = 1500;
         const LATENCY_THRESHOLD_GOOD_MS = 100;
         const LATENCY_THRESHOLD_WARNING_MS = 300;
-        const STATUS_UPDATE_INTERVAL_MS = 30000;
+
+        let userSettings = mergeSettings(DEFAULT_USER_SETTINGS, SERVER_USER_SETTINGS || {});
+        let cameraFunctionTabs = userSettings.camera_function_tabs || DEFAULT_CAMERA_FUNCTION_TABS;
+        let latencyUpdateIntervalMs = userSettings.latency_polling_rate_ms || DEFAULT_USER_SETTINGS.latency_polling_rate_ms;
+        let statusUpdateIntervalMs = userSettings.status_update_interval_ms || DEFAULT_USER_SETTINGS.status_update_interval_ms;
+        let latencyIntervalId = null;
+        let statusIntervalId = null;
         
         // ===== GLOBAL DOM ELEMENTS =====
         const bannerSlot = document.getElementById('banner-slot');
         const loginModal = document.getElementById('loginModal');
         const loginForm = document.getElementById('loginForm');
         const loginError = document.getElementById('loginError');
-        const logoutBtn = document.getElementById('logoutBtn');
+        const settingsBtn = document.getElementById('settingsBtn');
+        const settingsModal = document.getElementById('settingsModal');
+        const settingsForm = document.getElementById('settingsForm');
+        const settingsCloseBtn = document.getElementById('settingsCloseBtn');
+        const settingsCancelBtn = document.getElementById('settingsCancelBtn');
+        const settingsLogoutBtn = document.getElementById('settingsLogoutBtn');
         
         // ===== GLOBAL STATE =====
         let latencyState = {
@@ -365,6 +458,141 @@
                 return await fetch(url, { ...options, signal: controller.signal });
             } finally {
                 clearTimeout(timer);
+            }
+        }
+
+        function mergeSettings(defaults, overrides) {
+            const merged = { ...defaults, ...overrides };
+            merged.visible_tiles = { ...defaults.visible_tiles, ...(overrides.visible_tiles || {}) };
+            merged.camera_function_tabs = { ...defaults.camera_function_tabs, ...(overrides.camera_function_tabs || {}) };
+            return merged;
+        }
+
+        function getSessionToken() {
+            return localStorage.getItem('sentryToken') || sessionStorage.getItem('sentryToken');
+        }
+
+        function applyTileVisibility(visibleTiles) {
+            document.querySelectorAll('[data-card]').forEach(card => {
+                const cardId = card.getAttribute('data-card-id');
+                const isVisible = visibleTiles?.[cardId] !== false;
+                card.classList.toggle('is-hidden', !isVisible);
+            });
+        }
+
+        function startLatencyPolling() {
+            if (latencyIntervalId) clearInterval(latencyIntervalId);
+            latencyIntervalId = setInterval(refreshLatencyData, latencyUpdateIntervalMs);
+        }
+
+        function startStatusPolling() {
+            if (statusIntervalId) clearInterval(statusIntervalId);
+            statusIntervalId = setInterval(updateStatusDots, statusUpdateIntervalMs);
+        }
+
+        function applySettingsToUI(settings) {
+            userSettings = mergeSettings(DEFAULT_USER_SETTINGS, settings || {});
+            cameraFunctionTabs = userSettings.camera_function_tabs || DEFAULT_CAMERA_FUNCTION_TABS;
+            latencyUpdateIntervalMs = userSettings.latency_polling_rate_ms || DEFAULT_USER_SETTINGS.latency_polling_rate_ms;
+            statusUpdateIntervalMs = userSettings.status_update_interval_ms || DEFAULT_USER_SETTINGS.status_update_interval_ms;
+            applyTileVisibility(userSettings.visible_tiles);
+            renderCameraFunctionTabs();
+            startLatencyPolling();
+            startStatusPolling();
+        }
+
+        function openSettingsModal() {
+            if (!settingsModal) return;
+            if (!loginModal.classList.contains('hidden')) return;
+            settingsModal.classList.remove('hidden');
+            settingsModal.setAttribute('aria-hidden', 'false');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeSettingsModal() {
+            if (!settingsModal) return;
+            settingsModal.classList.add('hidden');
+            settingsModal.setAttribute('aria-hidden', 'true');
+            document.body.style.overflow = 'auto';
+        }
+
+        function populateSettingsForm(settings) {
+            const merged = mergeSettings(DEFAULT_USER_SETTINGS, settings || {});
+            document.getElementById('setting-test-mode').checked = Boolean(merged.test_mode);
+            document.getElementById('setting-latency-rate').value = merged.latency_polling_rate_ms;
+            document.getElementById('setting-status-rate').value = merged.status_update_interval_ms;
+
+            document.querySelectorAll('#settings-tiles [data-tile-id]').forEach(input => {
+                const tileId = input.getAttribute('data-tile-id');
+                input.checked = merged.visible_tiles?.[tileId] !== false;
+            });
+
+            document.querySelectorAll('[data-camera-tabs]').forEach(container => {
+                const camId = container.getAttribute('data-camera-tabs');
+                const selected = new Set(merged.camera_function_tabs?.[camId] || []);
+                container.querySelectorAll('input[type="checkbox"][data-command-id]').forEach(input => {
+                    input.checked = selected.has(input.getAttribute('data-command-id'));
+                });
+            });
+        }
+
+        function buildCameraSettingsOptions() {
+            document.querySelectorAll('[data-camera-tabs]').forEach(container => {
+                const optionsEl = container.querySelector('[data-camera-options]');
+                if (!optionsEl) return;
+                optionsEl.innerHTML = '';
+                COMMAND_DEFS.forEach(def => {
+                    const label = document.createElement('label');
+                    label.className = 'settings-command-option';
+                    label.innerHTML = `
+                        <input type="checkbox" data-command-id="${def.id}">
+                        <span>${def.label}</span>
+                    `;
+                    optionsEl.appendChild(label);
+                });
+            });
+        }
+
+        function collectSettingsFromForm() {
+            const visibleTiles = {};
+            document.querySelectorAll('#settings-tiles [data-tile-id]').forEach(input => {
+                const tileId = input.getAttribute('data-tile-id');
+                visibleTiles[tileId] = input.checked;
+            });
+
+            const cameraTabs = {};
+            document.querySelectorAll('[data-camera-tabs]').forEach(container => {
+                const camId = container.getAttribute('data-camera-tabs');
+                const selected = [];
+                container.querySelectorAll('input[type="checkbox"][data-command-id]').forEach(input => {
+                    if (input.checked) selected.push(input.getAttribute('data-command-id'));
+                });
+                cameraTabs[camId] = selected;
+            });
+
+            return {
+                test_mode: document.getElementById('setting-test-mode').checked,
+                latency_polling_rate_ms: Number(document.getElementById('setting-latency-rate').value || DEFAULT_USER_SETTINGS.latency_polling_rate_ms),
+                status_update_interval_ms: Number(document.getElementById('setting-status-rate').value || DEFAULT_USER_SETTINGS.status_update_interval_ms),
+                visible_tiles: visibleTiles,
+                camera_function_tabs: cameraTabs
+            };
+        }
+
+        async function loadUserSettings() {
+            try {
+                const token = getSessionToken();
+                const res = await fetch('/api/settings', {
+                    headers: token ? { 'X-Session-Token': token } : {}
+                });
+                if (!res.ok) return;
+                const data = await res.json();
+                applySettingsToUI(data);
+                populateSettingsForm(data);
+            } catch (err) {
+                console.error('Failed to load settings:', err);
+                applySettingsToUI(userSettings);
+                populateSettingsForm(userSettings);
             }
         }
 
@@ -772,7 +1000,7 @@
         function renderCameraFunctionTabs() {
             document.querySelectorAll('[data-function-rail]').forEach(rail => {
                 const cameraId = rail.dataset.cameraId;
-                const selectedIds = (CAMERA_FUNCTION_TABS && CAMERA_FUNCTION_TABS[cameraId]) || [];
+                const selectedIds = (cameraFunctionTabs && cameraFunctionTabs[cameraId]) || [];
                 rail.innerHTML = '';
 
                 selectedIds.forEach(id => {
@@ -923,8 +1151,8 @@
         }
 
         function initializeLogin() {
-            const cachedToken = localStorage.getItem('sentryToken');
-            const cachedUsername = localStorage.getItem('sentryUsername');
+            const cachedToken = localStorage.getItem('sentryToken') || sessionStorage.getItem('sentryToken');
+            const cachedUsername = localStorage.getItem('sentryUsername') || sessionStorage.getItem('sentryUsername');
             (cachedToken && cachedUsername) ? hideLoginModal() : showLoginModal();
         }
 
@@ -946,6 +1174,8 @@
                     const data = await response.json();
 
                     if (data.success) {
+                        sessionStorage.setItem('sentryToken', data.token);
+                        sessionStorage.setItem('sentryUsername', username);
                         if (rememberMe) {
                             localStorage.setItem('sentryToken', data.token);
                             localStorage.setItem('sentryUsername', username);
@@ -953,6 +1183,7 @@
                         loginForm.reset();
                         loginError.classList.add('hidden');
                         hideLoginModal();
+                        loadUserSettings();
                     } else {
                         loginError.textContent = data.message || 'Invalid username or password';
                         loginError.classList.remove('hidden');
@@ -966,7 +1197,7 @@
                 }
             });
 
-            logoutBtn.addEventListener('click', async () => {
+            settingsLogoutBtn.addEventListener('click', async () => {
                 try {
                     await fetch('/api/logout', { method: 'POST' });
                 } catch (error) {
@@ -974,8 +1205,62 @@
                 }
                 localStorage.removeItem('sentryToken');
                 localStorage.removeItem('sentryUsername');
+                sessionStorage.removeItem('sentryToken');
+                sessionStorage.removeItem('sentryUsername');
                 loginForm.reset();
+                closeSettingsModal();
                 showLoginModal();
+            });
+        }
+
+        function setupSettingsHandlers() {
+            buildCameraSettingsOptions();
+            populateSettingsForm(userSettings);
+
+            settingsBtn?.addEventListener('click', () => {
+                populateSettingsForm(userSettings);
+                openSettingsModal();
+            });
+
+            settingsCloseBtn?.addEventListener('click', closeSettingsModal);
+            settingsCancelBtn?.addEventListener('click', () => {
+                populateSettingsForm(userSettings);
+                closeSettingsModal();
+            });
+
+            settingsModal?.addEventListener('click', (e) => {
+                if (e.target === settingsModal) {
+                    closeSettingsModal();
+                }
+            });
+
+            settingsForm?.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const nextSettings = collectSettingsFromForm();
+                const token = getSessionToken();
+                const prevTestMode = Boolean(userSettings.test_mode);
+                try {
+                    const res = await fetch('/api/settings', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            ...(token ? { 'X-Session-Token': token } : {})
+                        },
+                        body: JSON.stringify(nextSettings)
+                    });
+                    const data = await res.json();
+                    if (data?.settings) {
+                        applySettingsToUI(data.settings);
+                    } else {
+                        applySettingsToUI(nextSettings);
+                    }
+                    closeSettingsModal();
+                    if (prevTestMode !== Boolean(nextSettings.test_mode)) {
+                        location.reload();
+                    }
+                } catch (err) {
+                    console.error('Failed to save settings:', err);
+                }
             });
         }
 
@@ -983,22 +1268,24 @@
         function initialize() {
             setupCardExpansion();
             setupLoginHandlers();
+            setupSettingsHandlers();
             updateMapControls();
             updateMinimapVisibility();
             // minimap toggle buttons are created inside each camera function rail
 
+            applySettingsToUI(userSettings);
             renderCommandSuite();
-            renderCameraFunctionTabs();
             fetchCommandState();
             setInterval(fetchCommandState, 2000);
 
             refreshLatencyData();
-            setInterval(refreshLatencyData, LATENCY_UPDATE_INTERVAL_MS);
+            startLatencyPolling();
             
-            setInterval(updateStatusDots, STATUS_UPDATE_INTERVAL_MS);
             updateStatusDots();
+            startStatusPolling();
             
             initializeLogin();
+            loadUserSettings();
             updateMapControls();  // Ensure map controls are properly initialized
         }
 

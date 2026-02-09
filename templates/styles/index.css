@@ -246,6 +246,234 @@ body.emergency-mode::before {
     display: none;
 }
 
+/* ===== SETTINGS MODAL ===== */
+.settings-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2100;
+    backdrop-filter: blur(6px);
+}
+
+.settings-modal.hidden {
+    display: none;
+}
+
+.settings-container {
+    background: #ffffff;
+    border-radius: 16px;
+    width: min(900px, 92vw);
+    max-height: 88vh;
+    overflow: auto;
+    box-shadow: 0 30px 60px rgba(15, 23, 42, 0.35);
+    padding: 28px 32px 24px;
+}
+
+.settings-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    border-bottom: 1px solid #e6eef9;
+    padding-bottom: 16px;
+    margin-bottom: 20px;
+}
+
+.settings-header h2 {
+    margin: 0;
+    font-size: 24px;
+    color: #1e3c72;
+}
+
+.settings-header p {
+    margin: 4px 0 0;
+    color: #667085;
+}
+
+.settings-close {
+    background: transparent;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    padding: 6px 12px;
+    cursor: pointer;
+    font-weight: 600;
+    color: #334155;
+}
+
+.settings-form {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+
+.settings-section h3 {
+    margin: 0 0 12px;
+    font-size: 18px;
+    color: #1f2937;
+}
+
+.settings-section h4 {
+    margin: 16px 0 8px;
+    font-size: 15px;
+    color: #334155;
+}
+
+.settings-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 12px;
+}
+
+.settings-row input[type="number"] {
+    width: 160px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid #d0d5dd;
+}
+
+.settings-label {
+    font-weight: 600;
+    color: #1f2937;
+}
+
+.settings-checkbox-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 10px 16px;
+}
+
+.settings-checkbox-grid label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #334155;
+}
+
+.settings-command-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.settings-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-top: 1px solid #e6eef9;
+    padding-top: 18px;
+}
+
+.settings-action-group {
+    display: flex;
+    gap: 12px;
+}
+
+.settings-primary,
+.settings-secondary,
+.settings-logout {
+    border: none;
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.settings-primary {
+    background: #1e3c72;
+    color: #ffffff;
+}
+
+.settings-secondary {
+    background: #e2e8f0;
+    color: #1f2937;
+}
+
+.settings-logout {
+    background: #ef4444;
+    color: #ffffff;
+}
+
+/* Toggle switch */
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+}
+
+.switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.settings-button {
+    background: transparent;
+    color: #ffffff;
+    transition: opacity 0.3s, background 0.3s, border-color 0.3s;
+    margin-right: 16px;
+    padding: 4px;
+    width: 36px;
+    height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    cursor: pointer;
+}
+
+.settings-button svg {
+    width: 22px;
+    height: 22px;
+}
+
+.settings-button:hover {
+    opacity: 1;
+}
+
+.settings-button:focus,
+.settings-button:focus-visible {
+    outline: 2px solid #ffffff;
+    outline-offset: 2px;
+}
+
+.slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #cbd5e1;
+    transition: 0.2s;
+    border-radius: 999px;
+}
+
+.slider:before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: 0.2s;
+    border-radius: 50%;
+}
+
+.switch input:checked + .slider {
+    background-color: #1e3c72;
+}
+
+.switch input:checked + .slider:before {
+    transform: translateX(20px);
+}
+
 /* ===== LOGOUT BUTTON ===== */
 .logout-button {
     background: transparent;
@@ -354,6 +582,10 @@ body.emergency-mode::before {
     box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
     cursor: pointer;
     position: relative;
+}
+
+.card.is-hidden {
+    display: none;
 }
 
 .card-header {

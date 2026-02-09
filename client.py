@@ -8,11 +8,12 @@ import socket
 import struct
 import time
 import websockets
+from copy import deepcopy
 from threading import Thread
 from collections import deque
 import statistics
 
-from flask import Flask, Response, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request, make_response
 
 from functions.attitude import draw_attitude_indicator
 from functions.battery import draw_battery_widget
@@ -46,10 +47,31 @@ VALID_PASSWORD = 'sentry'
 
 # Camera function tabs (shown on right side of camera cards)
 # Each entry must match a command id in templates/index.html COMMAND_DEFS
-CAMERA_FUNCTION_TABS = {
+DEFAULT_CAMERA_FUNCTION_TABS = {
     'cam0': ['go_dark', 'drop_gps_pin', 'emergency'],
     'cam1': ['go_dark', 'night_vision', 'loiter', 'emergency'],
-    'hq': ['landing_mode', 'loiter', 'drop_gps_pin','emergency']
+    'hq': ['landing_mode', 'loiter', 'drop_gps_pin', 'emergency']
+}
+
+# Per-user UI settings defaults
+DEFAULT_SETTINGS = {
+    'test_mode': False,
+    'latency_polling_rate_ms': 500,
+    'status_update_interval_ms': 30000,
+    'visible_tiles': {
+        'cam0': True,
+        'cam1': True,
+        'hq': True,
+        'map': True,
+        'latency': True,
+        'commands': True
+    },
+    'camera_function_tabs': DEFAULT_CAMERA_FUNCTION_TABS
+}
+
+ALLOWED_TILE_IDS = {'cam0', 'cam1', 'hq', 'map', 'latency', 'commands'}
+ALLOWED_COMMAND_IDS = {
+    'go_dark', 'night_vision', 'auto_rth', 'drop_gps_pin', 'emergency', 'loiter', 'landing_mode'
 }
 
 # ===== Global State =====
@@ -103,6 +125,11 @@ command_state = {
     'landing_mode': False,
 }
 command_ws = None  # Persistent WebSocket to server for commands
+
+# Session + settings state
+session_tokens = {}
+settings_by_user = {}
+settings_by_token = {}
 
 # Legacy UDP socket
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -170,6 +197,72 @@ def draw_telemetry_text(frame, data):
         text_width = cv2.getTextSize(text, font, scale, thickness)[0][0]
         y = 15 + i * 20
         cv2.putText(frame, text, (frame_width - text_width - x_margin, y), font, scale, color, thickness)
+
+
+def get_request_token():
+    header_token = request.headers.get('X-Session-Token')
+    cookie_token = request.cookies.get('sentry_token')
+    return header_token or cookie_token
+
+
+def get_settings_for_request():
+    token = get_request_token()
+    if token and token in session_tokens:
+        username = session_tokens[token]
+        if username in settings_by_user:
+            return deepcopy(settings_by_user[username])
+    if token and token in settings_by_token:
+        return deepcopy(settings_by_token[token])
+    return deepcopy(DEFAULT_SETTINGS)
+
+
+def save_settings_for_request(settings):
+    token = get_request_token()
+    if token and token in session_tokens:
+        username = session_tokens[token]
+        settings_by_user[username] = settings
+        return
+    if token:
+        settings_by_token[token] = settings
+
+
+def sanitize_settings(payload):
+    settings = deepcopy(DEFAULT_SETTINGS)
+
+    if isinstance(payload, dict):
+        test_mode = payload.get('test_mode')
+        if isinstance(test_mode, bool):
+            settings['test_mode'] = test_mode
+
+        latency_rate = payload.get('latency_polling_rate_ms')
+        if isinstance(latency_rate, (int, float)):
+            settings['latency_polling_rate_ms'] = int(max(200, min(5000, latency_rate)))
+
+        status_rate = payload.get('status_update_interval_ms')
+        if isinstance(status_rate, (int, float)):
+            settings['status_update_interval_ms'] = int(max(2000, min(120000, status_rate)))
+
+        visible_tiles = payload.get('visible_tiles')
+        if isinstance(visible_tiles, dict):
+            settings['visible_tiles'] = {
+                tile_id: bool(visible_tiles.get(tile_id, True))
+                for tile_id in ALLOWED_TILE_IDS
+            }
+
+        camera_tabs = payload.get('camera_function_tabs')
+        if isinstance(camera_tabs, dict):
+            cleaned_tabs = {}
+            for cam_id, command_ids in camera_tabs.items():
+                if cam_id not in DEFAULT_CAMERA_FUNCTION_TABS:
+                    continue
+                if not isinstance(command_ids, list):
+                    continue
+                cleaned = [cmd_id for cmd_id in command_ids if cmd_id in ALLOWED_COMMAND_IDS]
+                cleaned_tabs[cam_id] = cleaned
+            if cleaned_tabs:
+                settings['camera_function_tabs'] = cleaned_tabs
+
+    return settings
 
 
 # ===== Video Receivers =====
@@ -400,6 +493,7 @@ def gen_frames_cam1():
 @app.route('/')
 def index():
     update_connection_status()
+    user_settings = get_settings_for_request()
     return render_template(
         'index.html',
         main_online=is_main_online(),
@@ -407,9 +501,15 @@ def index():
         cam1_online=cam1_online,
         hq_online=hq_online,
         map_online=is_map_online(),
-        map_html=generate_map_html(mavlink_data['lat'], mavlink_data['lon'], mavlink_data['yaw'], test_mode=TEST_MODE),
-        status_update_interval_ms=STATUS_UPDATE_INTERVAL_MS,
-        camera_function_tabs=CAMERA_FUNCTION_TABS
+        map_html=generate_map_html(
+            mavlink_data['lat'],
+            mavlink_data['lon'],
+            mavlink_data['yaw'],
+            test_mode=bool(user_settings.get('test_mode'))
+        ),
+        status_update_interval_ms=user_settings.get('status_update_interval_ms', STATUS_UPDATE_INTERVAL_MS),
+        camera_function_tabs=user_settings.get('camera_function_tabs', DEFAULT_CAMERA_FUNCTION_TABS),
+        user_settings=user_settings
     )
 
 
@@ -478,13 +578,38 @@ def authenticate():
     password = data.get('password', '').strip()
     
     if username == VALID_USERNAME and password == VALID_PASSWORD:
-        return jsonify({'success': True, 'token': secrets.token_hex(32)})
+        token = secrets.token_hex(32)
+        session_tokens[token] = username
+        response = make_response(jsonify({'success': True, 'token': token}))
+        response.set_cookie(
+            'sentry_token',
+            token,
+            httponly=True,
+            samesite='Lax'
+        )
+        return response
     return jsonify({'success': False, 'message': 'Invalid credentials'}), 401
 
 
 @app.route('/api/logout', methods=['POST'])
 def logout():
-    return jsonify({'success': True})
+    token = get_request_token()
+    if token and token in session_tokens:
+        session_tokens.pop(token, None)
+    response = make_response(jsonify({'success': True}))
+    response.set_cookie('sentry_token', '', expires=0)
+    return response
+
+
+@app.route('/api/settings', methods=['GET', 'POST'])
+def api_settings():
+    if request.method == 'GET':
+        return jsonify(get_settings_for_request())
+
+    payload = request.json or {}
+    settings = sanitize_settings(payload)
+    save_settings_for_request(settings)
+    return jsonify({'success': True, 'settings': settings})
 
 
 async def receive_commands():
@@ -594,7 +719,13 @@ def api_snapshot_cam1():
 @app.route('/map_embed')
 def map_embed():
     """Return a full standalone map HTML page for embedding in an iframe."""
-    html = generate_map_html(mavlink_data['lat'], mavlink_data['lon'], mavlink_data['yaw'], test_mode=TEST_MODE)
+    user_settings = get_settings_for_request()
+    html = generate_map_html(
+        mavlink_data['lat'],
+        mavlink_data['lon'],
+        mavlink_data['yaw'],
+        test_mode=bool(user_settings.get('test_mode'))
+    )
     return Response(html, mimetype='text/html')
 
 
