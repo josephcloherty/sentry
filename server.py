@@ -3,8 +3,13 @@ import json
 import math
 import socket
 import struct
-from infrared import process_ir_frame
-from fiducial_tracker import process_fiducial_frame
+import time
+
+import cv2
+import numpy as np
+import websockets
+from picamera2 import Picamera2
+from pymavlink import mavutil
 
 from functions.infrared import process_ir_frame
 
@@ -15,17 +20,9 @@ VIDEO_HEIGHT = 480
 JPEG_QUALITY = 75
 VIDEO_PORT_1 = 8765
 VIDEO_PORT_2 = 8766
-HQ_VIDEO_PORT = 8767
-HQ_VIDEO_FPS = 30
-HQ_VIDEO_WIDTH = 1920
-HQ_VIDEO_HEIGHT = 1080
-HQ_JPEG_QUALITY = 80
-HQ_DEVICE_CANDIDATES = ['/dev/video0', '/dev/video1', '/dev/video2', 0, 1, 2]
-# None = try preferred backends (v4l2, ffmpeg) then default
-HQ_CAPTURE_BACKEND = None
 TELEMETRY_PORT = 8764
-TELEMETRY_HZ = 50  # 50Hz = 20ms interval for low latency
-USE_FIDUCIAL = True  # set to False to disable AprilTag/QR detection and use IR-only
+TELEMETRY_HZ = 50
+COMMAND_PORT = 8763
 
 # ===== Global State =====
 mavlink_data = {
@@ -164,79 +161,11 @@ if cam0_id is not None:
 if cam1_id is not None:
     cam1, cam1_format = init_camera(cam1_id, ['YUV420', 'XRGB8888'], color=False)
 
-# ===== GoPro (USB) Initialization =====
-gopro_capture = None
-
-
-def init_gopro_capture():
-    """Initialize GoPro USB capture using OpenCV VideoCapture."""
-    # Build a set of candidates. If any are device paths, prefer using v4l2 backend.
-    candidates = list(HQ_DEVICE_CANDIDATES)
-    # Try preferred backends in order
-    preferred_backends = []
-    if HQ_CAPTURE_BACKEND is not None:
-        preferred_backends.append(HQ_CAPTURE_BACKEND)
-    # Add commonly useful backends on Linux
-    preferred_backends.extend([getattr(cv2, 'CAP_V4L2', 200), getattr(cv2, 'CAP_FFMPEG', 190)])
-
-    # Fallback resolutions to try (width, height)
-    fallback_sizes = [(HQ_VIDEO_WIDTH, HQ_VIDEO_HEIGHT), (1280, 720), (640, 480)]
-
-    for candidate in candidates:
-        for backend in preferred_backends + [None]:
-            try:
-                # Open capture
-                if backend is None:
-                    cap = cv2.VideoCapture(candidate)
-                    backend_name = 'default'
-                else:
-                    cap = cv2.VideoCapture(candidate, int(backend))
-                    backend_name = str(backend)
-
-                if not cap or not cap.isOpened():
-                    try:
-                        cap.release()
-                    except Exception:
-                        pass
-                    # debug log
-                    print(f"GoPro probe: candidate={candidate} backend={backend_name} -> not opened")
-                    continue
-
-                # Try resolutions until one yields a successful first frame
-                for (w, h) in fallback_sizes:
-                    try:
-                        cap.set(cv2.CAP_PROP_FRAME_WIDTH, int(w))
-                        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, int(h))
-                        cap.set(cv2.CAP_PROP_FPS, int(HQ_VIDEO_FPS))
-                        # Read a single frame to validate pipeline
-                        ret, frame = cap.read()
-                        if ret and frame is not None:
-                            actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
-                            actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
-                            print(f"GoPro capture opened on {candidate} backend={backend_name} size=({actual_w}x{actual_h})")
-                            return cap
-                        else:
-                            print(f"GoPro probe: opened {candidate} backend={backend_name} but read failed for size {w}x{h}")
-                    except Exception as e:
-                        print(f"GoPro probe: error reading from {candidate} backend={backend_name} size={w}x{h}: {e}")
-                # nothing worked for this open; release and continue
-                try:
-                    cap.release()
-                except Exception:
-                    pass
-            except Exception as e:
-                print(f"Warning: GoPro capture init failed on candidate {candidate} backend={backend_name}: {e}")
-            # small delay to avoid tight retry loops
-            time.sleep(0.2)
-
-    print("GoPro probe: no usable capture device found")
-    return None
-
 
 # ===== Helper Functions =====
-def encode_frame_with_timestamp(frame, quality=JPEG_QUALITY):
+def encode_frame_with_timestamp(frame):
     """Encode frame as JPEG with prepended timestamp."""
-    _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
+    _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
     return struct.pack('d', time.time()) + buffer.tobytes()
 
 
@@ -304,7 +233,7 @@ async def stream_cam0(ws):
 
     while True:
         frame = cam0.capture_array()
-        await ws.send(encode_frame_with_timestamp(frame, quality=JPEG_QUALITY))
+        await ws.send(encode_frame_with_timestamp(frame))
         await asyncio.sleep(1.0 / VIDEO_FPS)
 
 
@@ -338,75 +267,11 @@ async def stream_cam1(ws):
         except Exception as e:
             print(f"Warning: failed to convert frame to gray: {e}")
             gray = np.zeros((VIDEO_HEIGHT, VIDEO_WIDTH), dtype=np.uint8)
-        # Attempt fiducial-based lock first (AprilTag/QR). If disabled or not locked,
-        # fallback to IR processing, then brightest-region heuristic.
-        display_frame = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-
-        fid = None
-        if USE_FIDUCIAL:
-            try:
-                fid = process_fiducial_frame(display_frame)
-            except Exception as e:
-                print(f"Warning: fiducial processing failed: {e}")
-                fid = None
-
-        # Always compute IR result too so we can fallback if fiducial isn't available.
+        
         ir = process_ir_frame(gray)
-
-        # Fallback: if neither fiducial nor IR locked, locate the brightest region
-        fallback_center = None
-        fallback_radius = None
-        try:
-            if not (fid and fid.locked) and not ir.locked:
-                minV, maxV, minLoc, maxLoc = cv2.minMaxLoc(gray)
-                # require a reasonably bright peak to consider
-                if maxV >= 180:
-                    thresh_val = int(maxV * 0.65)
-                    _, th = cv2.threshold(gray, thresh_val, 255, cv2.THRESH_BINARY)
-                    contours, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    if contours:
-                        c = max(contours, key=cv2.contourArea)
-                        area = cv2.contourArea(c)
-                        if area > 10:
-                            M = cv2.moments(c)
-                            if M.get('m00', 0) != 0:
-                                cx = int(M['m10'] / M['m00'])
-                                cy = int(M['m01'] / M['m00'])
-                                fallback_center = (cx, cy)
-                                fallback_radius = max(5, int(math.sqrt(area) / 2))
-        except Exception as e:
-            print(f"Warning: brightest-region fallback failed: {e}")
-
-        # Draw overlays: prefer fiducial, then IR, then brightest-region
-        h, w = display_frame.shape[:2]
-        cx_img, cy_img = w // 2, h // 2
-        if fid and fid.locked:
-            # Prefer drawing the detected polygon if available (red square/quad)
-            if hasattr(fid, 'corners') and getattr(fid, 'corners') is not None:
-                try:
-                    pts = getattr(fid, 'corners').reshape((-1, 2)).astype(int)
-                    cv2.polylines(display_frame, [pts], True, (0, 0, 255), 2)
-                    M = cv2.moments(pts)
-                    if M.get('m00', 0) != 0:
-                        cx = int(M['m10'] / M['m00'])
-                        cy = int(M['m01'] / M['m00'])
-                        cv2.line(display_frame, (cx-10, cy), (cx+10, cy), (0,0,255),1)
-                        cv2.line(display_frame, (cx, cy-10), (cx, cy+10), (0,0,255),1)
-                except Exception:
-                    # Fallback to centre-based drawing
-                    cx = int(cx_img * (1.0 + fid.error_x))
-                    cy = int(cy_img * (1.0 + fid.error_y))
-                    size = max(5, int(math.sqrt(max(1, fid.area)) / 2))
-                    cv2.rectangle(display_frame, (cx-size, cy-size), (cx+size, cy+size), (0,0,255), 2)
-            else:
-                cx = int(cx_img * (1.0 + fid.error_x))
-                cy = int(cy_img * (1.0 + fid.error_y))
-                size = max(5, int(math.sqrt(max(1, fid.area)) / 2))
-                cv2.rectangle(display_frame, (cx-size, cy-size), (cx+size, cy+size), (0,0,255), 2)
-            id_text = f"ID:{fid.fiducial_id if fid.fiducial_id is not None else '?'}"
-            conf_text = f"C:{fid.confidence:.2f} A:{int(fid.area)}"
-            cv2.putText(display_frame, id_text + ' ' + conf_text, (10, h-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255),1)
-        elif ir.locked:
+        display_frame = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+        
+        if ir.locked:
             center = (int(ir.cx), int(ir.cy))
             radius = max(5, int(math.sqrt(ir.area) / 2))
             draw_crosshair(display_frame, center, radius)
@@ -418,75 +283,8 @@ async def stream_cam1(ws):
             except Exception as e:
                 print(f"Warning: brightest-region fallback failed: {e}")
         
-        await ws.send(encode_frame_with_timestamp(display_frame, quality=JPEG_QUALITY))
+        await ws.send(encode_frame_with_timestamp(display_frame))
         await asyncio.sleep(1.0 / VIDEO_FPS)
-
-
-async def stream_hq(ws):
-    """Stream GoPro USB feed over WebSocket."""
-    global gopro_capture
-    print("Client connected to video stream (hq).")
-    if gopro_capture is None or not gopro_capture.isOpened():
-        gopro_capture = init_gopro_capture()
-
-    if gopro_capture is None or not gopro_capture.isOpened():
-        print("GoPro not available; closing connection")
-        try:
-            await ws.send(json.dumps({'type': 'error', 'message': 'GoPro not available'}))
-        except Exception:
-            pass
-        await ws.close()
-        return
-
-    frame_count = 0
-    while True:
-        try:
-            ret, frame = await asyncio.to_thread(gopro_capture.read)
-            frame_count += 1
-
-            if not ret or frame is None:
-                print("Warning: GoPro frame read failed, attempting reinit")
-                try:
-                    gopro_capture.release()
-                except Exception:
-                    pass
-                gopro_capture = init_gopro_capture()
-                await asyncio.sleep(1.0)
-                continue
-
-            # Ensure frame size matches expected resolution to avoid huge payloads
-            try:
-                if frame.shape[1] != HQ_VIDEO_WIDTH or frame.shape[0] != HQ_VIDEO_HEIGHT:
-                    frame = cv2.resize(frame, (HQ_VIDEO_WIDTH, HQ_VIDEO_HEIGHT))
-            except Exception:
-                # If resize fails, continue with whatever we have
-                pass
-
-            # Send the JPEG payload
-            await ws.send(encode_frame_with_timestamp(frame, quality=HQ_JPEG_QUALITY))
-
-            # Periodic lightweight heartbeat (JSON string) so clients can detect activity
-            if frame_count % int(max(1, HQ_VIDEO_FPS)) == 0:
-                try:
-                    await ws.send(json.dumps({'type': 'heartbeat', 'ts': time.time(), 'frame_count': frame_count}))
-                except Exception:
-                    # ignore heartbeat send issues
-                    pass
-
-            # Occasional debug print (every 60 frames)
-            if frame_count % 60 == 0:
-                try:
-                    print(f"HQ: sent {frame_count} frames, last_frame_shape={frame.shape}")
-                except Exception:
-                    print(f"HQ: sent {frame_count} frames")
-
-            await asyncio.sleep(1.0 / HQ_VIDEO_FPS)
-        except websockets.exceptions.ConnectionClosed:
-            break
-        except Exception as e:
-            print("GoPro stream error:")
-            traceback.print_exc()
-            await asyncio.sleep(0.5)
 
 
 # ===== Telemetry =====
@@ -586,6 +384,7 @@ async def mavlink_broadcast():
             await asyncio.sleep(0.005)
 
     asyncio.create_task(read_mavlink())
+
     while True:
         att = latest_msgs.get('ATTITUDE')
         gps = latest_msgs.get('GLOBAL_POSITION_INT')
@@ -621,25 +420,11 @@ async def mavlink_broadcast():
 async def main():
     async with websockets.serve(stream_cam0, '0.0.0.0', VIDEO_PORT_1), \
                websockets.serve(stream_cam1, '0.0.0.0', VIDEO_PORT_2), \
-               websockets.serve(stream_hq, '0.0.0.0', HQ_VIDEO_PORT), \
-               websockets.serve(stream_telemetry, '0.0.0.0', TELEMETRY_PORT), \
-               websockets.serve(command_handler, '0.0.0.0', COMMAND_PORT):
-        # Try to open GoPro capture at server start so failures are visible in logs
-        global gopro_capture
-        try:
-            gopro_capture = init_gopro_capture()
-            if gopro_capture is not None and gopro_capture.isOpened():
-                print("GoPro capture initialized at startup.")
-            else:
-                print("GoPro not initialized at startup; will init on first client connect.")
-        except Exception:
-            print("GoPro init at startup failed:")
-            traceback.print_exc()
-
+         websockets.serve(stream_telemetry, '0.0.0.0', TELEMETRY_PORT), \
+         websockets.serve(command_handler, '0.0.0.0', COMMAND_PORT):
         print(f"Server running:")
         print(f"  - Video cam0: ws://0.0.0.0:{VIDEO_PORT_1}")
         print(f"  - Video cam1: ws://0.0.0.0:{VIDEO_PORT_2}")
-        print(f"  - Video HQ:   ws://0.0.0.0:{HQ_VIDEO_PORT}")
         print(f"  - Telemetry:  ws://0.0.0.0:{TELEMETRY_PORT} ({TELEMETRY_HZ}Hz)")
         print(f"  - Commands:   ws://0.0.0.0:{COMMAND_PORT}")
         print(f"  - UDP legacy: broadcast:5000 (10Hz)")
