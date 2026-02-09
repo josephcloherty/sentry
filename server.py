@@ -78,27 +78,18 @@ def detect_camera_type(cam_id):
         print(f"Warning: Could not detect camera {cam_id} type: {e}")
         return None
 
+
 def init_camera(cam_id, formats, color=True):
     """Initialize camera with format fallback chain."""
     try:
         cam = Picamera2(cam_id)
-        role = "color" if color else "ir"
         for fmt in formats:
             try:
-                preview_config = cam.create_preview_configuration(
+                cam.configure(cam.create_preview_configuration(
                     main={"format": fmt, "size": (VIDEO_WIDTH, VIDEO_HEIGHT)}
-                )
-                if cam_id == 1:
-                    preview_config.setdefault("controls", {})
-                    preview_config["controls"]["ScalerCrop"] = (
-                        0,
-                        0,
-                        VIDEO_WIDTH,
-                        VIDEO_HEIGHT,
-                    )
-                cam.configure(preview_config)
+                ))
                 cam.start()
-                print(f"cam{cam_id} ({role}): Picamera2 started ({fmt})")
+                print(f"cam{cam_id}: Picamera2 started ({fmt})")
                 return cam, fmt
             except Exception:
                 continue
@@ -259,7 +250,18 @@ async def stream_cam1(ws):
 
     while True:
         frame = cam1.capture_array()
-        
+        # If the camera is returning YUV420 (I420) as a single-channel
+        # vertically-stacked array, the shape will often be (H * 3/2, W).
+        # In that case we only want the Y plane (top H rows) to produce
+        # a final 640x480 grayscale feed — crop off the U/V planes.
+        if isinstance(frame, np.ndarray) and frame.ndim == 2 and frame.shape[0] > VIDEO_HEIGHT:
+            try:
+                frame = frame[:VIDEO_HEIGHT, :VIDEO_WIDTH]
+            except Exception:
+                # Fallback: if slicing fails for any reason, ensure we at least
+                # reshape or take top region to VIDEO_HEIGHT x VIDEO_WIDTH
+                frame = frame[0:VIDEO_HEIGHT, 0:VIDEO_WIDTH]
+
         try:
             gray = to_grayscale(frame)
         except Exception as e:
