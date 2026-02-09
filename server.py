@@ -8,6 +8,7 @@ import json
 import time
 import struct
 from infrared import process_ir_frame
+from fiducial_tracker import process_fiducial_frame
 
 
 # ===== Configuration Variables =====
@@ -19,6 +20,7 @@ VIDEO_PORT_1 = 8765
 VIDEO_PORT_2 = 8766
 TELEMETRY_PORT = 8764
 TELEMETRY_HZ = 50  # 50Hz = 20ms interval for low latency
+USE_FIDUCIAL = True  # set to False to disable AprilTag/QR detection and use IR-only
 
 print("Connecting to MAVLink...")
 mav = mavutil.mavlink_connection('udp:127.0.0.1:14550')
@@ -114,17 +116,29 @@ async def stream_cam1(ws):
             print(f"Warning: failed to convert frame to gray: {e}")
             # create a blank gray frame to keep stream alive
             gray = np.zeros((VIDEO_HEIGHT, VIDEO_WIDTH), dtype=np.uint8)
+        # Attempt fiducial-based lock first (AprilTag/QR). If disabled or not locked,
+        # fallback to IR processing, then brightest-region heuristic.
+        display_frame = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+
+        fid = None
+        if USE_FIDUCIAL:
+            try:
+                fid = process_fiducial_frame(display_frame)
+            except Exception as e:
+                print(f"Warning: fiducial processing failed: {e}")
+                fid = None
+
+        # Always compute IR result too so we can fallback if fiducial isn't available.
         ir = process_ir_frame(gray)
 
-        # Fallback: if IR processing didn't lock, locate the brightest region
+        # Fallback: if neither fiducial nor IR locked, locate the brightest region
         fallback_center = None
         fallback_radius = None
         try:
-            if not ir.locked:
+            if not (fid and fid.locked) and not ir.locked:
                 minV, maxV, minLoc, maxLoc = cv2.minMaxLoc(gray)
                 # require a reasonably bright peak to consider
                 if maxV >= 180:
-                    # threshold relative to peak to capture the bright blob
                     thresh_val = int(maxV * 0.65)
                     _, th = cv2.threshold(gray, thresh_val, 255, cv2.THRESH_BINARY)
                     contours, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -141,8 +155,36 @@ async def stream_cam1(ws):
         except Exception as e:
             print(f"Warning: brightest-region fallback failed: {e}")
 
-        display_frame = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-        if ir.locked:
+        # Draw overlays: prefer fiducial, then IR, then brightest-region
+        h, w = display_frame.shape[:2]
+        cx_img, cy_img = w // 2, h // 2
+        if fid and fid.locked:
+            # Prefer drawing the detected polygon if available (red square/quad)
+            if hasattr(fid, 'corners') and getattr(fid, 'corners') is not None:
+                try:
+                    pts = getattr(fid, 'corners').reshape((-1, 2)).astype(int)
+                    cv2.polylines(display_frame, [pts], True, (0, 0, 255), 2)
+                    M = cv2.moments(pts)
+                    if M.get('m00', 0) != 0:
+                        cx = int(M['m10'] / M['m00'])
+                        cy = int(M['m01'] / M['m00'])
+                        cv2.line(display_frame, (cx-10, cy), (cx+10, cy), (0,0,255),1)
+                        cv2.line(display_frame, (cx, cy-10), (cx, cy+10), (0,0,255),1)
+                except Exception:
+                    # Fallback to centre-based drawing
+                    cx = int(cx_img * (1.0 + fid.error_x))
+                    cy = int(cy_img * (1.0 + fid.error_y))
+                    size = max(5, int(math.sqrt(max(1, fid.area)) / 2))
+                    cv2.rectangle(display_frame, (cx-size, cy-size), (cx+size, cy+size), (0,0,255), 2)
+            else:
+                cx = int(cx_img * (1.0 + fid.error_x))
+                cy = int(cy_img * (1.0 + fid.error_y))
+                size = max(5, int(math.sqrt(max(1, fid.area)) / 2))
+                cv2.rectangle(display_frame, (cx-size, cy-size), (cx+size, cy+size), (0,0,255), 2)
+            id_text = f"ID:{fid.fiducial_id if fid.fiducial_id is not None else '?'}"
+            conf_text = f"C:{fid.confidence:.2f} A:{int(fid.area)}"
+            cv2.putText(display_frame, id_text + ' ' + conf_text, (10, h-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255),1)
+        elif ir.locked:
             center = (int(ir.cx), int(ir.cy))
             radius = max(5, int(math.sqrt(ir.area)/2))
             cv2.circle(display_frame, center, radius, (255, 255, 255), 2)
