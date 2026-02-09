@@ -485,11 +485,11 @@ async def mavlink_broadcast():
 
 # ===== Main =====
 async def main():
-        async with websockets.serve(stream_cam0, '0.0.0.0', VIDEO_PORT_1), \
+    async with websockets.serve(stream_cam0, '0.0.0.0', VIDEO_PORT_1), \
                websockets.serve(stream_cam1, '0.0.0.0', VIDEO_PORT_2), \
                websockets.serve(stream_hq, '0.0.0.0', HQ_VIDEO_PORT), \
-           websockets.serve(stream_telemetry, '0.0.0.0', TELEMETRY_PORT), \
-           websockets.serve(command_handler, '0.0.0.0', COMMAND_PORT):
+               websockets.serve(stream_telemetry, '0.0.0.0', TELEMETRY_PORT), \
+               websockets.serve(command_handler, '0.0.0.0', COMMAND_PORT):
         print(f"Server running:")
         print(f"  - Video cam0: ws://0.0.0.0:{VIDEO_PORT_1}")
         print(f"  - Video cam1: ws://0.0.0.0:{VIDEO_PORT_2}")
