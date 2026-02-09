@@ -460,6 +460,13 @@ def video_feed_hq():
     return Response(gen_frames_hq(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 
+@app.route('/hq_only')
+def hq_only():
+    """Minimal page that shows only the HQ MJPEG stream for testing."""
+    update_connection_status()
+    return render_template('hq_only.html', hq_online=hq_online)
+
+
 @app.route('/telemetry')
 def telemetry():
     update_connection_status()
