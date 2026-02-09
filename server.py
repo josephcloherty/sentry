@@ -58,7 +58,6 @@ sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
 
 # ===== Camera Initialization =====
-# ===== Camera Initialization =====
 def detect_camera_type(cam_id):
     """Detect if camera is a regular Pi Cam or Pi Cam Noir."""
     try:
@@ -98,56 +97,38 @@ def init_camera(cam_id, formats, color=True):
     return None, None
 
 
-# Detect available cameras and their types..
-available_cameras = []
-for i in range(2):
-    try:
-        cam_type = detect_camera_type(i)
-        if cam_type is not None:
-            available_cameras.append({'id': i, 'is_noir': cam_type})
-    except Exception as e:
-        print(f"Camera {i} not available: {e}")
+def discover_cameras(max_cams=2):
+    cameras = []
+    for i in range(max_cams):
+        try:
+            cam_type = detect_camera_type(i)
+            if cam_type is not None:
+                cameras.append({'id': i, 'is_noir': cam_type})
+        except Exception as e:
+            print(f"Camera {i} not available: {e}")
+    return cameras
 
+
+def select_camera_ids(cameras):
+    cam0_id = next((c['id'] for c in cameras if not c['is_noir']), None)
+    cam1_id = next((c['id'] for c in cameras if c['is_noir']), None)
+
+    if cam0_id is None and cameras:
+        cam0_id = next((c['id'] for c in cameras if c['id'] != cam1_id), None)
+    if cam1_id is None and cameras:
+        cam1_id = next((c['id'] for c in cameras if c['id'] != cam0_id), None)
+
+    if len(cameras) == 1:
+        only = cameras[0]
+        cam0_id, cam1_id = (None, only['id']) if only['is_noir'] else (only['id'], None)
+
+    return cam0_id, cam1_id
+
+
+available_cameras = discover_cameras()
 print(f"Available cameras: {available_cameras}")
 
-# Assign cameras ensuring cam0=normal, cam1=noir
-cam0_id = None
-cam1_id = None
-
-for cam_info in available_cameras:
-    if not cam_info['is_noir'] and cam0_id is None:
-        cam0_id = cam_info['id']
-    elif cam_info['is_noir'] and cam1_id is None:
-        cam1_id = cam_info['id']
-
-# If we can't find both types, use whatever is available
-if cam0_id is None and available_cameras:
-    # Use first non-noir or any available camera
-    for cam_info in available_cameras:
-        if cam_info['id'] != cam1_id:
-            cam0_id = cam_info['id']
-            break
-
-if cam1_id is None and available_cameras:
-    # Use first noir or any available camera
-    for cam_info in available_cameras:
-        if cam_info['id'] != cam0_id:
-            cam1_id = cam_info['id']
-            break
-
-# If only one camera was detected, assign it to the correct feed; leave the other None.
-if len(available_cameras) == 0:
-    cam0_id = None
-    cam1_id = None
-
-if len(available_cameras) == 1:
-    only = available_cameras[0]
-    if only['is_noir']:
-        cam0_id = None
-        cam1_id = only['id']
-    else:
-        cam0_id = only['id']
-        cam1_id = None
+cam0_id, cam1_id = select_camera_ids(available_cameras)
 
 print(f"Assigning cam0 (color) to camera ID {cam0_id}")
 print(f"Assigning cam1 (noir/IR) to camera ID {cam1_id}")
@@ -220,71 +201,70 @@ def draw_crosshair(frame, center, radius):
 
 
 # ===== Video Streaming =====
-async def stream_cam0(ws):
-    print("Client connected to video stream (cam0).")
-    if cam0 is None:
-        print("cam0 not available; closing connection")
-        try:
-            await ws.send(json.dumps({'type': 'error', 'message': 'cam0 not available'}))
-        except Exception:
-            pass
-        await ws.close()
+async def _send_unavailable(ws, label):
+    print(f"{label} not available; closing connection")
+    try:
+        await ws.send(json.dumps({'type': 'error', 'message': f'{label} not available'}))
+    except Exception:
+        pass
+    await ws.close()
+
+
+async def _stream_camera(ws, cam, label, transform=None):
+    print(f"Client connected to video stream ({label}).")
+    if cam is None:
+        await _send_unavailable(ws, label)
         return
 
     while True:
-        frame = cam0.capture_array()
+        frame = cam.capture_array()
+        if transform:
+            frame = transform(frame)
         await ws.send(encode_frame_with_timestamp(frame))
         await asyncio.sleep(1.0 / VIDEO_FPS)
 
 
-async def stream_cam1(ws):
-    print("Client connected to video stream (cam1).")
-    if cam1 is None:
-        print("cam1 not available; closing connection")
+def _process_cam1_frame(frame):
+    # If the camera is returning YUV420 (I420) as a single-channel
+    # vertically-stacked array, the shape will often be (H * 3/2, W).
+    # In that case we only want the Y plane (top H rows) to produce
+    # a final 640x480 grayscale feed — crop off the U/V planes.
+    if isinstance(frame, np.ndarray) and frame.ndim == 2 and frame.shape[0] > VIDEO_HEIGHT:
         try:
-            await ws.send(json.dumps({'type': 'error', 'message': 'cam1 not available'}))
+            frame = frame[:VIDEO_HEIGHT, :VIDEO_WIDTH]
         except Exception:
-            pass
-        await ws.close()
-        return
+            frame = frame[0:VIDEO_HEIGHT, 0:VIDEO_WIDTH]
 
-    while True:
-        frame = cam1.capture_array()
-        # If the camera is returning YUV420 (I420) as a single-channel
-        # vertically-stacked array, the shape will often be (H * 3/2, W).
-        # In that case we only want the Y plane (top H rows) to produce
-        # a final 640x480 grayscale feed — crop off the U/V planes.
-        if isinstance(frame, np.ndarray) and frame.ndim == 2 and frame.shape[0] > VIDEO_HEIGHT:
-            try:
-                frame = frame[:VIDEO_HEIGHT, :VIDEO_WIDTH]
-            except Exception:
-                # Fallback: if slicing fails for any reason, ensure we at least
-                # reshape or take top region to VIDEO_HEIGHT x VIDEO_WIDTH
-                frame = frame[0:VIDEO_HEIGHT, 0:VIDEO_WIDTH]
+    try:
+        gray = to_grayscale(frame)
+    except Exception as e:
+        print(f"Warning: failed to convert frame to gray: {e}")
+        gray = np.zeros((VIDEO_HEIGHT, VIDEO_WIDTH), dtype=np.uint8)
 
+    ir = process_ir_frame(gray)
+    display_frame = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+
+    if ir.locked:
+        center = (int(ir.cx), int(ir.cy))
+        radius = max(5, int(math.sqrt(ir.area) / 2))
+        draw_crosshair(display_frame, center, radius)
+    else:
         try:
-            gray = to_grayscale(frame)
+            center, radius = find_brightest_region(gray)
+            if center:
+                draw_crosshair(display_frame, center, radius)
         except Exception as e:
-            print(f"Warning: failed to convert frame to gray: {e}")
-            gray = np.zeros((VIDEO_HEIGHT, VIDEO_WIDTH), dtype=np.uint8)
-        
-        ir = process_ir_frame(gray)
-        display_frame = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-        
-        if ir.locked:
-            center = (int(ir.cx), int(ir.cy))
-            radius = max(5, int(math.sqrt(ir.area) / 2))
-            draw_crosshair(display_frame, center, radius)
-        else:
-            try:
-                center, radius = find_brightest_region(gray)
-                if center:
-                    draw_crosshair(display_frame, center, radius)
-            except Exception as e:
-                print(f"Warning: brightest-region fallback failed: {e}")
-        
-        await ws.send(encode_frame_with_timestamp(display_frame))
-        await asyncio.sleep(1.0 / VIDEO_FPS)
+            print(f"Warning: brightest-region fallback failed: {e}")
+
+    return display_frame
+
+
+async def stream_cam0(ws):
+    await _stream_camera(ws, cam0, 'cam0')
+
+
+async def stream_cam1(ws):
+    await _stream_camera(ws, cam1, 'cam1', transform=_process_cam1_frame)
 
 
 # ===== Telemetry =====
