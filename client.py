@@ -25,6 +25,10 @@ from functions.throttle import draw_throttle_widget
 STATUS_UPDATE_INTERVAL_MS = 2000
 STATUS_TIMEOUT = 3.0
 LATENCY_SAMPLE_SIZE = 200
+TELEMETRY_RECONNECT_DELAY_SEC = 2.0
+TELEMETRY_RECV_TIMEOUT_SEC = 5.0
+TELEMETRY_PING_INTERVAL_SEC = 5.0
+TELEMETRY_PING_TIMEOUT_SEC = 5.0
 
 # Toggle test mode to use local test telemetry/streams (set True to enable)
 # When enabled: telemetry WS -> ws://localhost:8888, cam0 -> localhost:8886, cam1 -> localhost:8887
@@ -53,6 +57,9 @@ DEFAULT_CAMERA_FUNCTION_TABS = {
     'hq': ['landing_mode', 'loiter', 'drop_gps_pin', 'emergency']
 }
 
+# Home screen tile ordering
+DEFAULT_TILE_ORDER = ['cam0', 'cam1', 'hq', 'map', 'latency', 'commands']
+
 # Per-user UI settings defaults
 DEFAULT_SETTINGS = {
     'test_mode': TEST_MODE,
@@ -66,7 +73,8 @@ DEFAULT_SETTINGS = {
         'latency': True,
         'commands': True
     },
-    'camera_function_tabs': DEFAULT_CAMERA_FUNCTION_TABS
+    'camera_function_tabs': DEFAULT_CAMERA_FUNCTION_TABS,
+    'tile_order': DEFAULT_TILE_ORDER
 }
 
 ALLOWED_TILE_IDS = {'cam0', 'cam1', 'hq', 'map', 'latency', 'commands'}
@@ -249,6 +257,20 @@ def sanitize_settings(payload):
                 for tile_id in ALLOWED_TILE_IDS
             }
 
+        tile_order = payload.get('tile_order')
+        if isinstance(tile_order, list):
+            cleaned_order = []
+            seen = set()
+            for tile_id in tile_order:
+                if tile_id in ALLOWED_TILE_IDS and tile_id not in seen:
+                    cleaned_order.append(tile_id)
+                    seen.add(tile_id)
+            for tile_id in DEFAULT_TILE_ORDER:
+                if tile_id not in seen:
+                    cleaned_order.append(tile_id)
+                    seen.add(tile_id)
+            settings['tile_order'] = cleaned_order
+
         camera_tabs = payload.get('camera_function_tabs')
         if isinstance(camera_tabs, dict):
             cleaned_tabs = {}
@@ -316,10 +338,19 @@ async def receive_telemetry():
     
     while True:
         try:
-            async with websockets.connect(f'ws://{SERVER_IP}:{TELEMETRY_PORT}') as ws:
+            async with websockets.connect(
+                f'ws://{SERVER_IP}:{TELEMETRY_PORT}',
+                ping_interval=TELEMETRY_PING_INTERVAL_SEC,
+                ping_timeout=TELEMETRY_PING_TIMEOUT_SEC
+            ) as ws:
                 print("Connected to telemetry server (WebSocket).")
                 while True:
-                    data = await ws.recv()
+                    try:
+                        data = await asyncio.wait_for(ws.recv(), timeout=TELEMETRY_RECV_TIMEOUT_SEC)
+                    except asyncio.TimeoutError:
+                        print("Telemetry receive timeout, reconnecting...")
+                        await ws.close()
+                        break
                     try:
                         telemetry_msg = json.loads(data)
                         current_time = time.time()
@@ -339,10 +370,10 @@ async def receive_telemetry():
                     except json.JSONDecodeError:
                         print(f"Failed to parse telemetry JSON: {data}")
         except websockets.exceptions.ConnectionRefused:
-            print("Telemetry server not available, retrying in 2 seconds...")
+            print(f"Telemetry server not available, retrying in {TELEMETRY_RECONNECT_DELAY_SEC:.0f} seconds...")
         except Exception as e:
             print(f"Telemetry WebSocket error: {e}")
-        await asyncio.sleep(2)
+        await asyncio.sleep(TELEMETRY_RECONNECT_DELAY_SEC)
 
 
 def receive_mavlink():

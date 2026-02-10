@@ -16,18 +16,85 @@ PIN_BUTTON_LABEL = 'Drop GPS Pin'
 CLEAR_PINS_BUTTON_LABEL = 'Clear Pins'
 FOLLOW_BUTTON_LABEL = 'Follow'
 
+# ===== MAP DATA CONFIG (adjustable) =====
+MAP_GPKG_FILENAME = 'NorthWest_Railways.gpkg'
+MAP_GPKG_DIRS = [
+    Path(__file__).parent.parent / 'maps',
+    Path(__file__).parent.parent / 'dev' / 'map',
+    Path(__file__).parent.parent,
+]
+MAP_GPKG_LAYER_PREFERENCES = [
+    'railways',
+    'railway',
+    'rails',
+    'tracks',
+]
+
 
 @lru_cache(maxsize=1)
 def load_geodata():
     """Load and cache geodata from GeoPackage file."""
-    gpkg_path = Path(__file__).parent.parent / 'dev' / 'map' / 'NorthWest_Railways.gpkg'
-    if not gpkg_path.exists():
+    # Find any .gpkg files in the candidate directories
+    gpkg_files = []
+    for d in MAP_GPKG_DIRS:
+        try:
+            if d.exists() and d.is_dir():
+                gpkg_files.extend(sorted(d.glob('*.gpkg')))
+        except Exception:
+            continue
+
+    if not gpkg_files:
         return None
-    gdf = gpd.read_file(gpkg_path)
-    gdf['geometry'] = gdf['geometry'].simplify(tolerance=0.001, preserve_topology=True)
-    if gdf.crs and gdf.crs.to_epsg() != 4326:
-        gdf = gdf.to_crs(epsg=4326)
-    return gdf.__geo_interface__
+
+    results = []
+    for gf in gpkg_files:
+        try:
+            import fiona  # type: ignore
+            layers = [layer.lower() for layer in fiona.listlayers(gf)]
+        except Exception:
+            layers = []
+
+        # pick preferred layer if present, otherwise let geopandas pick
+        chosen = None
+        if layers:
+            pref = next((layer for layer in MAP_GPKG_LAYER_PREFERENCES if layer in layers), None)
+            if pref:
+                try:
+                    gdf = gpd.read_file(gf, layer=pref)
+                    chosen = (pref, gdf)
+                except Exception:
+                    chosen = None
+
+        if chosen is None:
+            try:
+                gdf = gpd.read_file(gf)
+            except Exception:
+                continue
+
+        if gdf is None or gdf.empty:
+            continue
+
+        # simplify and ensure WGS84
+        try:
+            gdf['geometry'] = gdf['geometry'].simplify(tolerance=0.001, preserve_topology=True)
+        except Exception:
+            pass
+        if gdf.crs and getattr(gdf.crs, 'to_epsg', lambda: None)() != 4326:
+            try:
+                gdf = gdf.to_crs(epsg=4326)
+            except Exception:
+                pass
+
+        results.append({
+            'file': str(gf.name),
+            'geojson': gdf.__geo_interface__,
+            'bounds': gdf.total_bounds.tolist(),
+        })
+
+    if not results:
+        return None
+
+    return results
 
 
 def generate_map_html(lat, lon, yaw, test_mode=False):
@@ -44,11 +111,60 @@ def generate_map_html(lat, lon, yaw, test_mode=False):
         attr='Google'
     )
 
+    # If load_geodata returned multiple datasets, add them all and fit bounds to combined extent
     if geojson_data:
-        folium.GeoJson(
-            geojson_data,
-            style_function=lambda x: {'color': '#0066cc', 'weight': 2}
-        ).add_to(m)
+        combined_bounds = None  # [minx, miny, maxx, maxy]
+        datasets = geojson_data if isinstance(geojson_data, list) else [geojson_data]
+        for ds in datasets:
+            geojson = ds.get('geojson') if isinstance(ds, dict) else ds
+            bounds = ds.get('bounds') if isinstance(ds, dict) else None
+            fname = ds.get('file', '').lower() if isinstance(ds, dict) else ''
+
+            # If this dataset appears to be a stations/points layer, render as red circle markers
+            if 'station' in fname or 'stations' in fname or (isinstance(geojson, dict) and all((f.get('geometry', {}).get('type','').lower() in ('point','multipoint') for f in geojson.get('features', []) if f.get('geometry')))):
+                fg = folium.FeatureGroup(name=ds.get('file', None) if isinstance(ds, dict) else None)
+                features = geojson.get('features', []) if isinstance(geojson, dict) else []
+                for feat in features:
+                    geom = feat.get('geometry') if isinstance(feat, dict) else None
+                    if not geom:
+                        continue
+                    gtype = geom.get('type', '').lower()
+                    coords = geom.get('coordinates')
+                    if not coords:
+                        continue
+                    if gtype == 'point':
+                        lon, lat = coords[0], coords[1]
+                        folium.CircleMarker(location=[lat, lon], radius=5, color='red', fill=True, fill_color='red', fill_opacity=0.9).add_to(fg)
+                    elif gtype == 'multipoint':
+                        for c in coords:
+                            lon, lat = c[0], c[1]
+                            folium.CircleMarker(location=[lat, lon], radius=5, color='red', fill=True, fill_color='red', fill_opacity=0.9).add_to(fg)
+                fg.add_to(m)
+            else:
+                folium.GeoJson(
+                    geojson,
+                    name=ds.get('file', None) if isinstance(ds, dict) else None,
+                    style_function=lambda x: {'color': '#0066cc', 'weight': 2}
+                ).add_to(m)
+
+            if bounds and len(bounds) == 4:
+                if combined_bounds is None:
+                    combined_bounds = bounds.copy()
+                else:
+                    combined_bounds[0] = min(combined_bounds[0], bounds[0])
+                    combined_bounds[1] = min(combined_bounds[1], bounds[1])
+                    combined_bounds[2] = max(combined_bounds[2], bounds[2])
+                    combined_bounds[3] = max(combined_bounds[3], bounds[3])
+
+        # Fit map to combined bounds
+        try:
+            if combined_bounds and len(combined_bounds) == 4:
+                minx, miny, maxx, maxy = combined_bounds
+                sw = [miny, minx]
+                ne = [maxy, maxx]
+                m.fit_bounds([sw, ne])
+        except Exception:
+            pass
 
     icon_path = Path(__file__).parent.parent / 'templates' / 'images' / 'sentry_icon_white.png'
     if icon_path.exists():
@@ -75,24 +191,49 @@ def generate_map_html(lat, lon, yaw, test_mode=False):
     map_id = m.get_name()
     reset_button = f"""
     <div id="map-action-buttons" style="position: absolute; top: 16px; right: 16px; z-index: 1000; display: flex; flex-direction: column; gap: 8px;">
-        <button id="reset-btn" onclick="resetView()" style="
-            padding: 10px 15px;
+        <button id="reset-btn" onclick="resetView()" aria-label="{FOLLOW_BUTTON_LABEL}" title="{FOLLOW_BUTTON_LABEL}" style="
+            width: 40px;
+            height: 40px;
+            padding: 0;
             background: white;
             border: 2px solid rgba(0,0,0,0.2);
-            border-radius: 4px;
+            border-radius: 6px;
             cursor: pointer;
-            font-weight: bold;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
             box-shadow: 0 1px 5px rgba(0,0,0,0.4);
-        ">{FOLLOW_BUTTON_LABEL}</button>
-        <button id="clear-pins-btn" onclick="clearPins()" style="
-            padding: 10px 15px;
+        ">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3"></circle>
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="2" x2="12" y2="5"></line>
+                <line x1="12" y1="19" x2="12" y2="22"></line>
+                <line x1="2" y1="12" x2="5" y2="12"></line>
+                <line x1="19" y1="12" x2="22" y2="12"></line>
+            </svg>
+        </button>
+        <button id="clear-pins-btn" onclick="clearPins()" aria-label="{CLEAR_PINS_BUTTON_LABEL}" title="{CLEAR_PINS_BUTTON_LABEL}" style="
+            width: 40px;
+            height: 40px;
+            padding: 0;
             background: white;
             border: 2px solid rgba(0,0,0,0.2);
-            border-radius: 4px;
+            border-radius: 6px;
             cursor: pointer;
-            font-weight: bold;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
             box-shadow: 0 1px 5px rgba(0,0,0,0.4);
-        ">{CLEAR_PINS_BUTTON_LABEL}</button>
+        ">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>
+                <line x1="10" y1="11" x2="10" y2="17"></line>
+                <line x1="14" y1="11" x2="14" y2="17"></line>
+            </svg>
+        </button>
     </div>
     """
     m.get_root().html.add_child(folium.Element(reset_button))
@@ -112,6 +253,7 @@ def generate_map_html(lat, lon, yaw, test_mode=False):
         var el = null;
         var marker = null;
         var mapObj = null;
+        var ws = null;
         var pinLayer = null;
         var pinStorageKey = '""" + PIN_STORAGE_KEY + """';
         var maxPins = """ + str(PIN_MAX_COUNT) + """;
@@ -237,10 +379,23 @@ def generate_map_html(lat, lon, yaw, test_mode=False):
         // Make resetView globally accessible
         window.resetView = resetView;
 
+        function reloadTelemetrySocket() {
+            reconnectAttempts = 0;
+            urlIndex = 0;
+            if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+                ws.close();
+                return;
+            }
+            connect();
+        }
+
+        // Make reload available to the parent page
+        window.reloadTelemetrySocket = reloadTelemetrySocket;
+
         function connect() {
             console.log('Attempting to connect to ' + urls[urlIndex] + ' (attempt ' + (reconnectAttempts + 1) + ')');
 
-            var ws = new WebSocket(urls[urlIndex]);
+            ws = new WebSocket(urls[urlIndex]);
             var connectionTimeout = setTimeout(function() {
                 console.warn('Connection timeout for ' + urls[urlIndex]);
                 ws.close();

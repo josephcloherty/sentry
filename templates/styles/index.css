@@ -26,11 +26,23 @@ body {
     --camera-tab-expanded-width: 170px;
     --camera-tab-height: 90px;
     --camera-tab-gap: 12px;
+    --camera-tab-padding-x: 12px;
+    --camera-tab-label-gap: 10px;
+    --camera-tab-transition: 0.25s;
     --camera-tab-bg: #1e40af;
     --camera-tab-color: #ffffff;
     --camera-tab-active-bg: #1e3c72;
     --camera-tab-active-color: #ffffff;
     --camera-tab-shadow: 0 6px 18px rgba(30, 64, 175, 0.25);
+
+    /* Settings drag-and-drop variables */
+    --settings-drag-bg: #f8fafc;
+    --settings-drag-border: #e2e8f0;
+    --settings-drag-item-bg: #ffffff;
+    --settings-drag-item-border: #d0d5dd;
+    --settings-drag-item-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+    --settings-drag-handle-color: #94a3b8;
+    --settings-drag-over-border: #60a5fa;
 }
 
 /* Emergency mode - red glow effect */
@@ -321,6 +333,118 @@ body.emergency-mode::before {
     color: #334155;
 }
 
+.settings-hint {
+    margin: 4px 0 12px;
+    font-size: 13px;
+    color: #64748b;
+}
+
+.settings-tiles-columns {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 12px;
+}
+
+.settings-tile-column {
+    background: var(--settings-drag-bg);
+    border: 1px solid var(--settings-drag-border);
+    border-radius: 10px;
+    padding: 10px;
+    min-height: 140px;
+}
+
+.settings-tile-column h5 {
+    margin: 0 0 8px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #64748b;
+}
+
+.settings-camera-columns {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+}
+
+.settings-camera-column {
+    background: var(--settings-drag-bg);
+    border: 1px solid var(--settings-drag-border);
+    border-radius: 10px;
+    padding: 10px;
+    min-height: 120px;
+}
+
+.settings-camera-column h5 {
+    margin: 0 0 8px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #64748b;
+}
+
+.settings-drag-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 80px;
+    padding: 4px;
+    border-radius: 8px;
+}
+
+.settings-tile-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    min-height: 96px;
+}
+
+.settings-drag-list.is-over {
+    outline: 2px dashed var(--settings-drag-over-border);
+    outline-offset: 2px;
+}
+
+.settings-drag-list:empty::before {
+    content: attr(data-empty-text);
+    display: block;
+    padding: 6px 8px;
+    font-size: 12px;
+    color: #94a3b8;
+}
+
+.settings-drag-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 10px;
+    background: var(--settings-drag-item-bg);
+    border: 1px solid var(--settings-drag-item-border);
+    border-radius: 8px;
+    box-shadow: var(--settings-drag-item-shadow);
+    cursor: grab;
+}
+
+.settings-tile-item.is-wide {
+    grid-column: span 2;
+}
+
+.settings-drag-item.dragging {
+    opacity: 0.5;
+    cursor: grabbing;
+}
+
+.settings-drag-label {
+    font-weight: 600;
+    color: #1f2937;
+}
+
+.settings-drag-handle {
+    font-size: 16px;
+    line-height: 1;
+    color: var(--settings-drag-handle-color);
+}
+
 .settings-row {
     display: flex;
     align-items: center;
@@ -375,6 +499,7 @@ body.emergency-mode::before {
 
 .settings-primary,
 .settings-secondary,
+.settings-tertiary,
 .settings-logout {
     border: none;
     border-radius: 8px;
@@ -391,6 +516,17 @@ body.emergency-mode::before {
 .settings-secondary {
     background: #e2e8f0;
     color: #1f2937;
+}
+
+.settings-tertiary {
+    background: #ffffff;
+    color: #1e3c72;
+    border: 1px solid #cbd5f5;
+}
+
+.settings-tertiary:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
 }
 
 .settings-logout {
@@ -647,6 +783,8 @@ body.emergency-mode::before {
     flex-direction: column;
     gap: var(--camera-tab-gap);
     pointer-events: auto;
+    align-items: flex-end;
+    overflow: visible;
 }
 
 .camera-function-rail.is-empty {
@@ -705,13 +843,21 @@ body.emergency-mode::before {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
-    padding: 0;
+    gap: 0;
     cursor: pointer;
     overflow: hidden;
-    transition: background 0.2s ease, box-shadow 0.2s ease;
+    transition: width var(--camera-tab-transition) ease, background 0.2s ease, box-shadow 0.2s ease, padding var(--camera-tab-transition) ease, gap var(--camera-tab-transition) ease;
     box-shadow: var(--camera-tab-shadow);
     position: relative;
+    transform-origin: right center;
+}
+
+.camera-function-tab:hover,
+.camera-function-tab:focus-visible {
+    width: var(--camera-tab-expanded-width);
+    justify-content: flex-start;
+    padding: 0 var(--camera-tab-padding-x);
+    gap: var(--camera-tab-label-gap);
 }
 
 .camera-function-tab:hover,
@@ -749,6 +895,26 @@ body.emergency-mode::before {
 .camera-tab-icon svg {
     width: 18px;
     height: 18px;
+}
+
+.camera-tab-label {
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+    white-space: nowrap;
+    overflow: hidden;
+    max-width: 0;
+    opacity: 0;
+    transform: translateX(-6px);
+    transition: max-width var(--camera-tab-transition) ease, opacity var(--camera-tab-transition) ease, transform var(--camera-tab-transition) ease;
+}
+
+.camera-function-tab:hover .camera-tab-label,
+.camera-function-tab:focus-visible .camera-tab-label {
+    max-width: 160px;
+    opacity: 1;
+    transform: translateX(0);
 }
 
 /* Hover labels removed - hover/tooltip UI is handled externally now. */

@@ -50,13 +50,6 @@
                 <div class="settings-section">
                     <h3>System</h3>
                     <div class="settings-row">
-                        <label class="settings-label" for="setting-test-mode">Test mode</label>
-                        <label class="switch">
-                            <input type="checkbox" id="setting-test-mode">
-                            <span class="slider"></span>
-                        </label>
-                    </div>
-                    <div class="settings-row">
                         <label class="settings-label" for="setting-latency-rate">Latency polling rate (ms)</label>
                         <input type="number" id="setting-latency-rate" min="200" max="5000" step="50">
                     </div>
@@ -67,33 +60,67 @@
                 </div>
                 <div class="settings-section">
                     <h3>Home screen tiles</h3>
-                    <div id="settings-tiles" class="settings-checkbox-grid">
-                        <label><input type="checkbox" data-tile-id="cam0"> Pilot camera</label>
-                        <label><input type="checkbox" data-tile-id="cam1"> Landing camera</label>
-                        <label><input type="checkbox" data-tile-id="hq"> High quality camera</label>
-                        <label><input type="checkbox" data-tile-id="map"> GPS map</label>
-                        <label><input type="checkbox" data-tile-id="latency"> Latency monitoring</label>
-                        <label><input type="checkbox" data-tile-id="commands"> SENTRY controls</label>
+                    <p class="settings-hint" data-tiles-hint></p>
+                    <div class="settings-tiles-columns">
+                        <div class="settings-tile-column">
+                            <h5 data-tile-column-title="active"></h5>
+                            <div id="settings-tiles-active" class="settings-drag-list settings-tile-list" data-tiles-active></div>
+                        </div>
+                        <div class="settings-tile-column">
+                            <h5 data-tile-column-title="inactive"></h5>
+                            <div id="settings-tiles-inactive" class="settings-drag-list settings-tile-list" data-tiles-inactive></div>
+                        </div>
                     </div>
                 </div>
                 <div class="settings-section">
                     <h3>Camera function buttons</h3>
                     <div class="settings-camera-tabs" data-camera-tabs="cam0">
                         <h4>Pilot camera</h4>
-                        <div class="settings-checkbox-grid" data-camera-options></div>
+                        <p class="settings-hint" data-settings-hint></p>
+                        <div class="settings-camera-columns">
+                            <div class="settings-camera-column">
+                                <h5 data-camera-column-title="active"></h5>
+                                <div class="settings-drag-list" data-camera-active></div>
+                            </div>
+                            <div class="settings-camera-column">
+                                <h5 data-camera-column-title="inactive"></h5>
+                                <div class="settings-drag-list" data-camera-inactive></div>
+                            </div>
+                        </div>
                     </div>
                     <div class="settings-camera-tabs" data-camera-tabs="cam1">
                         <h4>Landing camera</h4>
-                        <div class="settings-checkbox-grid" data-camera-options></div>
+                        <p class="settings-hint" data-settings-hint></p>
+                        <div class="settings-camera-columns">
+                            <div class="settings-camera-column">
+                                <h5 data-camera-column-title="active"></h5>
+                                <div class="settings-drag-list" data-camera-active></div>
+                            </div>
+                            <div class="settings-camera-column">
+                                <h5 data-camera-column-title="inactive"></h5>
+                                <div class="settings-drag-list" data-camera-inactive></div>
+                            </div>
+                        </div>
                     </div>
                     <div class="settings-camera-tabs" data-camera-tabs="hq">
                         <h4>High quality camera</h4>
-                        <div class="settings-checkbox-grid" data-camera-options></div>
+                        <p class="settings-hint" data-settings-hint></p>
+                        <div class="settings-camera-columns">
+                            <div class="settings-camera-column">
+                                <h5 data-camera-column-title="active"></h5>
+                                <div class="settings-drag-list" data-camera-active></div>
+                            </div>
+                            <div class="settings-camera-column">
+                                <h5 data-camera-column-title="inactive"></h5>
+                                <div class="settings-drag-list" data-camera-inactive></div>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <div class="settings-actions">
                     <button type="button" id="settingsLogoutBtn" class="settings-logout">Logout</button>
                     <div class="settings-action-group">
+                        <button type="button" id="settingsReloadWsBtn" class="settings-tertiary">Reload connections</button>
                         <button type="button" id="settingsCancelBtn" class="settings-secondary">Cancel</button>
                         <button type="submit" id="settingsSaveBtn" class="settings-primary">Save settings</button>
                     </div>
@@ -169,6 +196,7 @@
             <div class="media_map">
                 <div class="map-container">{{ map_html|safe }}</div>
             </div>
+            <div id="map-function-rail" class="camera-function-rail map-function-rail" aria-label="Map functions"></div>
             <div class="desc_map">GPS Location of SENTRY</div>
         </div>
 
@@ -348,8 +376,24 @@
         const CAMERA_FUNCTION_TABS_DATA_ID = 'camera-function-tabs-data';
         const USER_SETTINGS_DATA_ID = 'user-settings-data';
         const DEFAULT_CAMERA_FUNCTION_TABS = JSON.parse(document.getElementById(CAMERA_FUNCTION_TABS_DATA_ID)?.textContent || '{}');
+        const SETTINGS_CAMERA_ACTIVE_TITLE = 'Active';
+        const SETTINGS_CAMERA_INACTIVE_TITLE = 'Inactive';
+        const SETTINGS_CAMERA_HINT_TEXT = 'Drag functions between Active and Inactive. The Active order matches the camera rail.';
+        const SETTINGS_CAMERA_EMPTY_TEXT = 'Drop here';
+        const SETTINGS_TILE_ACTIVE_TITLE = 'Active';
+        const SETTINGS_TILE_INACTIVE_TITLE = 'Inactive';
+        const SETTINGS_TILE_HINT_TEXT = 'Drag tiles between Active and Inactive. The Active order matches the home screen layout.';
+        const SETTINGS_TILE_EMPTY_TEXT = 'Drop here';
+        const TILE_DEFS = [
+            { id: 'cam0', label: 'Pilot camera' },
+            { id: 'cam1', label: 'Landing camera' },
+            { id: 'hq', label: 'High quality camera' },
+            { id: 'map', label: 'GPS map' },
+            { id: 'latency', label: 'Latency monitoring', isWide: true },
+            { id: 'commands', label: 'SENTRY controls' }
+        ];
+        const DEFAULT_TILE_ORDER = TILE_DEFS.map(tile => tile.id);
         const DEFAULT_USER_SETTINGS = {
-            test_mode: false,
             latency_polling_rate_ms: 500,
             status_update_interval_ms: 30000,
             visible_tiles: {
@@ -360,10 +404,12 @@
                 latency: true,
                 commands: true
             },
-            camera_function_tabs: DEFAULT_CAMERA_FUNCTION_TABS
+            camera_function_tabs: DEFAULT_CAMERA_FUNCTION_TABS,
+            tile_order: DEFAULT_TILE_ORDER
         };
         const SERVER_USER_SETTINGS = JSON.parse(document.getElementById(USER_SETTINGS_DATA_ID)?.textContent || 'null');
         const LATENCY_SNAPSHOT_TIMEOUT_MS = 1500;
+        const MAP_RAIL_COMMAND_ID = 'drop_gps_pin';
         const LATENCY_THRESHOLD_GOOD_MS = 100;
         const LATENCY_THRESHOLD_WARNING_MS = 300;
 
@@ -385,6 +431,7 @@
         const settingsCloseBtn = document.getElementById('settingsCloseBtn');
         const settingsCancelBtn = document.getElementById('settingsCancelBtn');
         const settingsLogoutBtn = document.getElementById('settingsLogoutBtn');
+        const settingsReloadWsBtn = document.getElementById('settingsReloadWsBtn');
         
         // ===== GLOBAL STATE =====
         let latencyState = {
@@ -465,7 +512,30 @@
             const merged = { ...defaults, ...overrides };
             merged.visible_tiles = { ...defaults.visible_tiles, ...(overrides.visible_tiles || {}) };
             merged.camera_function_tabs = { ...defaults.camera_function_tabs, ...(overrides.camera_function_tabs || {}) };
+            merged.tile_order = sanitizeTileOrder(overrides.tile_order || defaults.tile_order || DEFAULT_TILE_ORDER);
             return merged;
+        }
+
+        function sanitizeTileOrder(order) {
+            const allowed = TILE_DEFS.map(tile => tile.id);
+            const cleaned = [];
+            const seen = new Set();
+            if (Array.isArray(order)) {
+                order.forEach(id => {
+                    if (allowed.includes(id) && !seen.has(id)) {
+                        cleaned.push(id);
+                        seen.add(id);
+                    }
+                });
+            }
+            allowed.forEach(id => {
+                if (!seen.has(id)) cleaned.push(id);
+            });
+            return cleaned;
+        }
+
+        function getTileDef(id) {
+            return TILE_DEFS.find(tile => tile.id === id);
         }
 
         function getSessionToken() {
@@ -477,6 +547,21 @@
                 const cardId = card.getAttribute('data-card-id');
                 const isVisible = visibleTiles?.[cardId] !== false;
                 card.classList.toggle('is-hidden', !isVisible);
+            });
+        }
+
+        function applyTileOrder(tileOrder) {
+            const grid = document.querySelector('.grid');
+            if (!grid) return;
+            const cardsById = {};
+            grid.querySelectorAll('[data-card]').forEach(card => {
+                const cardId = card.getAttribute('data-card-id');
+                cardsById[cardId] = card;
+            });
+            const order = sanitizeTileOrder(tileOrder || DEFAULT_TILE_ORDER);
+            order.forEach(id => {
+                const card = cardsById[id];
+                if (card) grid.appendChild(card);
             });
         }
 
@@ -496,9 +581,33 @@
             latencyUpdateIntervalMs = userSettings.latency_polling_rate_ms || DEFAULT_USER_SETTINGS.latency_polling_rate_ms;
             statusUpdateIntervalMs = userSettings.status_update_interval_ms || DEFAULT_USER_SETTINGS.status_update_interval_ms;
             applyTileVisibility(userSettings.visible_tiles);
+            applyTileOrder(userSettings.tile_order);
             renderCameraFunctionTabs();
             startLatencyPolling();
             startStatusPolling();
+        }
+
+        async function reloadWebsocketConnections() {
+            const token = getSessionToken();
+            try {
+                await fetch('/api/reload_websockets', {
+                    method: 'POST',
+                    headers: token ? { 'X-Session-Token': token } : {}
+                });
+            } catch (err) {
+                console.error('Failed to reload websocket connections:', err);
+            }
+
+            executeOnIframe((iframe) => {
+                try {
+                    const win = iframe.contentWindow;
+                    if (win && typeof win.reloadTelemetrySocket === 'function') {
+                        win.reloadTelemetrySocket();
+                    }
+                } catch (err) {
+                    console.warn('Failed to reload map telemetry socket:', err);
+                }
+            });
         }
 
         function openSettingsModal() {
@@ -516,66 +625,251 @@
             document.body.style.overflow = 'auto';
         }
 
+        let draggedSettingsItem = null;
+
+        function buildSettingsDragItem(def) {
+            const item = document.createElement('div');
+            item.className = 'settings-drag-item';
+            item.setAttribute('draggable', 'true');
+            item.dataset.commandId = def.id;
+            item.innerHTML = `
+                <span class="settings-drag-label">${def.label}</span>
+                <span class="settings-drag-handle" aria-hidden="true">⋮⋮</span>
+            `;
+
+            item.addEventListener('dragstart', (e) => {
+                draggedSettingsItem = item;
+                item.classList.add('dragging');
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', def.id);
+            });
+
+            item.addEventListener('dragend', () => {
+                item.classList.remove('dragging');
+                document.querySelectorAll('.settings-drag-list.is-over').forEach(list => {
+                    list.classList.remove('is-over');
+                });
+                draggedSettingsItem = null;
+            });
+
+            return item;
+        }
+
+        function buildSettingsTileItem(tile) {
+            const item = document.createElement('div');
+            item.className = 'settings-drag-item settings-tile-item';
+            if (tile.isWide) item.classList.add('is-wide');
+            item.setAttribute('draggable', 'true');
+            item.dataset.tileId = tile.id;
+            item.innerHTML = `
+                <span class="settings-drag-label">${tile.label}</span>
+                <span class="settings-drag-handle" aria-hidden="true">⋮⋮</span>
+            `;
+
+            item.addEventListener('dragstart', (e) => {
+                draggedSettingsItem = item;
+                item.classList.add('dragging');
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', tile.id);
+            });
+
+            item.addEventListener('dragend', () => {
+                item.classList.remove('dragging');
+                document.querySelectorAll('.settings-drag-list.is-over').forEach(list => {
+                    list.classList.remove('is-over');
+                });
+                draggedSettingsItem = null;
+            });
+
+            return item;
+        }
+
+        function getSettingsDragAfterElement(listEl, y) {
+            const draggableItems = [...listEl.querySelectorAll('.settings-drag-item:not(.dragging)')];
+            return draggableItems.reduce(
+                (closest, child) => {
+                    const box = child.getBoundingClientRect();
+                    const offset = y - box.top - box.height / 2;
+                    if (offset < 0 && offset > closest.offset) {
+                        return { offset, element: child };
+                    }
+                    return closest;
+                },
+                { offset: Number.NEGATIVE_INFINITY, element: null }
+            ).element;
+        }
+
+        function setupSettingsDragList(listEl) {
+            listEl.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                if (!draggedSettingsItem) return;
+                const afterElement = getSettingsDragAfterElement(listEl, e.clientY);
+                if (afterElement == null) {
+                    listEl.appendChild(draggedSettingsItem);
+                } else {
+                    listEl.insertBefore(draggedSettingsItem, afterElement);
+                }
+                listEl.classList.add('is-over');
+            });
+
+            listEl.addEventListener('dragleave', () => {
+                listEl.classList.remove('is-over');
+            });
+
+            listEl.addEventListener('drop', () => {
+                listEl.classList.remove('is-over');
+            });
+        }
+
+        function renderCameraSettingsLists(container, selectedIds) {
+            const activeList = container.querySelector('[data-camera-active]');
+            const inactiveList = container.querySelector('[data-camera-inactive]');
+            if (!activeList || !inactiveList) return;
+
+            const allCommandIds = COMMAND_DEFS.map(def => def.id);
+            const activeIds = (selectedIds || []).filter(id => allCommandIds.includes(id));
+            const inactiveIds = allCommandIds.filter(id => !activeIds.includes(id));
+
+            activeList.innerHTML = '';
+            inactiveList.innerHTML = '';
+
+            activeIds.forEach(id => {
+                const def = getCommandDef(id);
+                if (def) activeList.appendChild(buildSettingsDragItem(def));
+            });
+
+            inactiveIds.forEach(id => {
+                const def = getCommandDef(id);
+                if (def) inactiveList.appendChild(buildSettingsDragItem(def));
+            });
+        }
+
+        function renderTileSettingsLists(merged) {
+            const activeList = document.querySelector('[data-tiles-active]');
+            const inactiveList = document.querySelector('[data-tiles-inactive]');
+            if (!activeList || !inactiveList) return;
+
+            const order = sanitizeTileOrder(merged.tile_order || DEFAULT_TILE_ORDER);
+            const visibleTiles = merged.visible_tiles || {};
+
+            activeList.innerHTML = '';
+            inactiveList.innerHTML = '';
+
+            order.forEach(id => {
+                const tile = getTileDef(id);
+                if (!tile) return;
+                const target = visibleTiles?.[id] === false ? inactiveList : activeList;
+                target.appendChild(buildSettingsTileItem(tile));
+            });
+        }
+
         function populateSettingsForm(settings) {
             const merged = mergeSettings(DEFAULT_USER_SETTINGS, settings || {});
-            document.getElementById('setting-test-mode').checked = Boolean(merged.test_mode);
             document.getElementById('setting-latency-rate').value = merged.latency_polling_rate_ms;
             document.getElementById('setting-status-rate').value = merged.status_update_interval_ms;
 
-            document.querySelectorAll('#settings-tiles [data-tile-id]').forEach(input => {
-                const tileId = input.getAttribute('data-tile-id');
-                input.checked = merged.visible_tiles?.[tileId] !== false;
-            });
+            renderTileSettingsLists(merged);
 
             document.querySelectorAll('[data-camera-tabs]').forEach(container => {
                 const camId = container.getAttribute('data-camera-tabs');
-                const selected = new Set(merged.camera_function_tabs?.[camId] || []);
-                container.querySelectorAll('input[type="checkbox"][data-command-id]').forEach(input => {
-                    input.checked = selected.has(input.getAttribute('data-command-id'));
-                });
+                const selected = merged.camera_function_tabs?.[camId] || [];
+                renderCameraSettingsLists(container, selected);
             });
         }
 
         function buildCameraSettingsOptions() {
+            const tilesHint = document.querySelector('[data-tiles-hint]');
+            if (tilesHint) tilesHint.textContent = SETTINGS_TILE_HINT_TEXT;
+
+            document.querySelectorAll('[data-tile-column-title="active"]').forEach(title => {
+                title.textContent = SETTINGS_TILE_ACTIVE_TITLE;
+            });
+
+            document.querySelectorAll('[data-tile-column-title="inactive"]').forEach(title => {
+                title.textContent = SETTINGS_TILE_INACTIVE_TITLE;
+            });
+
+            const tilesActive = document.querySelector('[data-tiles-active]');
+            const tilesInactive = document.querySelector('[data-tiles-inactive]');
+
+            if (tilesActive) {
+                tilesActive.dataset.emptyText = SETTINGS_TILE_EMPTY_TEXT;
+                setupSettingsDragList(tilesActive);
+            }
+
+            if (tilesInactive) {
+                tilesInactive.dataset.emptyText = SETTINGS_TILE_EMPTY_TEXT;
+                setupSettingsDragList(tilesInactive);
+            }
+
             document.querySelectorAll('[data-camera-tabs]').forEach(container => {
-                const optionsEl = container.querySelector('[data-camera-options]');
-                if (!optionsEl) return;
-                optionsEl.innerHTML = '';
-                COMMAND_DEFS.forEach(def => {
-                    const label = document.createElement('label');
-                    label.className = 'settings-command-option';
-                    label.innerHTML = `
-                        <input type="checkbox" data-command-id="${def.id}">
-                        <span>${def.label}</span>
-                    `;
-                    optionsEl.appendChild(label);
+                const hintEl = container.querySelector('[data-settings-hint]');
+                if (hintEl) hintEl.textContent = SETTINGS_CAMERA_HINT_TEXT;
+
+                container.querySelectorAll('[data-camera-column-title="active"]').forEach(title => {
+                    title.textContent = SETTINGS_CAMERA_ACTIVE_TITLE;
                 });
+
+                container.querySelectorAll('[data-camera-column-title="inactive"]').forEach(title => {
+                    title.textContent = SETTINGS_CAMERA_INACTIVE_TITLE;
+                });
+
+                const activeList = container.querySelector('[data-camera-active]');
+                const inactiveList = container.querySelector('[data-camera-inactive]');
+
+                if (activeList) {
+                    activeList.dataset.emptyText = SETTINGS_CAMERA_EMPTY_TEXT;
+                    setupSettingsDragList(activeList);
+                }
+
+                if (inactiveList) {
+                    inactiveList.dataset.emptyText = SETTINGS_CAMERA_EMPTY_TEXT;
+                    setupSettingsDragList(inactiveList);
+                }
             });
         }
 
         function collectSettingsFromForm() {
             const visibleTiles = {};
-            document.querySelectorAll('#settings-tiles [data-tile-id]').forEach(input => {
-                const tileId = input.getAttribute('data-tile-id');
-                visibleTiles[tileId] = input.checked;
-            });
+            const tileOrder = [];
+            const activeTiles = document.querySelector('[data-tiles-active]');
+            const inactiveTiles = document.querySelector('[data-tiles-inactive]');
+
+            if (activeTiles) {
+                activeTiles.querySelectorAll('.settings-drag-item[data-tile-id]').forEach(item => {
+                    const tileId = item.getAttribute('data-tile-id');
+                    tileOrder.push(tileId);
+                    visibleTiles[tileId] = true;
+                });
+            }
+
+            if (inactiveTiles) {
+                inactiveTiles.querySelectorAll('.settings-drag-item[data-tile-id]').forEach(item => {
+                    const tileId = item.getAttribute('data-tile-id');
+                    tileOrder.push(tileId);
+                    visibleTiles[tileId] = false;
+                });
+            }
 
             const cameraTabs = {};
             document.querySelectorAll('[data-camera-tabs]').forEach(container => {
                 const camId = container.getAttribute('data-camera-tabs');
                 const selected = [];
-                container.querySelectorAll('input[type="checkbox"][data-command-id]').forEach(input => {
-                    if (input.checked) selected.push(input.getAttribute('data-command-id'));
-                });
+                const activeList = container.querySelector('[data-camera-active]');
+                if (activeList) {
+                    activeList.querySelectorAll('.settings-drag-item[data-command-id]').forEach(item => {
+                        selected.push(item.getAttribute('data-command-id'));
+                    });
+                }
                 cameraTabs[camId] = selected;
             });
 
             return {
-                test_mode: document.getElementById('setting-test-mode').checked,
                 latency_polling_rate_ms: Number(document.getElementById('setting-latency-rate').value || DEFAULT_USER_SETTINGS.latency_polling_rate_ms),
                 status_update_interval_ms: Number(document.getElementById('setting-status-rate').value || DEFAULT_USER_SETTINGS.status_update_interval_ms),
                 visible_tiles: visibleTiles,
-                camera_function_tabs: cameraTabs
+                camera_function_tabs: cameraTabs,
+                tile_order: tileOrder
             };
         }
 
@@ -897,7 +1191,7 @@
                 id: 'auto_rth',
                 label: 'Autonomous RTH',
                 type: 'toggle',
-                icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640"><!--!Font Awesome Free v7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free Copyright 2026 Fonticons, Inc.--><path d="M304 70.1C313.1 61.9 326.9 61.9 336 70.1L568 278.1C577.9 286.9 578.7 302.1 569.8 312C560.9 321.9 545.8 322.7 535.9 313.8L527.9 306.6L527.9 511.9C527.9 547.2 499.2 575.9 463.9 575.9L175.9 575.9C140.6 575.9 111.9 547.2 111.9 511.9L111.9 306.6L103.9 313.8C94 322.6 78.9 321.8 70 312C61.1 302.2 62 287 71.8 278.1L304 70.1zM320 120.2L160 263.7L160 512C160 520.8 167.2 528 176 528L224 528L224 424C224 384.2 256.2 352 296 352L344 352C383.8 352 416 384.2 416 424L416 528L464 528C472.8 528 480 520.8 480 512L480 263.7L320 120.3zM272 528L368 528L368 424C368 410.7 357.3 400 344 400L296 400C282.7 400 272 410.7 272 424L272 528z"/></svg>'
+                icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 6v9a1 1 0 0 1-1 1h-5v-6h-4v6H5a1 1 0 0 1-1-1V9l8-6z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M12 7v6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M9 10l3-3 3 3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>'
             },
             {
                 id: 'drop_gps_pin',
@@ -968,8 +1262,7 @@
             btn.dataset.commandId = def.id;
             btn.dataset.commandType = def.type;
             if (def.type === 'pulse') btn.classList.add('is-pulse');
-            // icons-only: render only the icon in the tab, keep label for accessibility
-            btn.innerHTML = `<span class="camera-tab-icon">${def.icon}</span>`;
+            btn.innerHTML = `<span class="camera-tab-icon">${def.icon}</span><span class="camera-tab-label">${def.label}</span>`;
             btn.setAttribute('aria-label', def.label);
             btn.setAttribute('aria-pressed', 'false');
 
@@ -1015,13 +1308,21 @@
                 const minimapBtn = document.createElement('button');
                 minimapBtn.type = 'button';
                 minimapBtn.className = 'camera-function-tab rail-minimap-tab';
-                minimapBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"></path><circle cx="12" cy="10" r="3"></circle></svg>';
+                minimapBtn.innerHTML = '<span class="camera-tab-icon"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"></path><circle cx="12" cy="10" r="3"></circle></svg></span><span class="camera-tab-label">Minimap</span>';
                 minimapBtn.setAttribute('aria-label', 'Minimap');
                 minimapBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleMinimap(); });
                 rail.appendChild(minimapBtn);
 
                 rail.classList.toggle('is-empty', selectedIds.length === 0);
             });
+        }
+
+        function renderMapFunctionRail() {
+            const rail = document.getElementById('map-function-rail');
+            if (!rail) return;
+            rail.innerHTML = '';
+            const def = getCommandDef(MAP_RAIL_COMMAND_ID);
+            if (def) rail.appendChild(buildCameraFunctionButton(def));
         }
 
         /* Hover floating label removed — hover/tooltip UI is handled externally */
@@ -1235,6 +1536,17 @@
                 closeSettingsModal();
             });
 
+            settingsReloadWsBtn?.addEventListener('click', async () => {
+                const button = settingsReloadWsBtn;
+                if (!button) return;
+                const prevText = button.textContent;
+                button.disabled = true;
+                button.textContent = 'Reloading...';
+                await reloadWebsocketConnections();
+                button.textContent = prevText;
+                button.disabled = false;
+            });
+
             settingsModal?.addEventListener('click', (e) => {
                 if (e.target === settingsModal) {
                     closeSettingsModal();
@@ -1245,7 +1557,6 @@
                 e.preventDefault();
                 const nextSettings = collectSettingsFromForm();
                 const token = getSessionToken();
-                const prevTestMode = Boolean(userSettings.test_mode);
                 try {
                     const res = await fetch('/api/settings', {
                         method: 'POST',
@@ -1262,9 +1573,6 @@
                         applySettingsToUI(nextSettings);
                     }
                     closeSettingsModal();
-                    if (prevTestMode !== Boolean(nextSettings.test_mode)) {
-                        location.reload();
-                    }
                 } catch (err) {
                     console.error('Failed to save settings:', err);
                 }
@@ -1282,6 +1590,7 @@
 
             applySettingsToUI(userSettings);
             renderCommandSuite();
+            renderMapFunctionRail();
             fetchCommandState();
             setInterval(fetchCommandState, 2000);
 
