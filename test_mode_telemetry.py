@@ -20,6 +20,16 @@ CLIENTS = set()
 # Camera stream ports (simple MJPEG placeholders)
 CAM0_PORT = 8886
 CAM1_PORT = 8887
+CAM_HQ_PORT = 8885
+HQ_FRAME_WIDTH = 854
+HQ_FRAME_HEIGHT = 480
+HQ_FPS = 10
+HQ_TAG_COLOR = (0, 0, 0)
+HQ_BG_COLOR = (235, 235, 235)
+HQ_TAG_BORDER = 4
+HQ_MIN_SCALE = 0.2
+HQ_MAX_SCALE = 0.9
+HQ_SCALE_SPEED = 0.35
 
 async def producer():
     """Broadcast a synthetic yaw value to all connected clients at 20Hz."""
@@ -143,6 +153,68 @@ def make_cam_ws_handler(name):
 
     return handler
 
+
+def make_apriltag_frame(t, w=HQ_FRAME_WIDTH, h=HQ_FRAME_HEIGHT):
+    img = np.full((h, w, 3), HQ_BG_COLOR, dtype=np.uint8)
+
+    # Animate scale with a smooth oscillation
+    scale = (math.sin(t * HQ_SCALE_SPEED * 2 * math.pi) + 1) / 2
+    scale = HQ_MIN_SCALE + (HQ_MAX_SCALE - HQ_MIN_SCALE) * scale
+
+    size = int(min(w, h) * scale)
+    size = max(40, size)
+    cx, cy = w // 2, h // 2
+    half = size // 2
+
+    x1, y1 = cx - half, cy - half
+    x2, y2 = cx + half, cy + half
+
+    # Outer black square
+    cv2.rectangle(img, (x1, y1), (x2, y2), HQ_TAG_COLOR, -1)
+
+    # Inner white border to mimic AprilTag
+    border = max(6, size // 10)
+    cv2.rectangle(img, (x1 + border, y1 + border), (x2 - border, y2 - border), HQ_BG_COLOR, -1)
+
+    # Inner black square
+    inner = max(10, size // 3)
+    ix1, iy1 = cx - inner // 2, cy - inner // 2
+    ix2, iy2 = cx + inner // 2, cy + inner // 2
+    cv2.rectangle(img, (ix1, iy1), (ix2, iy2), HQ_TAG_COLOR, -1)
+
+    # Label
+    cv2.putText(img, 'APRILTAG DEMO', (10, h - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (80, 80, 80), 1, cv2.LINE_AA)
+    return img
+
+
+def make_hq_ws_handler():
+    async def handler(ws):
+        print('Camera server "hq": client connected')
+        try:
+            while True:
+                img = make_apriltag_frame(time.time())
+                _, jpeg = cv2.imencode('.jpg', img, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+                payload = struct.pack('d', time.time()) + jpeg.tobytes()
+                try:
+                    await ws.send(payload)
+                except Exception as e:
+                    print(f'Camera server "hq": send error: {e}')
+                    raise
+                await asyncio.sleep(1.0 / HQ_FPS)
+        except websockets.exceptions.ConnectionClosed:
+            print('Camera server "hq": client disconnected')
+            return
+        except Exception as e:
+            print(f'Camera server "hq": handler exception: {e}')
+            try:
+                import traceback
+                traceback.print_exc()
+            except Exception:
+                pass
+            return
+
+    return handler
+
 async def main():
     # websockets >=11 calls the handler with a single `websocket` argument,
     # so pass the `handler` directly (it accepts one argument).
@@ -153,7 +225,8 @@ async def main():
     camera_servers = []
     cam0_server = await websockets.serve(make_cam_ws_handler('cam0'), 'localhost', CAM0_PORT)
     cam1_server = await websockets.serve(make_cam_ws_handler('cam1'), 'localhost', CAM1_PORT)
-    camera_servers.extend([cam0_server, cam1_server])
+    hq_server = await websockets.serve(make_hq_ws_handler(), 'localhost', CAM_HQ_PORT)
+    camera_servers.extend([cam0_server, cam1_server, hq_server])
 
     producer_task = asyncio.create_task(producer())
     try:
