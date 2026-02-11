@@ -21,7 +21,7 @@ JPEG_QUALITY = 75
 VIDEO_PORT_1 = 8765
 VIDEO_PORT_2 = 8766
 VIDEO_PORT_HQ = 8767
-HQ_DEVICE_PATH = '/dev/video42'
+GOPRO_UDP_URL = 'udp://@0.0.0.0:8554?overrun_nonfatal=1&fifo_size=2000000'
 HQ_VIDEO_WIDTH = 1280
 HQ_VIDEO_HEIGHT = 720
 HQ_VIDEO_FPS = 15
@@ -109,21 +109,20 @@ def init_camera(cam_id, formats, color=True):
     return None, None
 
 
-def init_hq_capture(device_path):
-    """Initialize HQ camera capture from a V4L2 device path."""
+def init_hq_capture(source):
+    """Initialize HQ camera capture from a GoPro UDP stream."""
     try:
-        cap = cv2.VideoCapture(device_path, cv2.CAP_V4L2)
+        print(f"Attempting to open GoPro stream: {source}...")
+        cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
         if not cap.isOpened():
-            raise RuntimeError(f"Failed to open {device_path}")
+            raise RuntimeError("Failed to open GoPro UDP stream")
 
-        if HQ_FORCE_MJPEG:
-            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, HQ_VIDEO_WIDTH)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, HQ_VIDEO_HEIGHT)
         cap.set(cv2.CAP_PROP_FPS, HQ_VIDEO_FPS)
         if HQ_BUFFER_SIZE is not None:
             cap.set(cv2.CAP_PROP_BUFFERSIZE, HQ_BUFFER_SIZE)
-        print(f"HQ camera opened at {device_path} ({HQ_VIDEO_WIDTH}x{HQ_VIDEO_HEIGHT}@{HQ_VIDEO_FPS}fps)")
+        print("GoPro UDP stream initialized.")
         return cap
     except Exception as e:
         print(f"Warning: HQ camera init failed: {e}")
@@ -193,7 +192,7 @@ if cam0_id is not None:
 if cam1_id is not None:
     cam1, cam1_format = init_camera(cam1_id, ['YUV420', 'XRGB8888'], color=False)
 
-hq_capture = init_hq_capture(HQ_DEVICE_PATH)
+hq_capture = init_hq_capture(GOPRO_UDP_URL)
 
 
 # ===== Helper Functions =====
