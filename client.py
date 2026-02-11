@@ -9,7 +9,7 @@ import struct
 import time
 import websockets
 from copy import deepcopy
-from threading import Thread
+from threading import Thread, Lock
 from collections import deque
 import statistics
 
@@ -29,6 +29,13 @@ TELEMETRY_RECONNECT_DELAY_SEC = 2.0
 TELEMETRY_RECV_TIMEOUT_SEC = 5.0
 TELEMETRY_PING_INTERVAL_SEC = 5.0
 TELEMETRY_PING_TIMEOUT_SEC = 5.0
+FIDUCIAL_OVERLAY_ENABLED = True
+FIDUCIAL_MIN_CONFIDENCE = 0.35
+FIDUCIAL_STALE_TIMEOUT_SEC = 2.0
+FIDUCIAL_TEXT_SCALE = 0.5
+FIDUCIAL_TEXT_THICKNESS = 1
+FIDUCIAL_LINE_THICKNESS = 2
+FIDUCIAL_COLOR = (0, 255, 0)
 
 # Toggle test mode to use local test telemetry/streams (set True to enable)
 # When enabled: telemetry WS -> ws://localhost:8888, cam0 -> localhost:8886, cam1 -> localhost:8887, hq -> localhost:8885
@@ -41,6 +48,7 @@ if TEST_MODE:
     CAM_HQ_PORT = 8885
     TELEMETRY_PORT = 8888
     COMMAND_PORT = 8889
+    FIDUCIAL_PORT = 8890
 else:
     SERVER_IP = '100.112.223.17'
     CAM0_PORT = 8765
@@ -48,6 +56,7 @@ else:
     CAM_HQ_PORT = 8767
     TELEMETRY_PORT = 8764
     COMMAND_PORT = 8763
+    FIDUCIAL_PORT = 8770
 VALID_USERNAME = 'argus'
 VALID_PASSWORD = 'sentry'
 
@@ -115,6 +124,10 @@ cam0_online = False
 cam1_online = False
 hq_online = False
 mav_online = False
+
+# Fiducial detection state
+fiducial_state = None
+fiducial_lock = Lock()
 
 # Telemetry data
 mavlink_data = {
@@ -210,6 +223,59 @@ def draw_telemetry_text(frame, data):
         text_width = cv2.getTextSize(text, font, scale, thickness)[0][0]
         y = 15 + i * 20
         cv2.putText(frame, text, (frame_width - text_width - x_margin, y), font, scale, color, thickness)
+
+
+def draw_fiducial_overlay(frame):
+    if not FIDUCIAL_OVERLAY_ENABLED:
+        return
+
+    with fiducial_lock:
+        payload = deepcopy(fiducial_state) if isinstance(fiducial_state, dict) else None
+
+    if not payload:
+        return
+
+    timestamp = payload.get('timestamp', 0)
+    if timestamp and (time.time() - float(timestamp)) > FIDUCIAL_STALE_TIMEOUT_SEC:
+        return
+
+    if not payload.get('locked'):
+        return
+
+    try:
+        confidence = float(payload.get('confidence', 0))
+    except Exception:
+        confidence = 0
+    if confidence < FIDUCIAL_MIN_CONFIDENCE:
+        return
+
+    h, w = frame.shape[:2]
+    corners = payload.get('corners')
+    cx = cy = None
+    if isinstance(corners, list) and len(corners) >= 4:
+        try:
+            pts = np.array(corners, dtype=np.int32)
+            cv2.polylines(frame, [pts], True, FIDUCIAL_COLOR, FIDUCIAL_LINE_THICKNESS)
+            cx = int(np.mean(pts[:, 0]))
+            cy = int(np.mean(pts[:, 1]))
+        except Exception:
+            cx = cy = None
+
+    if cx is None or cy is None:
+        try:
+            error_x = float(payload.get('error_x', 0))
+            error_y = float(payload.get('error_y', 0))
+            cx = int((w / 2) + error_x * (w / 2))
+            cy = int((h / 2) + error_y * (h / 2))
+        except Exception:
+            return
+
+    cv2.drawMarker(frame, (cx, cy), FIDUCIAL_COLOR, markerType=cv2.MARKER_CROSS, markerSize=14, thickness=FIDUCIAL_LINE_THICKNESS)
+
+    fid_id = payload.get('fiducial_id')
+    label = f"FID {fid_id}" if fid_id is not None else "FID"
+    text = f"{label}  conf {confidence:.2f}"
+    cv2.putText(frame, text, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, FIDUCIAL_TEXT_SCALE, FIDUCIAL_COLOR, FIDUCIAL_TEXT_THICKNESS)
 
 
 def get_request_token():
@@ -390,6 +456,29 @@ async def receive_telemetry():
         await asyncio.sleep(TELEMETRY_RECONNECT_DELAY_SEC)
 
 
+async def receive_fiducials():
+    """Connect to fiducial WebSocket and update latest fiducial state."""
+    global fiducial_state
+
+    while True:
+        try:
+            async with websockets.connect(f'ws://{SERVER_IP}:{FIDUCIAL_PORT}') as ws:
+                print("Connected to fiducial server (WebSocket).")
+                async for message in ws:
+                    try:
+                        payload = json.loads(message)
+                        if isinstance(payload, dict):
+                            with fiducial_lock:
+                                fiducial_state = payload
+                    except json.JSONDecodeError:
+                        pass
+        except websockets.exceptions.ConnectionRefused:
+            print("Fiducial server not available, retrying in 2 seconds...")
+        except Exception as e:
+            print(f"Fiducial WebSocket error: {e}")
+        await asyncio.sleep(2)
+
+
 def receive_mavlink():
     """Legacy UDP receiver for backward compatibility."""
     global mavlink_data, last_mav_time
@@ -541,6 +630,11 @@ def gen_frames_hq():
         entry = frame_hq
         f = entry['frame'].copy()
 
+        try:
+            draw_fiducial_overlay(f)
+        except Exception as e:
+            print(f"Overlay drawing error (hq): {e}")
+
         _, jpeg = cv2.imencode('.jpg', f, [cv2.IMWRITE_JPEG_QUALITY, 90])
 
         try:
@@ -610,6 +704,13 @@ def api_status():
         'map_online': is_map_online(),
         'hq_online': hq_online
     })
+
+
+@app.route('/api/fiducial')
+def api_fiducial():
+    with fiducial_lock:
+        payload = deepcopy(fiducial_state) if isinstance(fiducial_state, dict) else None
+    return jsonify(payload or {'locked': False})
 
 
 @app.route('/api/video_latency')
@@ -811,6 +912,7 @@ if __name__ == '__main__':
     Thread(target=lambda: asyncio.run(receive_video(1, CAM1_PORT)), daemon=True).start()
     Thread(target=lambda: asyncio.run(receive_video(2, CAM_HQ_PORT)), daemon=True).start()
     Thread(target=lambda: asyncio.run(receive_telemetry()), daemon=True).start()
+    Thread(target=lambda: asyncio.run(receive_fiducials()), daemon=True).start()
     Thread(target=receive_mavlink, daemon=True).start()
     Thread(target=status_monitor, daemon=True).start()
     app.run(port=8000, threaded=True)

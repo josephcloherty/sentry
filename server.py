@@ -13,6 +13,7 @@ from picamera2 import Picamera2
 from pymavlink import mavutil
 
 from functions.infrared import process_ir_frame
+from fiducial_tracker import process_fiducial_frame
 
 # ===== Configuration =====
 VIDEO_FPS = 15
@@ -23,6 +24,10 @@ VIDEO_PORT_1 = 8765
 VIDEO_PORT_2 = 8766
 VIDEO_PORT_HQ = 8767
 GOPRO_UDP_URL = 'udp://@0.0.0.0:8554?overrun_nonfatal=1&fifo_size=2000000'
+HQ_CAPTURE_SOURCE = '/dev/video42'
+HQ_CAPTURE_FALLBACK_SOURCE = GOPRO_UDP_URL
+HQ_CAPTURE_BACKEND = cv2.CAP_V4L2
+HQ_USE_FALLBACK_SOURCE = True
 HQ_VIDEO_WIDTH = 1280
 HQ_VIDEO_HEIGHT = 720
 HQ_VIDEO_FPS = 15
@@ -35,9 +40,14 @@ HQ_CROP_RIGHT_PX = 0
 HQ_TARGET_WIDTH = 854
 HQ_TARGET_HEIGHT = 480
 HQ_JPEG_QUALITY = 60
+FIDUCIAL_ENABLE = True
+FIDUCIAL_SEND_RATE_HZ = 10
+FIDUCIAL_MIN_CONFIDENCE = 0.35
+FIDUCIAL_INCLUDE_CORNERS = True
 TELEMETRY_PORT = 8764
 TELEMETRY_HZ = 50
 COMMAND_PORT = 8763
+FIDUCIAL_PORT = 8770
 
 # ===== Global State =====
 mavlink_data = {
@@ -114,23 +124,107 @@ def init_camera(cam_id, formats, color=True):
 
 
 def init_hq_capture(source):
-    """Initialize HQ camera capture from a GoPro UDP stream."""
+    """Initialize HQ camera capture from a device or UDP stream."""
     try:
-        print(f"Attempting to open GoPro stream: {source}...")
-        cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+        if isinstance(source, int):
+            print(f"Attempting to open HQ device index: {source}...")
+            cap = cv2.VideoCapture(source, HQ_CAPTURE_BACKEND)
+        elif isinstance(source, str) and source.startswith('/dev/video'):
+            print(f"Attempting to open HQ device path: {source}...")
+            cap = cv2.VideoCapture(source, HQ_CAPTURE_BACKEND)
+        else:
+            print(f"Attempting to open HQ stream: {source}...")
+            cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+
         if not cap.isOpened():
-            raise RuntimeError("Failed to open GoPro UDP stream")
+            raise RuntimeError("Failed to open HQ camera source")
 
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, HQ_VIDEO_WIDTH)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, HQ_VIDEO_HEIGHT)
         cap.set(cv2.CAP_PROP_FPS, HQ_VIDEO_FPS)
         if HQ_BUFFER_SIZE is not None:
             cap.set(cv2.CAP_PROP_BUFFERSIZE, HQ_BUFFER_SIZE)
-        print("GoPro UDP stream initialized.")
+        print("HQ camera initialized.")
         return cap
     except Exception as e:
         print(f"Warning: HQ camera init failed: {e}")
         return None
+
+
+def serialize_fiducial_result(result):
+    payload = {
+        'locked': bool(result.locked),
+        'error_x': float(result.error_x),
+        'error_y': float(result.error_y),
+        'area': float(result.area),
+        'confidence': float(result.confidence),
+        'fiducial_id': result.fiducial_id,
+        'timestamp': time.time()
+    }
+    corners = getattr(result, 'corners', None)
+    if FIDUCIAL_INCLUDE_CORNERS and corners is not None:
+        try:
+            payload['corners'] = np.array(corners).astype(int).tolist()
+        except Exception:
+            pass
+    return payload
+
+
+def ensure_hq_thread_started():
+    global hq_thread_started
+    if hq_capture is None or not hq_capture.isOpened():
+        return
+    if hq_thread_started:
+        return
+    hq_thread_started = True
+
+    def hq_capture_loop():
+        global hq_latest, hq_fiducial_latest
+        while True:
+            try:
+                for _ in range(max(0, HQ_FLUSH_GRABS)):
+                    hq_capture.grab()
+            except Exception:
+                pass
+
+            ret, frame = hq_capture.read()
+            if not ret or frame is None:
+                time.sleep(1.0 / HQ_VIDEO_FPS)
+                continue
+
+            if HQ_CROP_BOTTOM_PX > 0:
+                frame = frame[:-HQ_CROP_BOTTOM_PX, :]
+            if HQ_CROP_RIGHT_PX > 0:
+                frame = frame[:, :-HQ_CROP_RIGHT_PX]
+
+            if HQ_FORCE_RESIZE and (frame.shape[1] != HQ_VIDEO_WIDTH or frame.shape[0] != HQ_VIDEO_HEIGHT):
+                try:
+                    frame = cv2.resize(frame, (HQ_VIDEO_WIDTH, HQ_VIDEO_HEIGHT))
+                except Exception:
+                    pass
+
+            if HQ_TARGET_WIDTH and HQ_TARGET_HEIGHT:
+                try:
+                    frame = cv2.resize(frame, (HQ_TARGET_WIDTH, HQ_TARGET_HEIGHT))
+                except Exception:
+                    pass
+
+            if FIDUCIAL_ENABLE:
+                try:
+                    res = process_fiducial_frame(frame)
+                    if res is not None:
+                        payload = serialize_fiducial_result(res)
+                        if payload['confidence'] < FIDUCIAL_MIN_CONFIDENCE:
+                            payload['locked'] = False
+                        with hq_fiducial_lock:
+                            hq_fiducial_latest = payload
+                except Exception as e:
+                    print(f"Warning: fiducial processing failed: {e}")
+
+            with hq_lock:
+                hq_latest = frame
+
+    threading.Thread(target=hq_capture_loop, daemon=True).start()
 
 
 # Detect available cameras and their types..
@@ -196,10 +290,15 @@ if cam0_id is not None:
 if cam1_id is not None:
     cam1, cam1_format = init_camera(cam1_id, ['YUV420', 'XRGB8888'], color=False)
 
-hq_capture = init_hq_capture(GOPRO_UDP_URL)
+hq_capture = init_hq_capture(HQ_CAPTURE_SOURCE)
+if (hq_capture is None or not hq_capture.isOpened()) and HQ_USE_FALLBACK_SOURCE:
+    hq_capture = init_hq_capture(HQ_CAPTURE_FALLBACK_SOURCE)
 hq_latest = None
 hq_lock = threading.Lock()
 hq_thread_started = False
+fiducial_clients = set()
+hq_fiducial_latest = None
+hq_fiducial_lock = threading.Lock()
 
 
 # ===== Helper Functions =====
@@ -344,45 +443,7 @@ async def stream_hq(ws):
         await ws.close()
         return
 
-    global hq_thread_started
-    if not hq_thread_started:
-        hq_thread_started = True
-
-        def hq_capture_loop():
-            global hq_latest
-            while True:
-                try:
-                    for _ in range(max(0, HQ_FLUSH_GRABS)):
-                        hq_capture.grab()
-                except Exception:
-                    pass
-
-                ret, frame = hq_capture.read()
-                if not ret or frame is None:
-                    time.sleep(1.0 / HQ_VIDEO_FPS)
-                    continue
-
-                if HQ_CROP_BOTTOM_PX > 0:
-                    frame = frame[:-HQ_CROP_BOTTOM_PX, :]
-                if HQ_CROP_RIGHT_PX > 0:
-                    frame = frame[:, :-HQ_CROP_RIGHT_PX]
-
-                if HQ_FORCE_RESIZE and (frame.shape[1] != HQ_VIDEO_WIDTH or frame.shape[0] != HQ_VIDEO_HEIGHT):
-                    try:
-                        frame = cv2.resize(frame, (HQ_VIDEO_WIDTH, HQ_VIDEO_HEIGHT))
-                    except Exception:
-                        pass
-
-                if HQ_TARGET_WIDTH and HQ_TARGET_HEIGHT:
-                    try:
-                        frame = cv2.resize(frame, (HQ_TARGET_WIDTH, HQ_TARGET_HEIGHT))
-                    except Exception:
-                        pass
-
-                with hq_lock:
-                    hq_latest = frame
-
-        threading.Thread(target=hq_capture_loop, daemon=True).start()
+    ensure_hq_thread_started()
 
     while True:
         with hq_lock:
@@ -406,6 +467,34 @@ async def stream_telemetry(ws):
     finally:
         telemetry_clients.discard(ws)
         print(f"Telemetry client disconnected. Total: {len(telemetry_clients)}")
+
+
+async def stream_fiducials(ws):
+    """WebSocket handler for fiducial detection results."""
+    fiducial_clients.add(ws)
+    print(f"Fiducial client connected. Total: {len(fiducial_clients)}")
+    try:
+        if hq_capture is None or not hq_capture.isOpened():
+            try:
+                await ws.send(json.dumps({'type': 'error', 'message': 'hq camera not available'}))
+            except Exception:
+                pass
+            await ws.close()
+            return
+        ensure_hq_thread_started()
+        while True:
+            await asyncio.sleep(1.0 / FIDUCIAL_SEND_RATE_HZ)
+            with hq_fiducial_lock:
+                payload = hq_fiducial_latest
+            if not payload:
+                continue
+            try:
+                await ws.send(json.dumps(payload))
+            except websockets.exceptions.ConnectionClosed:
+                break
+    finally:
+        fiducial_clients.discard(ws)
+        print(f"Fiducial client disconnected. Total: {len(fiducial_clients)}")
 
 
 # ===== Commands =====
@@ -528,15 +617,17 @@ async def mavlink_broadcast():
 # ===== Main =====
 async def main():
     async with websockets.serve(stream_cam0, '0.0.0.0', VIDEO_PORT_1), \
-               websockets.serve(stream_cam1, '0.0.0.0', VIDEO_PORT_2), \
-               websockets.serve(stream_hq, '0.0.0.0', VIDEO_PORT_HQ), \
-         websockets.serve(stream_telemetry, '0.0.0.0', TELEMETRY_PORT), \
-         websockets.serve(command_handler, '0.0.0.0', COMMAND_PORT):
+           websockets.serve(stream_cam1, '0.0.0.0', VIDEO_PORT_2), \
+           websockets.serve(stream_hq, '0.0.0.0', VIDEO_PORT_HQ), \
+           websockets.serve(stream_telemetry, '0.0.0.0', TELEMETRY_PORT), \
+           websockets.serve(stream_fiducials, '0.0.0.0', FIDUCIAL_PORT), \
+           websockets.serve(command_handler, '0.0.0.0', COMMAND_PORT):
         print(f"Server running:")
         print(f"  - Video cam0: ws://0.0.0.0:{VIDEO_PORT_1}")
         print(f"  - Video cam1: ws://0.0.0.0:{VIDEO_PORT_2}")
         print(f"  - Video hq:   ws://0.0.0.0:{VIDEO_PORT_HQ}")
         print(f"  - Telemetry:  ws://0.0.0.0:{TELEMETRY_PORT} ({TELEMETRY_HZ}Hz)")
+        print(f"  - Fiducials:  ws://0.0.0.0:{FIDUCIAL_PORT} ({FIDUCIAL_SEND_RATE_HZ}Hz)")
         print(f"  - Commands:   ws://0.0.0.0:{COMMAND_PORT}")
         print(f"  - UDP legacy: broadcast:5000 (10Hz)")
         asyncio.create_task(mavlink_broadcast())
