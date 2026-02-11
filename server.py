@@ -4,6 +4,7 @@ import math
 import socket
 import struct
 import time
+import threading
 
 import cv2
 import numpy as np
@@ -31,6 +32,9 @@ HQ_BUFFER_SIZE = 1
 HQ_FLUSH_GRABS = 2
 HQ_CROP_BOTTOM_PX = 0
 HQ_CROP_RIGHT_PX = 0
+HQ_TARGET_WIDTH = 854
+HQ_TARGET_HEIGHT = 480
+HQ_JPEG_QUALITY = 60
 TELEMETRY_PORT = 8764
 TELEMETRY_HZ = 50
 COMMAND_PORT = 8763
@@ -193,12 +197,21 @@ if cam1_id is not None:
     cam1, cam1_format = init_camera(cam1_id, ['YUV420', 'XRGB8888'], color=False)
 
 hq_capture = init_hq_capture(GOPRO_UDP_URL)
+hq_latest = None
+hq_lock = threading.Lock()
+hq_thread_started = False
 
 
 # ===== Helper Functions =====
 def encode_frame_with_timestamp(frame):
     """Encode frame as JPEG with prepended timestamp."""
     _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+    return struct.pack('d', time.time()) + buffer.tobytes()
+
+
+def encode_frame_with_timestamp_quality(frame, quality):
+    """Encode frame as JPEG with prepended timestamp and custom quality."""
+    _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, int(quality)])
     return struct.pack('d', time.time()) + buffer.tobytes()
 
 
@@ -331,30 +344,55 @@ async def stream_hq(ws):
         await ws.close()
         return
 
-    while True:
-        try:
-            for _ in range(max(0, HQ_FLUSH_GRABS)):
-                hq_capture.grab()
-        except Exception:
-            pass
+    global hq_thread_started
+    if not hq_thread_started:
+        hq_thread_started = True
 
-        ret, frame = hq_capture.read()
-        if not ret or frame is None:
+        def hq_capture_loop():
+            global hq_latest
+            while True:
+                try:
+                    for _ in range(max(0, HQ_FLUSH_GRABS)):
+                        hq_capture.grab()
+                except Exception:
+                    pass
+
+                ret, frame = hq_capture.read()
+                if not ret or frame is None:
+                    time.sleep(1.0 / HQ_VIDEO_FPS)
+                    continue
+
+                if HQ_CROP_BOTTOM_PX > 0:
+                    frame = frame[:-HQ_CROP_BOTTOM_PX, :]
+                if HQ_CROP_RIGHT_PX > 0:
+                    frame = frame[:, :-HQ_CROP_RIGHT_PX]
+
+                if HQ_FORCE_RESIZE and (frame.shape[1] != HQ_VIDEO_WIDTH or frame.shape[0] != HQ_VIDEO_HEIGHT):
+                    try:
+                        frame = cv2.resize(frame, (HQ_VIDEO_WIDTH, HQ_VIDEO_HEIGHT))
+                    except Exception:
+                        pass
+
+                if HQ_TARGET_WIDTH and HQ_TARGET_HEIGHT:
+                    try:
+                        frame = cv2.resize(frame, (HQ_TARGET_WIDTH, HQ_TARGET_HEIGHT))
+                    except Exception:
+                        pass
+
+                with hq_lock:
+                    hq_latest = frame
+
+        threading.Thread(target=hq_capture_loop, daemon=True).start()
+
+    while True:
+        with hq_lock:
+            frame = None if hq_latest is None else hq_latest.copy()
+
+        if frame is None:
             await asyncio.sleep(1.0 / HQ_VIDEO_FPS)
             continue
 
-        if HQ_CROP_BOTTOM_PX > 0:
-            frame = frame[:-HQ_CROP_BOTTOM_PX, :]
-        if HQ_CROP_RIGHT_PX > 0:
-            frame = frame[:, :-HQ_CROP_RIGHT_PX]
-
-        if HQ_FORCE_RESIZE and (frame.shape[1] != HQ_VIDEO_WIDTH or frame.shape[0] != HQ_VIDEO_HEIGHT):
-            try:
-                frame = cv2.resize(frame, (HQ_VIDEO_WIDTH, HQ_VIDEO_HEIGHT))
-            except Exception:
-                pass
-
-        await ws.send(encode_frame_with_timestamp(frame))
+        await ws.send(encode_frame_with_timestamp_quality(frame, HQ_JPEG_QUALITY))
         await asyncio.sleep(1.0 / HQ_VIDEO_FPS)
 
 
