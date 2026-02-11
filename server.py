@@ -20,6 +20,12 @@ VIDEO_HEIGHT = 480
 JPEG_QUALITY = 75
 VIDEO_PORT_1 = 8765
 VIDEO_PORT_2 = 8766
+VIDEO_PORT_HQ = 8767
+HQ_DEVICE_PATH = '/dev/video42'
+HQ_VIDEO_WIDTH = 1280
+HQ_VIDEO_HEIGHT = 720
+HQ_VIDEO_FPS = 15
+HQ_FORCE_RESIZE = True
 TELEMETRY_PORT = 8764
 TELEMETRY_HZ = 50
 COMMAND_PORT = 8763
@@ -98,6 +104,23 @@ def init_camera(cam_id, formats, color=True):
     return None, None
 
 
+def init_hq_capture(device_path):
+    """Initialize HQ camera capture from a V4L2 device path."""
+    try:
+        cap = cv2.VideoCapture(device_path, cv2.CAP_V4L2)
+        if not cap.isOpened():
+            raise RuntimeError(f"Failed to open {device_path}")
+
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, HQ_VIDEO_WIDTH)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, HQ_VIDEO_HEIGHT)
+        cap.set(cv2.CAP_PROP_FPS, HQ_VIDEO_FPS)
+        print(f"HQ camera opened at {device_path} ({HQ_VIDEO_WIDTH}x{HQ_VIDEO_HEIGHT}@{HQ_VIDEO_FPS}fps)")
+        return cap
+    except Exception as e:
+        print(f"Warning: HQ camera init failed: {e}")
+        return None
+
+
 # Detect available cameras and their types..
 available_cameras = []
 for i in range(2):
@@ -160,6 +183,8 @@ if cam0_id is not None:
     cam0, _ = init_camera(cam0_id, ['XRGB8888'], color=True)
 if cam1_id is not None:
     cam1, cam1_format = init_camera(cam1_id, ['YUV420', 'XRGB8888'], color=False)
+
+hq_capture = init_hq_capture(HQ_DEVICE_PATH)
 
 
 # ===== Helper Functions =====
@@ -285,6 +310,33 @@ async def stream_cam1(ws):
         
         await ws.send(encode_frame_with_timestamp(display_frame))
         await asyncio.sleep(1.0 / VIDEO_FPS)
+
+
+async def stream_hq(ws):
+    print("Client connected to video stream (hq).")
+    if hq_capture is None or not hq_capture.isOpened():
+        print("hq camera not available; closing connection")
+        try:
+            await ws.send(json.dumps({'type': 'error', 'message': 'hq camera not available'}))
+        except Exception:
+            pass
+        await ws.close()
+        return
+
+    while True:
+        ret, frame = hq_capture.read()
+        if not ret or frame is None:
+            await asyncio.sleep(1.0 / HQ_VIDEO_FPS)
+            continue
+
+        if HQ_FORCE_RESIZE and (frame.shape[1] != HQ_VIDEO_WIDTH or frame.shape[0] != HQ_VIDEO_HEIGHT):
+            try:
+                frame = cv2.resize(frame, (HQ_VIDEO_WIDTH, HQ_VIDEO_HEIGHT))
+            except Exception:
+                pass
+
+        await ws.send(encode_frame_with_timestamp(frame))
+        await asyncio.sleep(1.0 / HQ_VIDEO_FPS)
 
 
 # ===== Telemetry =====
@@ -420,11 +472,13 @@ async def mavlink_broadcast():
 async def main():
     async with websockets.serve(stream_cam0, '0.0.0.0', VIDEO_PORT_1), \
                websockets.serve(stream_cam1, '0.0.0.0', VIDEO_PORT_2), \
+               websockets.serve(stream_hq, '0.0.0.0', VIDEO_PORT_HQ), \
          websockets.serve(stream_telemetry, '0.0.0.0', TELEMETRY_PORT), \
          websockets.serve(command_handler, '0.0.0.0', COMMAND_PORT):
         print(f"Server running:")
         print(f"  - Video cam0: ws://0.0.0.0:{VIDEO_PORT_1}")
         print(f"  - Video cam1: ws://0.0.0.0:{VIDEO_PORT_2}")
+        print(f"  - Video hq:   ws://0.0.0.0:{VIDEO_PORT_HQ}")
         print(f"  - Telemetry:  ws://0.0.0.0:{TELEMETRY_PORT} ({TELEMETRY_HZ}Hz)")
         print(f"  - Commands:   ws://0.0.0.0:{COMMAND_PORT}")
         print(f"  - UDP legacy: broadcast:5000 (10Hz)")
