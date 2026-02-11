@@ -3,6 +3,12 @@ import numpy as np
 from dataclasses import dataclass
 from typing import Optional
 
+# ===== Configuration (tunable) =====
+OPENCV_MIN_AREA_ABS = 200
+OPENCV_MIN_AREA_RATIO = 0.0008
+OPENCV_MAX_DEVIATION = 0.25
+OPENCV_REQUIRE_NESTING = False
+
 @dataclass
 class FiducialLockResult:
     locked: bool
@@ -72,7 +78,13 @@ def process_fiducial_frame(frame: np.ndarray) -> FiducialLockResult:
     # 2) Try OpenCV quad fallback
     try:
         from fiducial_opencv import detect_apriltag_opencv
-        res = detect_apriltag_opencv(frame)
+        min_area = max(OPENCV_MIN_AREA_ABS, int(OPENCV_MIN_AREA_RATIO * w * h))
+        res = detect_apriltag_opencv(
+            frame,
+            min_area=min_area,
+            max_deviation=OPENCV_MAX_DEVIATION,
+            require_nesting=OPENCV_REQUIRE_NESTING
+        )
         if res and res.get('locked'):
             corners = res.get('corners')
             area = float(res.get('area', 0.0))

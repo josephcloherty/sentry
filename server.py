@@ -42,7 +42,7 @@ HQ_TARGET_HEIGHT = 480
 HQ_JPEG_QUALITY = 60
 FIDUCIAL_ENABLE = True
 FIDUCIAL_SEND_RATE_HZ = 10
-FIDUCIAL_MIN_CONFIDENCE = 0.35
+FIDUCIAL_MIN_CONFIDENCE = 0.2
 FIDUCIAL_INCLUDE_CORNERS = True
 TELEMETRY_PORT = 8764
 TELEMETRY_HZ = 50
@@ -203,6 +203,8 @@ def ensure_hq_thread_started():
                 except Exception:
                     pass
 
+            fiducial_frame = frame
+
             if HQ_TARGET_WIDTH and HQ_TARGET_HEIGHT:
                 try:
                     frame = cv2.resize(frame, (HQ_TARGET_WIDTH, HQ_TARGET_HEIGHT))
@@ -211,7 +213,7 @@ def ensure_hq_thread_started():
 
             if FIDUCIAL_ENABLE:
                 try:
-                    res = process_fiducial_frame(frame)
+                    res = process_fiducial_frame(fiducial_frame)
                     if res is not None:
                         payload = serialize_fiducial_result(res)
                         if payload['confidence'] < FIDUCIAL_MIN_CONFIDENCE:
