@@ -26,6 +26,11 @@ HQ_VIDEO_WIDTH = 1280
 HQ_VIDEO_HEIGHT = 720
 HQ_VIDEO_FPS = 15
 HQ_FORCE_RESIZE = True
+HQ_FORCE_MJPEG = True
+HQ_BUFFER_SIZE = 1
+HQ_FLUSH_GRABS = 2
+HQ_CROP_BOTTOM_PX = 0
+HQ_CROP_RIGHT_PX = 0
 TELEMETRY_PORT = 8764
 TELEMETRY_HZ = 50
 COMMAND_PORT = 8763
@@ -111,9 +116,13 @@ def init_hq_capture(device_path):
         if not cap.isOpened():
             raise RuntimeError(f"Failed to open {device_path}")
 
+        if HQ_FORCE_MJPEG:
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, HQ_VIDEO_WIDTH)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, HQ_VIDEO_HEIGHT)
         cap.set(cv2.CAP_PROP_FPS, HQ_VIDEO_FPS)
+        if HQ_BUFFER_SIZE is not None:
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, HQ_BUFFER_SIZE)
         print(f"HQ camera opened at {device_path} ({HQ_VIDEO_WIDTH}x{HQ_VIDEO_HEIGHT}@{HQ_VIDEO_FPS}fps)")
         return cap
     except Exception as e:
@@ -324,10 +333,21 @@ async def stream_hq(ws):
         return
 
     while True:
+        try:
+            for _ in range(max(0, HQ_FLUSH_GRABS)):
+                hq_capture.grab()
+        except Exception:
+            pass
+
         ret, frame = hq_capture.read()
         if not ret or frame is None:
             await asyncio.sleep(1.0 / HQ_VIDEO_FPS)
             continue
+
+        if HQ_CROP_BOTTOM_PX > 0:
+            frame = frame[:-HQ_CROP_BOTTOM_PX, :]
+        if HQ_CROP_RIGHT_PX > 0:
+            frame = frame[:, :-HQ_CROP_RIGHT_PX]
 
         if HQ_FORCE_RESIZE and (frame.shape[1] != HQ_VIDEO_WIDTH or frame.shape[0] != HQ_VIDEO_HEIGHT):
             try:
