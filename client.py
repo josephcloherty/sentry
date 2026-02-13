@@ -36,6 +36,7 @@ FIDUCIAL_TEXT_SCALE = 0.5
 FIDUCIAL_TEXT_THICKNESS = 1
 FIDUCIAL_LINE_THICKNESS = 2
 FIDUCIAL_COLOR = (0, 0, 255)
+INVALID_VIDEO_PAYLOAD_SLEEP_SEC = 0.02
 
 # Toggle test mode to use local test telemetry/streams (set True to enable)
 # When enabled: telemetry WS -> ws://localhost:8888, cam0 -> localhost:8886, cam1 -> localhost:8887, hq -> localhost:8885
@@ -190,6 +191,39 @@ def decode_video_frame(data):
         timestamp = None
         jpeg_data = data
     frame = cv2.imdecode(np.frombuffer(jpeg_data, np.uint8), cv2.IMREAD_COLOR)
+    return frame, timestamp
+
+
+def decode_ws_video_payload(data):
+    """Decode a websocket payload into (frame, timestamp) or (None, None).
+
+    The server may send JSON error strings when a camera is unavailable.
+    Those payloads must be ignored rather than treated as JPEG bytes.
+    """
+    if not isinstance(data, (bytes, bytearray)):
+        return None, None
+
+    payload = bytes(data)
+    if not payload:
+        return None, None
+
+    if payload[:1] == b'{':
+        try:
+            msg = json.loads(payload.decode('utf-8', errors='ignore'))
+            if isinstance(msg, dict) and msg.get('message'):
+                print(f"Video payload message: {msg.get('message')}")
+        except Exception:
+            pass
+        return None, None
+
+    try:
+        frame, timestamp = decode_video_frame(payload)
+    except Exception:
+        return None, None
+
+    if frame is None or not isinstance(frame, np.ndarray) or frame.size == 0:
+        return None, None
+
     return frame, timestamp
 
 
@@ -371,7 +405,10 @@ async def receive_video(cam_id, port):
                 while True:
                     data = await ws.recv()
                     receive_time = time.time()
-                    frame, timestamp = decode_video_frame(data)
+                    frame, timestamp = decode_ws_video_payload(data)
+                    if frame is None:
+                        await asyncio.sleep(INVALID_VIDEO_PAYLOAD_SLEEP_SEC)
+                        continue
                     
                     # Store frame along with timing info so we can compute network + render latency later
                     if cam_id == 0:
@@ -513,6 +550,9 @@ def gen_frames_cam0():
         if frame_cam0 is None:
             continue
         entry = frame_cam0
+        if not isinstance(entry, dict) or entry.get('frame') is None:
+            time.sleep(INVALID_VIDEO_PAYLOAD_SLEEP_SEC)
+            continue
         f = entry['frame'].copy()
         h, w = f.shape[:2]
         
@@ -578,6 +618,9 @@ def gen_frames_cam1():
         if frame_cam1 is None:
             continue
         entry = frame_cam1
+        if not isinstance(entry, dict) or entry.get('frame') is None:
+            time.sleep(INVALID_VIDEO_PAYLOAD_SLEEP_SEC)
+            continue
         f = entry['frame'].copy()
 
         # Start timing backend processing
@@ -628,6 +671,9 @@ def gen_frames_hq():
         if frame_hq is None:
             continue
         entry = frame_hq
+        if not isinstance(entry, dict) or entry.get('frame') is None:
+            time.sleep(INVALID_VIDEO_PAYLOAD_SLEEP_SEC)
+            continue
         f = entry['frame'].copy()
 
         try:
