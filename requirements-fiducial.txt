@@ -1,5 +1,0 @@
-opencv-python
-# Optional but recommended for AprilTag detection on Pi
-apriltag
-# Optional for rendering SVG previews (if you want PNG previews locally)
-cairosvg
