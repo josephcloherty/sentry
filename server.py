@@ -40,9 +40,6 @@ HQ_CROP_RIGHT_PX = 0
 HQ_TARGET_WIDTH = 854
 HQ_TARGET_HEIGHT = 480
 HQ_JPEG_QUALITY = 60
-CAM_CAPTURE_FAIL_REINIT_THRESHOLD = 5
-HQ_CAPTURE_FAIL_REINIT_THRESHOLD = 10
-CAM_REINIT_RETRY_SEC = 1.0
 FIDUCIAL_ENABLE = True
 FIDUCIAL_SEND_RATE_HZ = 10
 FIDUCIAL_MIN_CONFIDENCE = 0.2
@@ -154,68 +151,6 @@ def init_hq_capture(source):
         return None
 
 
-def reinit_hq_capture():
-    """Attempt to reinitialize HQ capture from primary then fallback source."""
-    global hq_capture
-
-    try:
-        if hq_capture is not None:
-            hq_capture.release()
-    except Exception:
-        pass
-
-    cap = init_hq_capture(HQ_CAPTURE_SOURCE)
-    if (cap is None or not cap.isOpened()) and HQ_USE_FALLBACK_SOURCE:
-        cap = init_hq_capture(HQ_CAPTURE_FALLBACK_SOURCE)
-
-    hq_capture = cap
-    if hq_capture is None or not hq_capture.isOpened():
-        print("HQ reinit failed; will retry.")
-        return False
-
-    print("HQ camera reinitialized.")
-    return True
-
-
-def reinit_picam(cam_name):
-    """Reinitialize a Picamera2 stream by logical camera name ('cam0' or 'cam1')."""
-    global cam0, cam1, cam1_format
-
-    if cam_name == 'cam0':
-        if cam0_id is None:
-            return False
-        try:
-            if cam0 is not None:
-                cam0.stop()
-                cam0.close()
-        except Exception:
-            pass
-        cam0, _ = init_camera(cam0_id, ['XRGB8888'], color=True)
-        if cam0 is None:
-            print("cam0 reinit failed; will retry.")
-            return False
-        print("cam0 reinitialized.")
-        return True
-
-    if cam_name == 'cam1':
-        if cam1_id is None:
-            return False
-        try:
-            if cam1 is not None:
-                cam1.stop()
-                cam1.close()
-        except Exception:
-            pass
-        cam1, cam1_format = init_camera(cam1_id, ['YUV420', 'XRGB8888'], color=False)
-        if cam1 is None:
-            print("cam1 reinit failed; will retry.")
-            return False
-        print("cam1 reinitialized.")
-        return True
-
-    return False
-
-
 def serialize_fiducial_result(result):
     payload = {
         'locked': bool(result.locked),
@@ -245,13 +180,7 @@ def ensure_hq_thread_started():
 
     def hq_capture_loop():
         global hq_latest, hq_fiducial_latest
-        fail_count = 0
         while True:
-            if hq_capture is None or not hq_capture.isOpened():
-                reinit_hq_capture()
-                time.sleep(CAM_REINIT_RETRY_SEC)
-                continue
-
             try:
                 for _ in range(max(0, HQ_FLUSH_GRABS)):
                     hq_capture.grab()
@@ -260,17 +189,8 @@ def ensure_hq_thread_started():
 
             ret, frame = hq_capture.read()
             if not ret or frame is None:
-                fail_count += 1
-                if fail_count >= HQ_CAPTURE_FAIL_REINIT_THRESHOLD:
-                    print("HQ capture stalled, attempting reinit...")
-                    reinit_hq_capture()
-                    fail_count = 0
-                    time.sleep(CAM_REINIT_RETRY_SEC)
-                    continue
                 time.sleep(1.0 / HQ_VIDEO_FPS)
                 continue
-
-            fail_count = 0
 
             if HQ_CROP_BOTTOM_PX > 0:
                 frame = frame[:-HQ_CROP_BOTTOM_PX, :]
@@ -458,20 +378,8 @@ async def stream_cam0(ws):
         await ws.close()
         return
 
-    fail_count = 0
     while True:
-        try:
-            frame = cam0.capture_array()
-            fail_count = 0
-        except Exception as e:
-            fail_count += 1
-            print(f"cam0 capture error ({fail_count}): {e}")
-            if fail_count >= CAM_CAPTURE_FAIL_REINIT_THRESHOLD:
-                reinit_picam('cam0')
-                fail_count = 0
-            await asyncio.sleep(CAM_REINIT_RETRY_SEC)
-            continue
-
+        frame = cam0.capture_array()
         await ws.send(encode_frame_with_timestamp(frame))
         await asyncio.sleep(1.0 / VIDEO_FPS)
 
@@ -487,20 +395,8 @@ async def stream_cam1(ws):
         await ws.close()
         return
 
-    fail_count = 0
     while True:
-        try:
-            frame = cam1.capture_array()
-            fail_count = 0
-        except Exception as e:
-            fail_count += 1
-            print(f"cam1 capture error ({fail_count}): {e}")
-            if fail_count >= CAM_CAPTURE_FAIL_REINIT_THRESHOLD:
-                reinit_picam('cam1')
-                fail_count = 0
-            await asyncio.sleep(CAM_REINIT_RETRY_SEC)
-            continue
-
+        frame = cam1.capture_array()
         # If the camera is returning YUV420 (I420) as a single-channel
         # vertically-stacked array, the shape will often be (H * 3/2, W).
         # In that case we only want the Y plane (top H rows) to produce
@@ -540,15 +436,18 @@ async def stream_cam1(ws):
 
 async def stream_hq(ws):
     print("Client connected to video stream (hq).")
+    if hq_capture is None or not hq_capture.isOpened():
+        print("hq camera not available; closing connection")
+        try:
+            await ws.send(json.dumps({'type': 'error', 'message': 'hq camera not available'}))
+        except Exception:
+            pass
+        await ws.close()
+        return
+
     ensure_hq_thread_started()
 
     while True:
-        if hq_capture is None or not hq_capture.isOpened():
-            reinit_hq_capture()
-            ensure_hq_thread_started()
-            await asyncio.sleep(CAM_REINIT_RETRY_SEC)
-            continue
-
         with hq_lock:
             frame = None if hq_latest is None else hq_latest.copy()
 
