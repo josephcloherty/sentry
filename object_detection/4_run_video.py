@@ -1,24 +1,12 @@
 import argparse
 import os
-import struct
 import sys
-import time
 from pathlib import Path
 from typing import Iterable
 
 import cv2
-import numpy as np
 from ultralytics import YOLO
 
-from websockets.exceptions import ConnectionClosed
-from websockets.sync.client import connect as ws_connect
-
-
-DEFAULT_WS_URL = "ws://127.0.0.1:8886"
-DEFAULT_WS_HAS_TIMESTAMP_HEADER = True
-DEFAULT_WS_RECONNECT_DELAY_SEC = 2.0
-DEFAULT_WS_RECEIVE_TIMEOUT_SEC = 5.0
-DEFAULT_WS_OUTPUT_FPS = 30.0
 
 DEFAULT_INPUT_VIDEO = r"C:\Users\josep\Downloads\test720.mp4"
 DEFAULT_NEW_MODEL_PATH = r"C:\Users\josep\Desktop\AERO420\runs\detect\runs\detect\VisDrone_Project\yolo11n_p2_visdrone2\weights\best.pt"
@@ -98,19 +86,6 @@ def resolve_model_path(model_path: str) -> str:
     raise FileNotFoundError(
         f"Model not found at '{model_path}' and fallback '{fallback}' is missing."
     )
-
-
-def decode_ws_frame(payload: bytes, has_timestamp_header: bool) -> np.ndarray | None:
-    jpeg_data = payload
-    if has_timestamp_header and len(payload) > 8:
-        try:
-            struct.unpack("d", payload[:8])
-            jpeg_data = payload[8:]
-        except struct.error:
-            jpeg_data = payload
-
-    frame = cv2.imdecode(np.frombuffer(jpeg_data, np.uint8), cv2.IMREAD_COLOR)
-    return frame
 
 
 def _expand_user_path(path_value: str) -> Path:
@@ -623,6 +598,7 @@ def draw_stable_labels(
 
 def run_video_inference(
     model_path: str,
+    input_video: str,
     output_video: str | None,
     conf: float,
     imgsz: int,
@@ -642,11 +618,10 @@ def run_video_inference(
     hold_frames: int,
     min_track_hits: int,
 ) -> None:
+    input_path = resolve_input_video(input_video)
+
     resolved_model = resolve_model_path(model_path)
-    if output_video:
-        output_path = Path(output_video)
-    else:
-        output_path = Path.cwd() / "websocket_annotated.mp4"
+    output_path = build_output_path(input_path, output_video)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     device = pick_device(device_arg)
@@ -662,8 +637,27 @@ def run_video_inference(
         person_only=person_only,
     )
 
-    print(f"Input WebSocket: {DEFAULT_WS_URL}")
-    print(f"Output:          {output_path}")
+    cap = cv2.VideoCapture(str(input_path))
+    if not cap.isOpened():
+        raise RuntimeError(f"Could not open video: {input_path}")
+
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    if fps <= 0:
+        fps = 30.0
+
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap.release()
+
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
+    if not writer.isOpened():
+        raise RuntimeError(f"Could not create output video: {output_path}")
+
+    print(f"Input:  {input_path}")
+    print(f"Output: {output_path}")
+    print(f"Size:   {width}x{height} @ {fps:.2f} FPS")
     print(f"Tracker: {resolved_tracker}")
     if selected_classes is not None:
         selected_names = ", ".join(f"{idx}:{names_by_id[idx]}" for idx in selected_classes)
@@ -709,88 +703,53 @@ def run_video_inference(
         print(f"Sticky lock classes: {locked_names}")
     print(f"Tracker input confidence set to {tracking_conf:.2f}")
 
-    writer = None
-    try:
-        while True:
-            print(f"Connecting to camera websocket: {DEFAULT_WS_URL}")
-            try:
-                with ws_connect(DEFAULT_WS_URL, open_timeout=10) as ws:
-                    print("Websocket connected.")
+    results_stream = model.track(
+        source=str(input_path),
+        conf=tracking_conf,
+        iou=iou,
+        imgsz=imgsz,
+        tracker=resolved_tracker,
+        persist=persist,
+        rect=False,
+        device=device,
+        classes=selected_classes,
+        stream=True,
+        verbose=False,
+    )
 
-                    while True:
-                        payload = ws.recv(timeout=DEFAULT_WS_RECEIVE_TIMEOUT_SEC)
-                        if not isinstance(payload, (bytes, bytearray)):
-                            continue
+    for result in results_stream:
+        detections = extract_tracked_detections(result)
+        detections = stable_assigner.assign(detections, frame_idx)
+        detections = track_smoother.update(detections, frame_idx)
+        detections = sticky_gate.filter(detections, frame_idx)
+        if result.orig_img is not None:
+            annotated_frame = result.orig_img.copy()
+        else:
+            annotated_frame = result.plot(labels=False, conf=False, boxes=False)
+        draw_stable_labels(
+            frame=annotated_frame,
+            detections=detections,
+            names_by_id=names_by_id,
+            hide_labels=hide_labels,
+            hide_conf=hide_conf,
+            hide_boxes=hide_boxes,
+            line_width=line_width,
+        )
+        writer.write(annotated_frame)
 
-                        frame = decode_ws_frame(payload, DEFAULT_WS_HAS_TIMESTAMP_HEADER)
-                        if frame is None:
-                            continue
+        if show:
+            cv2.imshow("YOLO 4K Video Detection", annotated_frame)
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
 
-                        if writer is None:
-                            frame_h, frame_w = frame.shape[:2]
-                            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-                            writer = cv2.VideoWriter(
-                                str(output_path),
-                                fourcc,
-                                DEFAULT_WS_OUTPUT_FPS,
-                                (frame_w, frame_h),
-                            )
-                            if not writer.isOpened():
-                                raise RuntimeError(f"Could not create output video: {output_path}")
-                            print(f"Output size: {frame_w}x{frame_h} @ {DEFAULT_WS_OUTPUT_FPS:.2f} FPS")
+        frame_idx += 1
+        if frame_idx % 60 == 0:
+            if total_frames > 0:
+                print(f"Processed {frame_idx}/{total_frames} frames")
+            else:
+                print(f"Processed {frame_idx} frames")
 
-                        result_list = model.track(
-                            source=frame,
-                            conf=tracking_conf,
-                            iou=iou,
-                            imgsz=imgsz,
-                            tracker=resolved_tracker,
-                            persist=persist,
-                            rect=False,
-                            device=device,
-                            classes=selected_classes,
-                            verbose=False,
-                        )
-                        result = result_list[0] if result_list else None
-                        if result is None:
-                            continue
-
-                        detections = extract_tracked_detections(result)
-                        detections = stable_assigner.assign(detections, frame_idx)
-                        detections = track_smoother.update(detections, frame_idx)
-                        detections = sticky_gate.filter(detections, frame_idx)
-
-                        annotated_frame = frame.copy()
-                        draw_stable_labels(
-                            frame=annotated_frame,
-                            detections=detections,
-                            names_by_id=names_by_id,
-                            hide_labels=hide_labels,
-                            hide_conf=hide_conf,
-                            hide_boxes=hide_boxes,
-                            line_width=line_width,
-                        )
-                        writer.write(annotated_frame)
-
-                        if show:
-                            cv2.imshow("YOLO Webcam WebSocket Detection", annotated_frame)
-                            if cv2.waitKey(1) & 0xFF == ord("q"):
-                                return
-
-                        frame_idx += 1
-                        if frame_idx % 60 == 0:
-                            print(f"Processed {frame_idx} frames")
-
-            except (ConnectionClosed, TimeoutError) as exc:
-                print(f"Websocket disconnected ({exc}). Reconnecting in {DEFAULT_WS_RECONNECT_DELAY_SEC:.1f}s...")
-                time.sleep(DEFAULT_WS_RECONNECT_DELAY_SEC)
-            except OSError as exc:
-                print(f"Websocket connection error ({exc}). Reconnecting in {DEFAULT_WS_RECONNECT_DELAY_SEC:.1f}s...")
-                time.sleep(DEFAULT_WS_RECONNECT_DELAY_SEC)
-    finally:
-        if writer is not None:
-            writer.release()
-
+    writer.release()
     if show:
         cv2.destroyAllWindows()
 
@@ -799,7 +758,18 @@ def run_video_inference(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run YOLO inference on a websocket camera feed and save an annotated MP4 output."
+        description="Run YOLO inference on an MP4 and save an annotated MP4 output."
+    )
+    parser.add_argument(
+        "video",
+        nargs="?",
+        default=DEFAULT_INPUT_VIDEO,
+        help="Optional positional path to input .mp4 (example: C:/Users/<you>/Downloads/video.mp4)",
+    )
+    parser.add_argument(
+        "--input",
+        default=DEFAULT_INPUT_VIDEO,
+        help="Path to input .mp4 video (same as positional argument)",
     )
     parser.add_argument(
         "--model",
@@ -932,12 +902,14 @@ def parse_args() -> argparse.Namespace:
 
 if __name__ == "__main__":
     args = parse_args()
+    input_video = args.input or args.video
     selected_model = args.model
     if not selected_model:
         selected_model = DEFAULT_NEW_MODEL_PATH if args.model_family == "new" else DEFAULT_OLD_MODEL_PATH
 
     run_video_inference(
         model_path=selected_model,
+        input_video=input_video,
         output_video=args.output,
         conf=args.conf,
         imgsz=args.imgsz,
