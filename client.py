@@ -36,6 +36,8 @@ FIDUCIAL_TEXT_SCALE = 0.5
 FIDUCIAL_TEXT_THICKNESS = 1
 FIDUCIAL_LINE_THICKNESS = 2
 FIDUCIAL_COLOR = (0, 0, 255)
+FIDUCIAL_APPLY_FRAME_SCALING = True
+FIDUCIAL_CLAMP_TO_FRAME = True
 
 # Toggle test mode to use local test telemetry/streams (set True to enable)
 # When enabled: telemetry WS -> ws://localhost:8888, cam0 -> localhost:8886, cam1 -> localhost:8887, hq -> localhost:8885
@@ -250,11 +252,34 @@ def draw_fiducial_overlay(frame):
         return
 
     h, w = frame.shape[:2]
+    source_w = payload.get('frame_width')
+    source_h = payload.get('frame_height')
+    scale_x = 1.0
+    scale_y = 1.0
+
+    if FIDUCIAL_APPLY_FRAME_SCALING:
+        try:
+            sw = float(source_w)
+            sh = float(source_h)
+            if sw > 0 and sh > 0:
+                scale_x = w / sw
+                scale_y = h / sh
+        except Exception:
+            scale_x = 1.0
+            scale_y = 1.0
+
     corners = payload.get('corners')
     cx = cy = None
     if isinstance(corners, list) and len(corners) >= 4:
         try:
-            pts = np.array(corners, dtype=np.int32)
+            pts = np.array(corners, dtype=np.float32)
+            if FIDUCIAL_APPLY_FRAME_SCALING:
+                pts[:, 0] *= scale_x
+                pts[:, 1] *= scale_y
+            if FIDUCIAL_CLAMP_TO_FRAME:
+                pts[:, 0] = np.clip(pts[:, 0], 0, w - 1)
+                pts[:, 1] = np.clip(pts[:, 1], 0, h - 1)
+            pts = pts.astype(np.int32)
             cv2.polylines(frame, [pts], True, FIDUCIAL_COLOR, FIDUCIAL_LINE_THICKNESS)
             cx = int(np.mean(pts[:, 0]))
             cy = int(np.mean(pts[:, 1]))
@@ -267,6 +292,9 @@ def draw_fiducial_overlay(frame):
             error_y = float(payload.get('error_y', 0))
             cx = int((w / 2) + error_x * (w / 2))
             cy = int((h / 2) + error_y * (h / 2))
+            if FIDUCIAL_CLAMP_TO_FRAME:
+                cx = int(np.clip(cx, 0, w - 1))
+                cy = int(np.clip(cy, 0, h - 1))
         except Exception:
             return
 

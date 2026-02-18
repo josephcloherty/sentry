@@ -151,7 +151,7 @@ def init_hq_capture(source):
         return None
 
 
-def serialize_fiducial_result(result):
+def serialize_fiducial_result(result, frame_width=None, frame_height=None):
     payload = {
         'locked': bool(result.locked),
         'error_x': float(result.error_x),
@@ -161,6 +161,12 @@ def serialize_fiducial_result(result):
         'fiducial_id': result.fiducial_id,
         'timestamp': time.time()
     }
+    if frame_width is not None and frame_height is not None:
+        try:
+            payload['frame_width'] = int(frame_width)
+            payload['frame_height'] = int(frame_height)
+        except Exception:
+            pass
     corners = getattr(result, 'corners', None)
     if FIDUCIAL_INCLUDE_CORNERS and corners is not None:
         try:
@@ -204,6 +210,7 @@ def ensure_hq_thread_started():
                     pass
 
             fiducial_frame = frame
+            fid_h, fid_w = fiducial_frame.shape[:2]
 
             if HQ_TARGET_WIDTH and HQ_TARGET_HEIGHT:
                 try:
@@ -215,7 +222,11 @@ def ensure_hq_thread_started():
                 try:
                     res = process_fiducial_frame(fiducial_frame)
                     if res is not None:
-                        payload = serialize_fiducial_result(res)
+                        payload = serialize_fiducial_result(
+                            res,
+                            frame_width=fid_w,
+                            frame_height=fid_h
+                        )
                         if payload['confidence'] < FIDUCIAL_MIN_CONFIDENCE:
                             payload['locked'] = False
                         with hq_fiducial_lock:
