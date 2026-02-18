@@ -296,6 +296,50 @@
                             </div>
                         </div>
                     </div>
+                    <div class="latency-group" data-latency-group="hq">
+                        <div class="latency-group-header">
+                            <div class="latency-group-title">
+                                <h3>High Quality Camera</h3>
+                                <p class="latency-subtitle">Capture → Screen</p>
+                            </div>
+                            <div class="latency-group-total">
+                                <span id="hq-total-latency" class="latency-total-value">--</span>
+                                <span class="latency-unit">ms</span>
+                            </div>
+                        </div>
+                        <div class="latency-e2e-bar">
+                            <div id="hq-e2e-bar" class="latency-e2e-fill"></div>
+                        </div>
+                        <div class="latency-breakdown">
+                            <div class="latency-breakdown-row" id="hq-uplink-row">
+                                <div class="latency-breakdown-label">
+                                    <span>Uplink (capture → gateway)</span>
+                                </div>
+                                <div class="latency-breakdown-metrics">
+                                    <span id="hq-uplink-latency" class="latency-value">--</span>
+                                    <span class="latency-unit">ms</span>
+                                </div>
+                            </div>
+                            <div class="latency-breakdown-row" id="hq-processing-row">
+                                <div class="latency-breakdown-label">
+                                    <span>Gateway processing</span>
+                                </div>
+                                <div class="latency-breakdown-metrics">
+                                    <span id="hq-processing-latency" class="latency-value">--</span>
+                                    <span class="latency-unit">ms</span>
+                                </div>
+                            </div>
+                            <div class="latency-breakdown-row" id="hq-delivery-row">
+                                <div class="latency-breakdown-label">
+                                    <span>Browser delivery + decode</span>
+                                </div>
+                                <div class="latency-breakdown-metrics">
+                                    <span id="hq-delivery-latency" class="latency-value">--</span>
+                                    <span class="latency-unit">ms</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                     <div class="latency-group" data-latency-group="telemetry">
                         <div class="latency-group-header">
                             <div class="latency-group-title">
@@ -412,6 +456,11 @@
         const MAP_RAIL_COMMAND_ID = 'drop_gps_pin';
         const LATENCY_THRESHOLD_GOOD_MS = 100;
         const LATENCY_THRESHOLD_WARNING_MS = 300;
+        const LATENCY_VIDEO_SNAPSHOT_ENDPOINTS = {
+            cam0: '/api/snapshot_cam0',
+            cam1: '/api/snapshot_cam1',
+            hq: '/api/snapshot_hq'
+        };
 
         let userSettings = mergeSettings(DEFAULT_USER_SETTINGS, SERVER_USER_SETTINGS || {});
         let cameraFunctionTabs = userSettings.camera_function_tabs || DEFAULT_CAMERA_FUNCTION_TABS;
@@ -444,6 +493,14 @@
                 online: false
             },
             cam1: {
+                network_ms: 0,
+                processing_ms: 0,
+                delivery_ms: 0,
+                total_ms: 0,
+                samples: 0,
+                online: false
+            },
+            hq: {
                 network_ms: 0,
                 processing_ms: 0,
                 delivery_ms: 0,
@@ -914,6 +971,11 @@
                 { key: 'processing', value: latencyState.cam1.processing_ms },
                 { key: 'delivery', value: latencyState.cam1.delivery_ms }
             ]);
+            const hqTotal = updateLatencyGroup('hq', [
+                { key: 'uplink', value: latencyState.hq.network_ms },
+                { key: 'processing', value: latencyState.hq.processing_ms },
+                { key: 'delivery', value: latencyState.hq.delivery_ms }
+            ]);
             const telemetryTotal = updateLatencyGroup('telemetry', [
                 { key: 'uplink', value: latencyState.telemetry.uplink_ms },
                 { key: 'delivery', value: latencyState.telemetry.delivery_ms }
@@ -921,6 +983,7 @@
 
             latencyState.cam0.total_ms = cam0Total;
             latencyState.cam1.total_ms = cam1Total;
+            latencyState.hq.total_ms = hqTotal;
             latencyState.telemetry.total_ms = telemetryTotal;
 
             const updateRateEl = document.getElementById('latency-update-rate');
@@ -928,7 +991,7 @@
             if (updateRateEl) updateRateEl.textContent = `${latencyUpdateIntervalMs}ms`;
             if (lastUpdateEl) lastUpdateEl.textContent = new Date().toLocaleTimeString();
 
-            const hasData = cam0Total > 0 || cam1Total > 0 || telemetryTotal > 0;
+            const hasData = cam0Total > 0 || cam1Total > 0 || hqTotal > 0 || telemetryTotal > 0;
             updateStatusDot('latency-status-dot', hasData);
         }
 
@@ -939,22 +1002,27 @@
                 const data = await response.json();
                 latencyState.cam0.network_ms = normalizeLatency(data.cam0_network_latency_ms);
                 latencyState.cam1.network_ms = normalizeLatency(data.cam1_network_latency_ms);
+                latencyState.hq.network_ms = normalizeLatency(data.hq_network_latency_ms);
                 latencyState.cam0.processing_ms = normalizeLatency(data.cam0_processing_latency_ms);
                 latencyState.cam1.processing_ms = normalizeLatency(data.cam1_processing_latency_ms);
+                latencyState.hq.processing_ms = normalizeLatency(data.hq_processing_latency_ms);
                 latencyState.cam0.samples = data.cam0_samples || 0;
                 latencyState.cam1.samples = data.cam1_samples || 0;
+                latencyState.hq.samples = data.hq_samples || 0;
                 latencyState.cam0.online = Boolean(data.cam0_online);
                 latencyState.cam1.online = Boolean(data.cam1_online);
+                latencyState.hq.online = Boolean(data.hq_online);
             } catch (err) {
                 console.error('Failed to fetch video latency:', err);
             }
         }
 
         async function fetchSnapshotLatency(camId) {
-            const camIndex = camId === 'cam0' ? 0 : 1;
+            const endpoint = LATENCY_VIDEO_SNAPSHOT_ENDPOINTS[camId];
+            if (!endpoint || !latencyState[camId]) return;
             try {
                 const start = performance.now();
-                const response = await fetchWithTimeout(`/api/snapshot_cam${camIndex}?t=${Date.now()}`, { cache: 'no-store' }, LATENCY_SNAPSHOT_TIMEOUT_MS);
+                const response = await fetchWithTimeout(`${endpoint}?t=${Date.now()}`, { cache: 'no-store' }, LATENCY_SNAPSHOT_TIMEOUT_MS);
                 if (!response.ok || response.status === 204) {
                     latencyState[camId].delivery_ms = 0;
                     return;
@@ -1000,6 +1068,7 @@
                 fetchVideoLatency(),
                 fetchSnapshotLatency('cam0'),
                 fetchSnapshotLatency('cam1'),
+                fetchSnapshotLatency('hq'),
                 fetchTelemetryLatency()
             ]);
             refreshLatencyUI();

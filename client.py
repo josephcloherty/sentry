@@ -106,6 +106,7 @@ frame_hq = None
 # Per-camera latency sample buffers (store tuples of (network_ms, render_ms))
 cam0_latency_samples = deque(maxlen=LATENCY_SAMPLE_SIZE)
 cam1_latency_samples = deque(maxlen=LATENCY_SAMPLE_SIZE)
+hq_latency_samples = deque(maxlen=LATENCY_SAMPLE_SIZE)
 
 # Connection timestamps
 last_cam0_time = 0
@@ -116,10 +117,13 @@ last_mav_time = 0
 # Video latency tracking
 video_latency_cam0_ms = 0  # Network latency (server to client receive)
 video_latency_cam1_ms = 0
+video_latency_hq_ms = 0
 cam0_frame_timestamp = 0
 cam1_frame_timestamp = 0
+hq_frame_timestamp = 0
 cam0_processing_latency_ms = 0  # Backend processing time (overlays + JPEG encode)
 cam1_processing_latency_ms = 0
+hq_processing_latency_ms = 0
 
 # Connection status
 cam0_online = False
@@ -390,7 +394,8 @@ def sanitize_settings(payload):
 async def receive_video(cam_id, port):
     """Generic video receiver for a camera."""
     global frame_cam0, frame_cam1, frame_hq, last_cam0_time, last_cam1_time, last_hq_time
-    global video_latency_cam0_ms, video_latency_cam1_ms, cam0_frame_timestamp, cam1_frame_timestamp
+    global video_latency_cam0_ms, video_latency_cam1_ms, video_latency_hq_ms
+    global cam0_frame_timestamp, cam1_frame_timestamp, hq_frame_timestamp
     
     while True:
         try:
@@ -433,6 +438,8 @@ async def receive_video(cam_id, port):
                             'network_ms': network_ms
                         }
                         last_hq_time = receive_time
+                        if timestamp:
+                            hq_frame_timestamp = timestamp
         except websockets.exceptions.ConnectionClosed:
             print(f"Camera {cam_id} WebSocket disconnected, reconnecting in 2 seconds...")
         except Exception as e:
@@ -652,11 +659,15 @@ def gen_frames_cam1():
 
 
 def gen_frames_hq():
+    global video_latency_hq_ms, hq_processing_latency_ms, hq_frame_timestamp
     while True:
         if frame_hq is None:
             continue
         entry = frame_hq
         f = entry['frame'].copy()
+
+        # Start timing backend processing
+        processing_start = time.time()
 
         try:
             draw_fiducial_overlay(f)
@@ -665,8 +676,36 @@ def gen_frames_hq():
 
         _, jpeg = cv2.imencode('.jpg', f, [cv2.IMWRITE_JPEG_QUALITY, 90])
 
+        # Compute backend processing latency
+        processing_time = time.time()
+        processing_ms = (processing_time - processing_start) * 1000
+        network_ms = entry.get('network_ms')
+
+        # Record samples
+        hq_latency_samples.append((network_ms, processing_ms))
+
+        # Update median stats
+        nets = [n for n, r in hq_latency_samples if n is not None]
+        procs = [r for n, r in hq_latency_samples if r is not None]
+        if procs:
+            hq_processing_latency_ms = statistics.median(procs)
+        else:
+            hq_processing_latency_ms = 0
+        if nets:
+            video_latency_hq_ms = statistics.median(nets)
+        else:
+            video_latency_hq_ms = 0
+
+        try:
+            hq_frame_timestamp = entry.get('server_ts') or hq_frame_timestamp
+        except NameError:
+            hq_frame_timestamp = entry.get('server_ts')
+
         try:
             entry['last_jpeg'] = jpeg.tobytes()
+            entry['last_processing_ms'] = processing_ms
+            entry['last_server_ts'] = entry.get('server_ts')
+            entry['last_network_ms'] = entry.get('network_ms')
         except Exception:
             pass
 
@@ -758,12 +797,18 @@ def api_video_latency():
         'cam1_network_latency_ms': round(video_latency_cam1_ms, 2),
         'cam1_processing_latency_ms': round(cam1_processing_latency_ms, 2),
         'cam1_render_latency_ms': 0,  # Placeholder - measured by frontend
+        'hq_network_latency_ms': round(video_latency_hq_ms, 2),
+        'hq_processing_latency_ms': round(hq_processing_latency_ms, 2),
+        'hq_render_latency_ms': 0,  # Placeholder - measured by frontend
         'cam0_frame_timestamp': cam0_frame_timestamp,
         'cam1_frame_timestamp': cam1_frame_timestamp,
+        'hq_frame_timestamp': hq_frame_timestamp,
         'cam0_samples': len(cam0_latency_samples),
         'cam1_samples': len(cam1_latency_samples),
+        'hq_samples': len(hq_latency_samples),
         'cam0_online': cam0_online,
         'cam1_online': cam1_online,
+        'hq_online': hq_online,
         'server_time': time.time()
     })
 
@@ -910,6 +955,24 @@ def api_snapshot_cam1():
         except Exception:
             pass
         return Response(frame_cam1['last_jpeg'], mimetype='image/jpeg', headers=headers)
+    return ('', 204)
+
+
+@app.route('/api/snapshot_hq')
+def api_snapshot_hq():
+    """Return the latest JPEG snapshot for HQ camera (one-shot)."""
+    if frame_hq and isinstance(frame_hq, dict) and frame_hq.get('last_jpeg'):
+        headers = {}
+        try:
+            if frame_hq.get('last_server_ts'):
+                headers['X-Frame-Ts'] = str(frame_hq.get('last_server_ts'))
+            if frame_hq.get('last_processing_ms') is not None:
+                headers['X-Processing-Ms'] = str(frame_hq.get('last_processing_ms'))
+            if frame_hq.get('last_network_ms') is not None:
+                headers['X-Network-Ms'] = str(frame_hq.get('last_network_ms'))
+        except Exception:
+            pass
+        return Response(frame_hq['last_jpeg'], mimetype='image/jpeg', headers=headers)
     return ('', 204)
 
 
