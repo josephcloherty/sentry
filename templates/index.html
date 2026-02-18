@@ -456,6 +456,9 @@
         const MAP_RAIL_COMMAND_ID = 'drop_gps_pin';
         const LATENCY_THRESHOLD_GOOD_MS = 100;
         const LATENCY_THRESHOLD_WARNING_MS = 300;
+        const LATENCY_HEADER_FRAME_TS = 'X-Frame-Ts';
+        const LATENCY_HEADER_NETWORK_MS = 'X-Network-Ms';
+        const LATENCY_HEADER_PROCESSING_MS = 'X-Processing-Ms';
         const LATENCY_VIDEO_SNAPSHOT_ENDPOINTS = {
             cam0: '/api/snapshot_cam0',
             cam1: '/api/snapshot_cam1',
@@ -504,6 +507,7 @@
                 network_ms: 0,
                 processing_ms: 0,
                 delivery_ms: 0,
+                capture_to_screen_ms: 0,
                 total_ms: 0,
                 samples: 0,
                 online: false
@@ -948,16 +952,17 @@
         }
 
         // ===== LATENCY FUNCTIONS =====
-        function updateLatencyGroup(groupId, components) {
+        function updateLatencyGroup(groupId, components, forcedTotal = null) {
             const total = components.reduce((sum, item) => sum + item.value, 0);
-            updateLatencyValue(`${groupId}-total-latency`, total, true);
-            updateE2EBar(`${groupId}-e2e-bar`, total);
+            const resolvedTotal = Number.isFinite(forcedTotal) && forcedTotal > 0 ? forcedTotal : total;
+            updateLatencyValue(`${groupId}-total-latency`, resolvedTotal, true);
+            updateE2EBar(`${groupId}-e2e-bar`, resolvedTotal);
 
             components.forEach(item => {
                 updateLatencyValue(`${groupId}-${item.key}-latency`, item.value);
             });
 
-            return total;
+            return resolvedTotal;
         }
 
         function refreshLatencyUI() {
@@ -971,11 +976,14 @@
                 { key: 'processing', value: latencyState.cam1.processing_ms },
                 { key: 'delivery', value: latencyState.cam1.delivery_ms }
             ]);
+            const hqForcedTotal = latencyState.hq.capture_to_screen_ms > 0
+                ? latencyState.hq.capture_to_screen_ms
+                : null;
             const hqTotal = updateLatencyGroup('hq', [
                 { key: 'uplink', value: latencyState.hq.network_ms },
                 { key: 'processing', value: latencyState.hq.processing_ms },
                 { key: 'delivery', value: latencyState.hq.delivery_ms }
-            ]);
+            ], hqForcedTotal);
             const telemetryTotal = updateLatencyGroup('telemetry', [
                 { key: 'uplink', value: latencyState.telemetry.uplink_ms },
                 { key: 'delivery', value: latencyState.telemetry.delivery_ms }
@@ -1042,9 +1050,41 @@
                 }
                 URL.revokeObjectURL(objectUrl);
                 const end = performance.now();
-                latencyState[camId].delivery_ms = normalizeLatency(end - start);
+                const snapshotRoundtripMs = normalizeLatency(end - start);
+
+                // For HQ, use frame timestamp headers to compute true capture->screen end-to-end latency.
+                if (camId === 'hq') {
+                    const frameTs = Number.parseFloat(response.headers.get(LATENCY_HEADER_FRAME_TS));
+                    const headerNetworkMs = Number.parseFloat(response.headers.get(LATENCY_HEADER_NETWORK_MS));
+                    const headerProcessingMs = Number.parseFloat(response.headers.get(LATENCY_HEADER_PROCESSING_MS));
+
+                    if (Number.isFinite(frameTs) && frameTs > 0) {
+                        const wallClockEndMs = Date.now();
+                        const captureToScreenMs = normalizeLatency(wallClockEndMs - (frameTs * 1000));
+
+                        if (Number.isFinite(headerNetworkMs) && headerNetworkMs >= 0) {
+                            latencyState.hq.network_ms = normalizeLatency(headerNetworkMs);
+                        }
+                        if (Number.isFinite(headerProcessingMs) && headerProcessingMs >= 0) {
+                            latencyState.hq.processing_ms = normalizeLatency(headerProcessingMs);
+                        }
+
+                        latencyState.hq.capture_to_screen_ms = captureToScreenMs;
+                        const residualDelivery = captureToScreenMs - latencyState.hq.network_ms - latencyState.hq.processing_ms;
+                        latencyState.hq.delivery_ms = normalizeLatency(residualDelivery);
+                        return;
+                    }
+
+                    // Fallback path when headers are unavailable.
+                    latencyState.hq.capture_to_screen_ms = 0;
+                }
+
+                latencyState[camId].delivery_ms = snapshotRoundtripMs;
             } catch (err) {
                 latencyState[camId].delivery_ms = 0;
+                if (camId === 'hq') {
+                    latencyState.hq.capture_to_screen_ms = 0;
+                }
             }
         }
 
