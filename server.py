@@ -12,7 +12,6 @@ import websockets
 from picamera2 import Picamera2
 from pymavlink import mavutil
 
-from functions.infrared import process_ir_frame
 from fiducial_tracker import process_fiducial_frame
 
 # ===== Configuration =====
@@ -62,7 +61,6 @@ telemetry_clients = set()
 # Command state and clients
 command_state = {
     'go_dark': False,
-    'night_vision': False,
     'auto_rth': False,
     'drop_gps_pin': False,
     'emergency': False,
@@ -327,56 +325,6 @@ def encode_frame_with_timestamp_quality(frame, quality):
     return struct.pack('d', time.time()) + buffer.tobytes()
 
 
-def to_grayscale(frame):
-    """Convert frame to grayscale handling various formats."""
-    if not isinstance(frame, np.ndarray):
-        return frame
-    if frame.ndim == 2:
-        return frame
-    if frame.ndim == 3:
-        if frame.shape[2] == 3:
-            return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        if frame.shape[2] == 4:
-            return cv2.cvtColor(frame, cv2.COLOR_RGBA2GRAY)
-        try:
-            return cv2.cvtColor(frame, cv2.COLOR_YUV2GRAY_I420)
-        except Exception:
-            return frame[..., 0]
-    return frame
-
-
-def find_brightest_region(gray):
-    """Find brightest region in grayscale image, returns (center, radius) or (None, None)."""
-    _, maxV, _, _ = cv2.minMaxLoc(gray)
-    if maxV < 180:
-        return None, None
-    
-    thresh_val = int(maxV * 0.65)
-    _, th = cv2.threshold(gray, thresh_val, 255, cv2.THRESH_BINARY)
-    contours, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    if not contours:
-        return None, None
-    
-    c = max(contours, key=cv2.contourArea)
-    area = cv2.contourArea(c)
-    if area <= 10:
-        return None, None
-    
-    M = cv2.moments(c)
-    if M.get('m00', 0) == 0:
-        return None, None
-    
-    return (int(M['m10'] / M['m00']), int(M['m01'] / M['m00'])), max(5, int(math.sqrt(area) / 2))
-
-
-def draw_crosshair(frame, center, radius):
-    """Draw circle and crosshair at center point."""
-    cv2.circle(frame, center, radius, (255, 255, 255), 2)
-    cv2.line(frame, (center[0]-10, center[1]), (center[0]+10, center[1]), (255, 255, 255), 1)
-    cv2.line(frame, (center[0], center[1]-10), (center[0], center[1]+10), (255, 255, 255), 1)
-
-
 # ===== Video Streaming =====
 async def stream_cam0(ws):
     print("Client connected to video stream (cam0).")
@@ -420,28 +368,7 @@ async def stream_cam1(ws):
                 # reshape or take top region to VIDEO_HEIGHT x VIDEO_WIDTH
                 frame = frame[0:VIDEO_HEIGHT, 0:VIDEO_WIDTH]
 
-        try:
-            gray = to_grayscale(frame)
-        except Exception as e:
-            print(f"Warning: failed to convert frame to gray: {e}")
-            gray = np.zeros((VIDEO_HEIGHT, VIDEO_WIDTH), dtype=np.uint8)
-        
-        ir = process_ir_frame(gray)
-        display_frame = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-        
-        if ir.locked:
-            center = (int(ir.cx), int(ir.cy))
-            radius = max(5, int(math.sqrt(ir.area) / 2))
-            draw_crosshair(display_frame, center, radius)
-        else:
-            try:
-                center, radius = find_brightest_region(gray)
-                if center:
-                    draw_crosshair(display_frame, center, radius)
-            except Exception as e:
-                print(f"Warning: brightest-region fallback failed: {e}")
-        
-        await ws.send(encode_frame_with_timestamp(display_frame))
+        await ws.send(encode_frame_with_timestamp(frame))
         await asyncio.sleep(1.0 / VIDEO_FPS)
 
 

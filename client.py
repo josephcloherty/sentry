@@ -66,7 +66,7 @@ VALID_PASSWORD = 'sentry'
 # Each entry must match a command id in templates/index.html COMMAND_DEFS
 DEFAULT_CAMERA_FUNCTION_TABS = {
     'cam0': ['go_dark', 'drop_gps_pin', 'emergency'],
-    'cam1': ['go_dark', 'night_vision', 'loiter', 'emergency'],
+    'cam1': ['go_dark', 'loiter', 'emergency'],
     'hq': ['landing_mode', 'loiter', 'drop_gps_pin', 'emergency']
 }
 
@@ -92,7 +92,7 @@ DEFAULT_SETTINGS = {
 
 ALLOWED_TILE_IDS = {'cam0', 'cam1', 'hq', 'map', 'latency', 'commands'}
 ALLOWED_COMMAND_IDS = {
-    'go_dark', 'night_vision', 'auto_rth', 'drop_gps_pin', 'emergency', 'loiter', 'landing_mode'
+    'go_dark', 'auto_rth', 'drop_gps_pin', 'emergency', 'loiter', 'landing_mode'
 }
 
 # ===== Global State =====
@@ -148,7 +148,6 @@ telemetry_latency_ms = 0
 # Command state (mirrors server-side boolean flags)
 command_state = {
     'go_dark': False,
-    'night_vision': False,
     'auto_rth': False,
     'drop_gps_pin': False,
     'emergency': False,
