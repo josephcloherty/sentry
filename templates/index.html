@@ -196,6 +196,13 @@
                         <button type="button" class="hq-cv-mode-btn" data-hq-cv-mode="landing_mode" aria-pressed="false">Landing</button>
                         <button type="button" class="hq-cv-mode-btn" data-hq-cv-mode="target_tracking" aria-pressed="false">Target</button>
                     </div>
+                    <div class="hq-tt-model-row" data-hq-tt-model-row>
+                        <label class="hq-tt-model-label" for="hqTtModelSelect">Model</label>
+                        <select id="hqTtModelSelect" class="hq-tt-model-select" data-hq-tt-model-select aria-label="Target tracking model selector">
+                            <option value="best8np2">best8np2</option>
+                            <option value="best_stg1">best_stg1</option>
+                        </select>
+                    </div>
                 </div>
                 <button class="minimize" data-minimize>Minimize</button>
             </div>
@@ -409,6 +416,23 @@
             <div class="desc">End-to-end latency with component breakdown</div>
         </div>
 
+        <div class="card mavlink-terminal-card" data-card data-card-id="mavlink_terminal">
+            <div class="card-header" data-header>
+                <span id="mavlink-terminal-status-dot" class="status-dot off"></span>
+                <h2>MAVLink Terminal</h2>
+                <button class="minimize" data-minimize>Minimize</button>
+            </div>
+            <div class="media mavlink-terminal-content">
+                <div class="mavlink-terminal-shell">
+                    <div class="mavlink-terminal-meta">
+                        <span id="mavlink-terminal-endpoint">UDP endpoint: --</span>
+                    </div>
+                    <pre id="mavlink-terminal-output" class="mavlink-terminal-output">Waiting for pilot messages (PreArm, EKF, GPS)...</pre>
+                </div>
+            </div>
+            <div class="desc">Mission Planner-style pilot messages (PreArm, EKF, GPS, arm state)</div>
+        </div>
+
         <div class="card command-card" data-card data-card-id="commands">
             <div class="card-header" data-header>
                 <span id="commands-status-dot" class="status-dot on"></span>
@@ -466,6 +490,7 @@
             { id: 'hq', label: 'High quality camera' },
             { id: 'map', label: 'GPS map' },
             { id: 'latency', label: 'Latency monitoring', isWide: true },
+            { id: 'mavlink_terminal', label: 'MAVLink terminal', isWide: true },
             { id: 'commands', label: 'SENTRY controls' }
         ];
         const DEFAULT_TILE_ORDER = TILE_DEFS.map(tile => tile.id);
@@ -478,6 +503,7 @@
                 hq: true,
                 map: true,
                 latency: true,
+                mavlink_terminal: true,
                 commands: true
             },
             camera_function_tabs: DEFAULT_CAMERA_FUNCTION_TABS,
@@ -485,6 +511,9 @@
         };
         const SERVER_USER_SETTINGS = JSON.parse(document.getElementById(USER_SETTINGS_DATA_ID)?.textContent || 'null');
         const LATENCY_SNAPSHOT_TIMEOUT_MS = 1500;
+        const MAVLINK_TERMINAL_ENDPOINT = '/api/mavlink_messages';
+        const MAVLINK_TERMINAL_POLL_MS = 500;
+        const MAVLINK_TERMINAL_SCROLL_BOTTOM_THRESHOLD_PX = 24;
         const MAP_RAIL_COMMAND_ID = 'drop_gps_pin';
         const MAP_GUIDED_MODE_LABEL = 'Guided Mode';
         const MINIMAP_ENLARGE_ACTIVE_CLASS = 'is-large';
@@ -508,6 +537,9 @@
         const CAMERA_RAIL_BLOCKED_COMMAND_IDS = new Set(['landing_mode']);
         const HQ_CV_MODE_ENDPOINT = '/api/hq_cv_mode';
         const HQ_TARGET_SELECTION_ENDPOINT = '/api/hq_target_selection';
+        const HQ_TARGET_TRACKING_MODEL_ENDPOINT = '/api/hq_target_tracking_model';
+        const HQ_TARGET_TRACKING_STATUS_ENDPOINT = '/api/hq_target_tracking_status';
+        const HQ_TARGET_TRACKING_STATUS_POLL_MS = 1500;
         const HQ_CV_DEFAULT_MODE = '';
 
         let userSettings = mergeSettings(DEFAULT_USER_SETTINGS, SERVER_USER_SETTINGS || {});
@@ -516,9 +548,16 @@
         let statusUpdateIntervalMs = userSettings.status_update_interval_ms || DEFAULT_USER_SETTINGS.status_update_interval_ms;
         let latencyIntervalId = null;
         let statusIntervalId = null;
+        let mavlinkTerminalIntervalId = null;
         let hqCvMode = HQ_CV_DEFAULT_MODE;
         let hqTargetSelected = false;
         let hqTargetTrackId = null;
+        let hqTrackingStatusText = '';
+        let hqTargetTrackingModelKey = 'best8np2';
+        let hqTargetTrackingModelOptions = [
+            { key: 'best8np2', label: 'best8np2' },
+            { key: 'best_stg1', label: 'best_stg1' }
+        ];
         let guidedModeEnabled = false;
         let guidedModeAltitudeM = MAP_GUIDED_DEFAULT_ALT_M;
         let minimapLarge = false;
@@ -694,6 +733,11 @@
         function startStatusPolling() {
             if (statusIntervalId) clearInterval(statusIntervalId);
             statusIntervalId = setInterval(updateStatusDots, statusUpdateIntervalMs);
+        }
+
+        function startMavlinkTerminalPolling() {
+            if (mavlinkTerminalIntervalId) clearInterval(mavlinkTerminalIntervalId);
+            mavlinkTerminalIntervalId = setInterval(refreshMavlinkTerminal, MAVLINK_TERMINAL_POLL_MS);
         }
 
         function applySettingsToUI(settings) {
@@ -1124,15 +1168,15 @@
                         const wallClockEndMs = Date.now();
                         const captureToScreenMs = normalizeLatency(wallClockEndMs - (frameTs * 1000));
 
-                        if (Number.isFinite(headerNetworkMs) && headerNetworkMs >= 0) {
-                            latencyState.hq.network_ms = normalizeLatency(headerNetworkMs);
-                        }
-                        if (Number.isFinite(headerProcessingMs) && headerProcessingMs >= 0) {
-                            latencyState.hq.processing_ms = normalizeLatency(headerProcessingMs);
-                        }
+                        // Prefer header values when present; default missing headers to 0
+                        const netMs = (Number.isFinite(headerNetworkMs) && headerNetworkMs >= 0) ? normalizeLatency(headerNetworkMs) : 0;
+                        const procMs = (Number.isFinite(headerProcessingMs) && headerProcessingMs >= 0) ? normalizeLatency(headerProcessingMs) : 0;
+
+                        latencyState.hq.network_ms = netMs;
+                        latencyState.hq.processing_ms = procMs;
 
                         latencyState.hq.capture_to_screen_ms = captureToScreenMs;
-                        const residualDelivery = captureToScreenMs - latencyState.hq.network_ms - latencyState.hq.processing_ms;
+                        const residualDelivery = captureToScreenMs - netMs - procMs;
                         latencyState.hq.delivery_ms = normalizeLatency(residualDelivery);
                         return;
                     }
@@ -1186,8 +1230,48 @@
                     updateStatusDot('cam1-status-dot', status.cam1_online);
                     updateStatusDot('hq-status-dot', status.hq_online);
                     updateStatusDot('map-status-dot', status.map_online);
+                    updateStatusDot('mavlink-terminal-status-dot', status.mavlink_terminal_online);
                 })
                 .catch(err => console.error('Failed to fetch status:', err));
+        }
+
+        function renderMavlinkTerminal(data) {
+            const outputEl = document.getElementById('mavlink-terminal-output');
+            const endpointEl = document.getElementById('mavlink-terminal-endpoint');
+            if (!outputEl) return;
+
+            if (endpointEl) {
+                const endpointText = data?.endpoint || '--';
+                endpointEl.textContent = `UDP endpoint: ${endpointText}`;
+            }
+
+            const isNearBottom = (outputEl.scrollTop + outputEl.clientHeight) >= (outputEl.scrollHeight - MAVLINK_TERMINAL_SCROLL_BOTTOM_THRESHOLD_PX);
+            const lines = Array.isArray(data?.messages)
+                ? data.messages.map(item => item?.line).filter(Boolean)
+                : [];
+
+            if (lines.length === 0) {
+                outputEl.textContent = 'Waiting for pilot messages (PreArm, EKF, GPS)...';
+            } else {
+                outputEl.textContent = lines.join('\n');
+            }
+
+            updateStatusDot('mavlink-terminal-status-dot', Boolean(data?.online));
+
+            if (isNearBottom) {
+                outputEl.scrollTop = outputEl.scrollHeight;
+            }
+        }
+
+        async function refreshMavlinkTerminal() {
+            try {
+                const response = await fetchWithTimeout(MAVLINK_TERMINAL_ENDPOINT, { cache: 'no-store' }, LATENCY_SNAPSHOT_TIMEOUT_MS);
+                if (!response.ok) return;
+                const data = await response.json();
+                renderMavlinkTerminal(data);
+            } catch (err) {
+                updateStatusDot('mavlink-terminal-status-dot', false);
+            }
         }
         
         // ===== MAP CONTROL FUNCTIONS =====
@@ -1723,6 +1807,133 @@
             });
             applyHqTargetSelectionToUI();
             updateHqStreamSelectionState();
+            renderHqTargetTrackingModelSelector();
+            renderHqTrackingStatusLine();
+        }
+
+        function renderHqTargetTrackingModelSelector() {
+            const rows = document.querySelectorAll('[data-hq-tt-model-row]');
+            const selects = document.querySelectorAll('[data-hq-tt-model-select]');
+            const show = hqCvMode === 'target_tracking';
+
+            rows.forEach(row => {
+                row.style.display = show ? 'inline-flex' : 'none';
+            });
+
+            selects.forEach(selectEl => {
+                const existing = new Set(Array.from(selectEl.options).map(opt => opt.value));
+                hqTargetTrackingModelOptions.forEach(opt => {
+                    if (existing.has(opt.key)) return;
+                    const optionEl = document.createElement('option');
+                    optionEl.value = opt.key;
+                    optionEl.textContent = opt.label;
+                    selectEl.appendChild(optionEl);
+                });
+                if (hqTargetTrackingModelKey) {
+                    selectEl.value = hqTargetTrackingModelKey;
+                }
+            });
+        }
+
+        function renderHqTrackingStatusLine() {
+            const selectEls = document.querySelectorAll('[data-hq-tt-model-select]');
+            if (!selectEls.length) return;
+
+            const text = (hqTrackingStatusText || '').trim();
+            selectEls.forEach(selectEl => {
+                if (hqCvMode !== 'target_tracking') {
+                    selectEl.title = '';
+                    return;
+                }
+                selectEl.title = text;
+            });
+        }
+
+        async function loadHqTargetTrackingModel() {
+            try {
+                const res = await fetch(HQ_TARGET_TRACKING_MODEL_ENDPOINT, { cache: 'no-store' });
+                if (!res.ok) return;
+                const data = await res.json();
+                if (Array.isArray(data?.available_models)) {
+                    hqTargetTrackingModelOptions = data.available_models
+                        .filter(opt => typeof opt?.key === 'string')
+                        .map(opt => ({ key: opt.key, label: String(opt?.label || opt.key) }));
+                }
+                if (typeof data?.selected_model_key === 'string') {
+                    hqTargetTrackingModelKey = data.selected_model_key;
+                }
+                renderHqTargetTrackingModelSelector();
+            } catch (err) {
+                console.error('Failed to load HQ target tracking model:', err);
+            }
+        }
+
+        async function setHqTargetTrackingModel(modelKey) {
+            if (!modelKey || modelKey === hqTargetTrackingModelKey) return;
+            try {
+                const res = await fetch(HQ_TARGET_TRACKING_MODEL_ENDPOINT, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ model_key: modelKey })
+                });
+                if (!res.ok) return;
+                const data = await res.json();
+                if (!data?.success) return;
+                if (Array.isArray(data?.available_models)) {
+                    hqTargetTrackingModelOptions = data.available_models
+                        .filter(opt => typeof opt?.key === 'string')
+                        .map(opt => ({ key: opt.key, label: String(opt?.label || opt.key) }));
+                }
+                if (typeof data?.selected_model_key === 'string') {
+                    hqTargetTrackingModelKey = data.selected_model_key;
+                }
+                hqTrackingStatusText = 'Target Tracking model switched';
+                renderHqTargetTrackingModelSelector();
+                renderHqTrackingStatusLine();
+                await refreshHqTargetTrackingStatus();
+            } catch (err) {
+                console.error('Failed to set HQ target tracking model:', err);
+            }
+        }
+
+        async function refreshHqTargetTrackingStatus() {
+            try {
+                const res = await fetch(HQ_TARGET_TRACKING_STATUS_ENDPOINT, { cache: 'no-store' });
+                if (!res.ok) return;
+                const data = await res.json();
+
+                if (hqCvMode !== 'target_tracking') {
+                    hqTrackingStatusText = '';
+                    renderHqTrackingStatusLine();
+                    return;
+                }
+
+                if (Array.isArray(data?.available_models)) {
+                    hqTargetTrackingModelOptions = data.available_models
+                        .filter(opt => typeof opt?.key === 'string')
+                        .map(opt => ({ key: opt.key, label: String(opt?.label || opt.key) }));
+                }
+                if (typeof data?.selected_model_key === 'string') {
+                    hqTargetTrackingModelKey = data.selected_model_key;
+                }
+                renderHqTargetTrackingModelSelector();
+
+                if (data?.ready) {
+                    const modelPath = typeof data?.loaded_model_path === 'string' ? data.loaded_model_path : '';
+                    const modelFile = modelPath ? modelPath.split('/').pop() : '';
+                    const selectedLabel = typeof data?.selected_model_label === 'string' ? data.selected_model_label : hqTargetTrackingModelKey;
+                    hqTrackingStatusText = modelFile
+                        ? `Model ${selectedLabel}: ${modelFile}`
+                        : 'Target Tracking ready';
+                } else if (typeof data?.error === 'string' && data.error.trim()) {
+                    hqTrackingStatusText = data.error.trim();
+                } else {
+                    hqTrackingStatusText = 'Target Tracking initializing...';
+                }
+                renderHqTrackingStatusLine();
+            } catch (err) {
+                console.error('Failed to refresh HQ tracking status:', err);
+            }
         }
 
         function applyHqTargetSelectionToUI() {
@@ -1911,6 +2122,15 @@
             }, true);
 
             applyHqCvModeToUI();
+        }
+
+        function setupHqTargetTrackingModelSelector() {
+            document.addEventListener('change', (e) => {
+                const selectEl = e.target?.closest?.('[data-hq-tt-model-select]');
+                if (!selectEl) return;
+                e.stopPropagation();
+                setHqTargetTrackingModel(selectEl.value);
+            }, true);
         }
 
         /* Hover floating label removed — hover/tooltip UI is handled externally */
@@ -2186,6 +2406,7 @@
             setupGuidedModeToolbar();
             setupMinimapControls();
             setupHqCvModeSwitch();
+            setupHqTargetTrackingModelSelector();
             setupHqTargetSelectionInteraction();
             window.addEventListener('message', handleGuidedMapMessage);
             updateMapControls();
@@ -2198,13 +2419,19 @@
             renderCommandSuite();
             renderMapFunctionRail();
             loadHqCvMode();
+            loadHqTargetTrackingModel();
             loadHqTargetSelection();
+            refreshHqTargetTrackingStatus();
             fetchCommandState();
             setInterval(fetchCommandState, 2000);
             setInterval(loadHqTargetSelection, 1000);
+            setInterval(refreshHqTargetTrackingStatus, HQ_TARGET_TRACKING_STATUS_POLL_MS);
 
             refreshLatencyData();
             startLatencyPolling();
+
+            refreshMavlinkTerminal();
+            startMavlinkTerminalPolling();
             
             updateStatusDots();
             startStatusPolling();

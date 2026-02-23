@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-def draw_throttle_widget(img, throttle, position=(20, 20), width=100, height=40):
+def draw_throttle_widget(img, throttle, position=(20, 20), width=20, height=100, max_throttle=85):
     """
     Draw a throttle widget on an image
     
@@ -16,39 +16,49 @@ def draw_throttle_widget(img, throttle, position=(20, 20), width=100, height=40)
         Image with throttle widget drawn
     """
     x, y = position
-    
-    # Throttle outline thickness
+
     outline_thickness = 1
-    
-    # Colors
+
+    # Colors (BGR)
     bg_color = (40, 40, 40)  # Dark gray background
     outline_color = (200, 200, 200)  # Light gray outline
-    
-
-    fill_color = (255, 255, 255)  # White
-    
+    normal_fill = (255, 255, 255)  # White for normal throttle (per spec)
+    over_fill = (0, 0, 255)  # Red when over max_throttle
     text_color = (255, 255, 255)  # White text
-    
-    # Draw background rectangle
-    cv2.rectangle(img, (x, y), (x + height, y + width), bg_color, -1)
-    
-    # Draw throttle outline
-    cv2.rectangle(img, (x, y), (x + height, y + width), outline_color, outline_thickness)
-    
-    # Calculate fill width based on throttle percentage
-    fill_margin = 4  # Margin inside the throttle
-    fill_width = int((width - 2 * fill_margin) * (throttle / 100.0))
-    
-    # Draw throttle fill
-    if fill_width > 0:
-        #cv2.rectangle(img, 
-                      #(x + fill_margin, y + fill_margin), 
-                      #(x + fill_margin + fill_width, y + height - fill_margin), 
-                      #fill_color, -1)
-        cv2.rectangle(img, 
-                      (x + height - fill_margin, y + fill_margin + fill_width),
-                      (x + fill_margin, y + fill_margin), 
-                      fill_color, -1)
+
+    # Draw background rectangle and outline (width x height)
+    cv2.rectangle(img, (x, y), (x + width, y + height), bg_color, -1)
+    cv2.rectangle(img, (x, y), (x + width, y + height), outline_color, outline_thickness)
+
+    # Inner area (respect margin)
+    fill_margin = 4
+    inner_left = x + fill_margin
+    inner_right = x + width - fill_margin
+    inner_top = y + fill_margin
+    inner_bottom = y + height - fill_margin
+    inner_height = max(0, inner_bottom - inner_top)
+
+    # Map throttle -> fill height. Visual max corresponds to `max_throttle`.
+    throttle_clamped = max(0.0, min(100.0, float(throttle)))
+    fill_ratio = min(throttle_clamped, float(max_throttle)) / float(max_throttle) if max_throttle > 0 else 0
+    fill_height = int(inner_height * fill_ratio)
+
+    # Choose fill color: red if above max_throttle, otherwise normal
+    fill_color = over_fill if throttle_clamped > float(max_throttle) else normal_fill
+
+    # Draw fill from bottom up
+    if fill_height > 0:
+        fill_top = inner_bottom - fill_height
+        cv2.rectangle(img, (inner_left, fill_top), (inner_right, inner_bottom), fill_color, -1)
+
+    # If over limit, draw a thin red band at the top to indicate overrange
+    if throttle_clamped > float(max_throttle):
+        over_ratio = (throttle_clamped - float(max_throttle)) / (100.0 - float(max_throttle)) if throttle_clamped < 100.0 else 1.0
+        over_height = int(inner_height * min(1.0, over_ratio))
+        if over_height > 0:
+            over_top = inner_top
+            over_bottom = inner_top + over_height
+            cv2.rectangle(img, (inner_left, over_top), (inner_right, over_bottom), over_fill, -1)
     
     # Draw percentage text
     text = f"{int(throttle)}%"

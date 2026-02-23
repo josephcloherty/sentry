@@ -107,90 +107,6 @@ def pick_camera_backend(backend_arg: str) -> int:
     raise ValueError("Unsupported --camera-backend. Use: auto, avfoundation, any")
 
 
-class PyAVWebcamCapture:
-    def __init__(self, camera_index: int, frame_width: int, frame_height: int, frame_fps: float) -> None:
-        self.camera_index = camera_index
-        self.frame_width = frame_width
-        self.frame_height = frame_height
-        self.frame_fps = frame_fps
-        self.container = None
-        self._decoder = None
-        self._pending_frame: np.ndarray | None = None
-
-    def open(self) -> None:
-        if not is_macos():
-            raise RuntimeError("PyAV AVFoundation webcam mode is only supported on macOS in this script.")
-
-        try:
-            import av  # type: ignore
-        except Exception as exc:
-            raise RuntimeError("PyAV is not available. Install 'av' or use --webcam-capture-mode ffmpeg/opencv.") from exc
-
-        options = {
-            "framerate": f"{self.frame_fps:.2f}",
-            "video_size": f"{self.frame_width}x{self.frame_height}",
-        }
-        input_candidates = [f"{self.camera_index}:none", f"{self.camera_index}"]
-        last_error: str | None = None
-
-        for input_device in input_candidates:
-            try:
-                container = av.open(input_device, format="avfoundation", mode="r", options=options)
-                decoder = container.decode(video=0)
-
-                first_frame = next(decoder)
-                self._pending_frame = first_frame.to_ndarray(format="bgr24")
-                self.container = container
-                self._decoder = decoder
-                return
-            except Exception as exc:
-                last_error = str(exc)
-                try:
-                    if "container" in locals() and container is not None:
-                        container.close()
-                except Exception:
-                    pass
-
-        raise RuntimeError(f"PyAV failed to open webcam stream. Last error: {last_error or 'unknown pyav camera error'}")
-
-    def isOpened(self) -> bool:
-        return self.container is not None
-
-    def read(self) -> tuple[bool, np.ndarray | None]:
-        if self.container is None or self._decoder is None:
-            return False, None
-
-        if self._pending_frame is not None:
-            frame = self._pending_frame
-            self._pending_frame = None
-            return True, frame
-
-        try:
-            frame = next(self._decoder)
-            return True, frame.to_ndarray(format="bgr24")
-        except Exception:
-            return False, None
-
-    def get(self, prop: int) -> float:
-        if prop == cv2.CAP_PROP_FPS:
-            return float(self.frame_fps)
-        if prop == cv2.CAP_PROP_FRAME_WIDTH:
-            return float(self.frame_width)
-        if prop == cv2.CAP_PROP_FRAME_HEIGHT:
-            return float(self.frame_height)
-        return 0.0
-
-    def release(self) -> None:
-        self._pending_frame = None
-        if self.container is not None:
-            try:
-                self.container.close()
-            except Exception:
-                pass
-        self.container = None
-        self._decoder = None
-
-
 class FFmpegWebcamCapture:
     def __init__(self, camera_index: int, frame_width: int, frame_height: int, frame_fps: float) -> None:
         self.camera_index = camera_index
@@ -360,16 +276,6 @@ def open_capture_by_mode(
 ) -> tuple[object, int, str, str]:
     mode = capture_mode.lower().strip()
 
-    if mode == "pyav":
-        cap = PyAVWebcamCapture(
-            camera_index=camera_index,
-            frame_width=camera_width,
-            frame_height=camera_height,
-            frame_fps=camera_fps,
-        )
-        cap.open()
-        return cap, camera_index, "pyav", "pyav-avfoundation"
-
     if mode == "ffmpeg":
         cap = FFmpegWebcamCapture(
             camera_index=camera_index,
@@ -392,7 +298,7 @@ def open_capture_by_mode(
 
 def capture_mode_candidates(preferred_mode: str) -> list[str]:
     modes: list[str] = []
-    for mode in [preferred_mode, "pyav", "ffmpeg", "opencv"]:
+    for mode in [preferred_mode, "ffmpeg", "opencv"]:
         normalized = mode.lower().strip()
         if normalized not in modes:
             modes.append(normalized)
@@ -401,11 +307,9 @@ def capture_mode_candidates(preferred_mode: str) -> list[str]:
 
 def recovery_capture_mode_candidates(current_mode: str) -> list[str]:
     current = current_mode.lower().strip()
-    if current == "pyav":
-        return ["ffmpeg", "opencv", "pyav"]
     if current == "ffmpeg":
-        return ["opencv", "pyav", "ffmpeg"]
-    return ["pyav", "ffmpeg", "opencv"]
+        return ["opencv", "ffmpeg"]
+    return ["ffmpeg", "opencv"]
 
 
 def build_frame_reader(capture_mode: str, cap) -> tuple[LatestFrameReader | None, int]:
@@ -1318,7 +1222,7 @@ def run_video_inference(
                     open_errors.append(f"{candidate_mode}: {exc}")
 
             if cap is None:
-                raise RuntimeError("Could not open webcam using pyav/ffmpeg/opencv. " + " | ".join(open_errors))
+                raise RuntimeError("Could not open webcam using ffmpeg/opencv. " + " | ".join(open_errors))
             warmup_remaining = max(0, DEFAULT_CAMERA_WARMUP_FRAMES)
             black_streak = 0
             read_fail_streak = 0
@@ -1361,7 +1265,7 @@ def run_video_inference(
                                 except RuntimeError:
                                     continue
                             if not reopened:
-                                raise RuntimeError("Unable to reopen webcam stream in any mode (pyav/ffmpeg/opencv).")
+                                raise RuntimeError("Unable to reopen webcam stream in any mode (ffmpeg/opencv).")
                             frame_reader, last_frame_seq = build_frame_reader(capture_mode, cap)
                             read_fail_streak = 0
                             warmup_remaining = max(0, DEFAULT_CAMERA_WARMUP_FRAMES)
@@ -1417,7 +1321,7 @@ def run_video_inference(
                             except RuntimeError:
                                 continue
                         if not switched:
-                            raise RuntimeError("Unable to recover from black webcam frames in any mode (pyav/ffmpeg/opencv).")
+                            raise RuntimeError("Unable to recover from black webcam frames in any mode (ffmpeg/opencv).")
                         frame_reader, last_frame_seq = build_frame_reader(capture_mode, cap)
                         attempted_fallback = True
                         warmup_remaining = max(0, DEFAULT_CAMERA_WARMUP_FRAMES)
@@ -1619,9 +1523,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--webcam-capture-mode",
-        choices=["pyav", "ffmpeg", "opencv"],
+        choices=["ffmpeg", "opencv"],
         default=DEFAULT_WEBCAM_CAPTURE_MODE,
-        help="Webcam ingest mode (default: pyav; falls back to ffmpeg/opencv automatically)",
+        help="Webcam ingest mode (default: opencv; falls back to ffmpeg automatically)",
     )
     parser.add_argument(
         "--model",

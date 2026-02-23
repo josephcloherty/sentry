@@ -5,16 +5,21 @@ import json
 import logging
 import numpy as np
 import os
-import platform
 import secrets
 import socket
 import struct
 import time
+import sys
 import websockets
 from copy import deepcopy
 from threading import Thread, Lock
 from collections import deque
 import statistics
+
+try:
+    from pymavlink import mavutil
+except Exception:
+    mavutil = None
 
 from flask import Flask, Response, jsonify, render_template, request, make_response
 
@@ -53,29 +58,49 @@ HQ_CV_MODE_UNSELECTED = ''
 HQ_CV_MODE_NONE = 'none'
 HQ_CV_MODE_LANDING = 'landing_mode'
 HQ_CV_MODE_TARGET_TRACKING = 'target_tracking'
-HQ_CV_DEFAULT_MODE = HQ_CV_MODE_NONE
+HQ_CV_DEFAULT_MODE = HQ_CV_MODE_UNSELECTED
 HQ_CV_ALLOWED_MODES = {
     HQ_CV_MODE_UNSELECTED,
     HQ_CV_MODE_NONE,
     HQ_CV_MODE_LANDING,
     HQ_CV_MODE_TARGET_TRACKING,
 }
-HQ_CV_TARGET_TRACKING_TEXT = 'Target Tracking (Coming Soon)'
+HQ_CV_TARGET_TRACKING_TEXT = 'Target Tracking Ready'
 HQ_CV_TARGET_TRACKING_TEXT_SCALE = 0.7
 HQ_CV_TARGET_TRACKING_TEXT_THICKNESS = 2
 HQ_CV_TARGET_TRACKING_TEXT_COLOR = (255, 220, 120)
 
-# Target tracking workflow settings (mirrors object_detection defaults)
-HQ_TT_MODEL_COREML_PATH = './object_detection/coreml/best8np2.mlpackage'
-HQ_TT_MODEL_COREML_FALLBACK_PATH = './object_detection/coreml/best26p2.mlpackage'
-HQ_TT_MODEL_PATH = './object_detection/best8np2.pt'
-HQ_TT_MODEL_FALLBACK_PATH = './object_detection/best8np2.pt'
+# Target tracking workflow settings
+HQ_TT_PRIMARY_MODEL_PATH = './object_detection/best8np2.pt'
+HQ_TT_SECONDARY_MODEL_PATH = './object_detection/RTv4-S-hgnet.autopt.pt'
+HQ_TT_MODEL_KEY_PRIMARY = 'Fast'
+HQ_TT_MODEL_KEY_SECONDARY = 'Context-Aware'
+HQ_TT_DEFAULT_MODEL_KEY = HQ_TT_MODEL_KEY_PRIMARY
+HQ_TT_MODEL_OPTIONS = {
+    HQ_TT_MODEL_KEY_PRIMARY: {
+        'label': 'best8np2',
+        'path': HQ_TT_PRIMARY_MODEL_PATH,
+    },
+    HQ_TT_MODEL_KEY_SECONDARY: {
+        'label': 'best_stg1',
+        'path': HQ_TT_SECONDARY_MODEL_PATH,
+    },
+}
 HQ_TT_TRACKER_PATH = './object_detection/bytetrack_persist.yaml'
+HQ_TT_STATUS_MAX_ATTEMPTS_TO_REPORT = 8
+HQ_TT_VALIDATE_MODEL_ON_INIT = True
+HQ_TT_INIT_VALIDATION_IMAGE_SIZE = 64
+HQ_TT_INIT_VALIDATION_DEVICE = 'auto'
+HQ_TT_INIT_RETRY_COOLDOWN_SEC = 5.0
+HQ_TT_ASYNC_INIT_ENABLED = True
+HQ_TT_INIT_STATUS_TEXT = 'Target Tracking: INITIALIZING MODEL...'
+HQ_TT_IGNORE_DYLIB_CONFLICT = True
 HQ_TT_CONFIDENCE = 0.35
 HQ_TT_IOU = 0.2
 HQ_TT_IMAGE_SIZE = 800
 HQ_TT_PERSIST = True
 HQ_TT_DEVICE = 'auto'
+HQ_TT_INFER_MIN_INTERVAL_SEC = 0.12
 HQ_TT_PERSON_ONLY = False
 HQ_TT_LOCK_ON_CONF = 0.50
 HQ_TT_STICK_MIN_CONF = 0.15
@@ -86,9 +111,15 @@ HQ_TT_REACQUIRE_MAX_CENTER_DIST_RATIO = 0.20
 HQ_TT_BOX_COLOR = (255, 170, 60)
 HQ_TT_TARGET_COLOR = (40, 220, 120)
 HQ_TT_TEXT_COLOR = (255, 255, 255)
+HQ_TT_STABLE_ID_MAX_GAP = 60
+HQ_TT_STABLE_ID_MIN_IOU = 0.20
+HQ_TT_STABLE_ID_MAX_CENTER_DIST = 140.0
+HQ_TT_SMOOTH_ALPHA = 0.60
+HQ_TT_MIN_TRACK_HITS = 2
+HQ_TT_STICKY_LOCK_CLASS_NAMES = {'person', 'pedestrian', 'people'}
 HQ_LANDING_LOCAL_FIDUCIAL_FALLBACK_IN_TEST = True
 HQ_LANDING_STATUS_TEXT_COLOR = (120, 220, 255)
-HQ_TT_FALLBACK_IN_TEST = True
+HQ_TT_FALLBACK_IN_TEST = False
 HQ_TT_FALLBACK_MIN_AREA_RATIO = 0.002
 GUIDED_GOTO_LAT_MIN = -90.0
 GUIDED_GOTO_LAT_MAX = 90.0
@@ -99,8 +130,27 @@ GUIDED_GOTO_MAX_ALT_M = 500.0
 HTTP_REQUEST_LOG_FILENAME = 'client_log'
 HTTP_REQUEST_LOG_ENCODING = 'utf-8'
 HTTP_REQUEST_LOG_LEVEL = logging.INFO
+MAVLINK_MONITOR_ENABLED = True
+MAVLINK_MONITOR_MESSAGE_BUFFER_SIZE = 250
+MAVLINK_MONITOR_RECONNECT_DELAY_SEC = 2.0
+MAVLINK_MONITOR_RECV_TIMEOUT_SEC = 1.0
+MAVLINK_MONITOR_SOURCE_SYSTEM = 255
+MAVLINK_MONITOR_SOURCE_COMPONENT = 0
+MAVLINK_MONITOR_ALLOWED_MESSAGE_TYPES = {'STATUSTEXT'}
+MAVLINK_MONITOR_STATUSTEXT_SEVERITY_LABELS = {
+    0: 'EMERGENCY',
+    1: 'ALERT',
+    2: 'CRITICAL',
+    3: 'ERROR',
+    4: 'WARNING',
+    5: 'NOTICE',
+    6: 'INFO',
+    7: 'DEBUG',
+}
 
 TEST_MODE = True
+TEST_MODE_ENABLE_COMMAND_WS = False
+TEST_MODE_ENABLE_FIDUCIAL_WS = False
 
 if TEST_MODE:
     SERVER_IP = 'localhost'
@@ -118,6 +168,7 @@ else:
     TELEMETRY_PORT = 8764
     COMMAND_PORT = 8763
     FIDUCIAL_PORT = 8770
+MAVLINK_MONITOR_UDP_ENDPOINT = 'udpin:0.0.0.0:14550'
 VALID_USERNAME = 'argus'
 VALID_PASSWORD = 'sentry'
 
@@ -130,7 +181,7 @@ DEFAULT_CAMERA_FUNCTION_TABS = {
 }
 
 # Home screen tile ordering
-DEFAULT_TILE_ORDER = ['cam0', 'cam1', 'hq', 'map', 'latency', 'commands']
+DEFAULT_TILE_ORDER = ['cam0', 'cam1', 'hq', 'map', 'latency', 'mavlink_terminal', 'commands']
 
 # Per-user UI settings defaults
 DEFAULT_SETTINGS = {
@@ -143,13 +194,14 @@ DEFAULT_SETTINGS = {
         'hq': True,
         'map': True,
         'latency': True,
+        'mavlink_terminal': True,
         'commands': True
     },
     'camera_function_tabs': DEFAULT_CAMERA_FUNCTION_TABS,
     'tile_order': DEFAULT_TILE_ORDER
 }
 
-ALLOWED_TILE_IDS = {'cam0', 'cam1', 'hq', 'map', 'latency', 'commands'}
+ALLOWED_TILE_IDS = {'cam0', 'cam1', 'hq', 'map', 'latency', 'mavlink_terminal', 'commands'}
 ALLOWED_COMMAND_IDS = {
     'go_dark', 'auto_rth', 'drop_gps_pin', 'emergency', 'loiter', 'landing_mode'
 }
@@ -242,14 +294,26 @@ hq_tt_model = None
 hq_tt_model_lock = Lock()
 hq_tt_infer_lock = Lock()
 hq_tt_error = None
+hq_tt_loaded_model_path = None
+hq_tt_loaded_runtime_path = None
+hq_tt_last_model_attempts = []
+hq_tt_selected_model_key = HQ_TT_DEFAULT_MODEL_KEY
+hq_tt_last_init_attempt_ts = 0.0
+hq_tt_init_in_progress = False
 hq_tt_class_filter = None
 hq_tt_state_lock = Lock()
+hq_tt_stable_assigner = None
+hq_tt_track_smoother = None
+hq_tt_sticky_gate = None
+hq_tt_names_by_id = None
+hq_tt_frame_index = 0
 hq_tt_selected_track_id = None
 hq_tt_selected_last_box = None
 hq_tt_selected_missed_frames = 0
 hq_tt_latest_detections = []
 hq_tt_latest_frame_width = 0
 hq_tt_latest_frame_height = 0
+hq_tt_last_infer_ts = 0.0
 
 # Telemetry data
 mavlink_data = {
@@ -261,6 +325,12 @@ mavlink_data = {
 }
 telemetry_latency_ms = 0
 
+# MAVLink message monitor state (raw decoded messages from Pixhawk UDP endpoint)
+mavlink_message_log = deque(maxlen=MAVLINK_MONITOR_MESSAGE_BUFFER_SIZE)
+mavlink_message_lock = Lock()
+mavlink_monitor_online = False
+last_mavlink_message_time = 0
+
 # Command state (mirrors server-side boolean flags)
 command_state = {
     'go_dark': False,
@@ -271,6 +341,7 @@ command_state = {
     'landing_mode': False,
 }
 command_ws = None  # Persistent WebSocket to server for commands
+command_loop = None
 
 # Session + settings state
 session_tokens = {}
@@ -625,6 +696,224 @@ def _hq_tt_center_distance(box_a, box_b):
     return (dx * dx + dy * dy) ** 0.5
 
 
+def _hq_tt_stable_color(stable_id):
+    return (
+        int((stable_id * 37) % 255),
+        int((stable_id * 17 + 91) % 255),
+        int((stable_id * 67 + 53) % 255),
+    )
+
+
+class _HqStableIdAssigner:
+    def __init__(self, max_gap, min_iou, max_center_dist):
+        self.max_gap = max_gap
+        self.min_iou = min_iou
+        self.max_center_dist = max_center_dist
+        self.next_stable_id = 1
+        self.tracker_to_stable = {}
+        self.tracker_last_seen = {}
+        self.stable_last_box = {}
+        self.stable_last_seen = {}
+
+    def _match_existing_stable(self, box, used_stable_ids, frame_idx):
+        best_stable = None
+        best_score = -1.0
+
+        for stable_id, prev_box in self.stable_last_box.items():
+            if stable_id in used_stable_ids:
+                continue
+
+            age = frame_idx - self.stable_last_seen.get(stable_id, -999999)
+            if age < 0 or age > self.max_gap:
+                continue
+
+            iou_score = _hq_tt_box_iou(box, prev_box)
+            dist = _hq_tt_center_distance(box, prev_box)
+            if iou_score < self.min_iou:
+                continue
+            if dist > self.max_center_dist:
+                continue
+
+            score = iou_score - (dist / max(self.max_center_dist, 1.0)) * 0.25
+            if score > best_score:
+                best_score = score
+                best_stable = stable_id
+
+        return best_stable
+
+    def assign(self, detections, frame_idx):
+        used_stable_ids = set()
+
+        for det in detections:
+            tracker_id = det.get('track_id')
+            box = det.get('box')
+            stable_id = None
+
+            if tracker_id is not None and tracker_id in self.tracker_to_stable:
+                candidate = self.tracker_to_stable[tracker_id]
+                if candidate not in used_stable_ids:
+                    stable_id = candidate
+
+            if stable_id is None:
+                matched = self._match_existing_stable(box, used_stable_ids, frame_idx)
+                if matched is not None:
+                    stable_id = matched
+                else:
+                    stable_id = self.next_stable_id
+                    self.next_stable_id += 1
+
+            if tracker_id is not None:
+                self.tracker_to_stable[tracker_id] = stable_id
+                self.tracker_last_seen[tracker_id] = frame_idx
+
+            self.stable_last_box[stable_id] = box
+            self.stable_last_seen[stable_id] = frame_idx
+            used_stable_ids.add(stable_id)
+            det['stable_id'] = stable_id
+
+        stale_trackers = [
+            tracker_id
+            for tracker_id, last_seen in self.tracker_last_seen.items()
+            if frame_idx - last_seen > self.max_gap * 2
+        ]
+        for tracker_id in stale_trackers:
+            self.tracker_last_seen.pop(tracker_id, None)
+            self.tracker_to_stable.pop(tracker_id, None)
+
+        stale_stable = [
+            stable_id
+            for stable_id, last_seen in self.stable_last_seen.items()
+            if frame_idx - last_seen > self.max_gap * 3
+        ]
+        for stable_id in stale_stable:
+            self.stable_last_seen.pop(stable_id, None)
+            self.stable_last_box.pop(stable_id, None)
+
+        return detections
+
+
+class _HqTrackSmoother:
+    def __init__(self, alpha, hold_frames, min_track_hits):
+        self.alpha = max(0.0, min(alpha, 1.0))
+        self.hold_frames = max(0, hold_frames)
+        self.min_track_hits = max(1, min_track_hits)
+        self.state = {}
+
+    def _smooth_box(self, previous, current):
+        alpha = self.alpha
+        inv = 1.0 - alpha
+        return (
+            previous[0] * inv + current[0] * alpha,
+            previous[1] * inv + current[1] * alpha,
+            previous[2] * inv + current[2] * alpha,
+            previous[3] * inv + current[3] * alpha,
+        )
+
+    def update(self, detections, frame_idx):
+        visible = []
+        seen_stable_ids = set()
+
+        for det in detections:
+            stable_id = det.get('stable_id')
+            if stable_id is None:
+                continue
+
+            current_box = det['box']
+            track_state = self.state.get(stable_id)
+            if track_state is None:
+                smoothed_box = current_box
+                hits = 1
+            else:
+                smoothed_box = self._smooth_box(track_state['box'], current_box)
+                hits = int(track_state['hits']) + 1
+
+            self.state[stable_id] = {
+                'box': smoothed_box,
+                'conf': det.get('conf'),
+                'class_id': det.get('class_id', 0),
+                'last_seen': frame_idx,
+                'hits': hits,
+            }
+            seen_stable_ids.add(stable_id)
+
+            if hits >= self.min_track_hits:
+                visible.append({
+                    **det,
+                    'box': smoothed_box,
+                    'hits': hits,
+                    'ghost': False,
+                })
+
+        to_remove = []
+        for stable_id, track_state in self.state.items():
+            if stable_id in seen_stable_ids:
+                continue
+
+            age = frame_idx - int(track_state['last_seen'])
+            hits = int(track_state['hits'])
+            if age <= self.hold_frames and hits >= self.min_track_hits:
+                visible.append({
+                    'box': track_state['box'],
+                    'conf': track_state.get('conf'),
+                    'class_id': int(track_state.get('class_id', 0)),
+                    'track_id': None,
+                    'stable_id': stable_id,
+                    'hits': hits,
+                    'ghost': True,
+                })
+            elif age > self.hold_frames:
+                to_remove.append(stable_id)
+
+        for stable_id in to_remove:
+            self.state.pop(stable_id, None)
+
+        return visible
+
+
+class _HqStickyConfidenceGate:
+    def __init__(self, lock_on_conf, min_conf, max_gap, lock_class_ids=None):
+        self.lock_on_conf = max(0.0, min(lock_on_conf, 1.0))
+        self.min_conf = max(0.0, min(min_conf, 1.0))
+        self.max_gap = max(1, max_gap)
+        self.lock_class_ids = lock_class_ids or set()
+        self.locked_last_seen = {}
+
+    def filter(self, detections, frame_idx):
+        visible = []
+
+        for det in detections:
+            stable_id = det.get('stable_id')
+            conf = det.get('conf')
+            class_id = det.get('class_id')
+            if stable_id is None or conf is None:
+                continue
+
+            if class_id not in self.lock_class_ids:
+                if conf >= self.min_conf:
+                    visible.append(det)
+                continue
+
+            if stable_id in self.locked_last_seen:
+                if conf >= self.min_conf:
+                    self.locked_last_seen[stable_id] = frame_idx
+                    visible.append(det)
+                continue
+
+            if conf >= self.lock_on_conf:
+                self.locked_last_seen[stable_id] = frame_idx
+                visible.append(det)
+
+        stale_ids = [
+            stable_id
+            for stable_id, last_seen in self.locked_last_seen.items()
+            if frame_idx - last_seen > self.max_gap
+        ]
+        for stable_id in stale_ids:
+            self.locked_last_seen.pop(stable_id, None)
+
+        return visible
+
+
 def select_hq_target_from_normalized(x_norm, y_norm):
     global hq_tt_selected_track_id, hq_tt_selected_last_box, hq_tt_selected_missed_frames
 
@@ -650,15 +939,17 @@ def select_hq_target_from_normalized(x_norm, y_norm):
 
     candidates = []
     for det in detections:
-        track_id = det.get('track_id')
+        stable_id = det.get('stable_id')
         box = det.get('box')
-        if track_id is None or box is None or len(box) != 4:
+        if stable_id is None or box is None or len(box) != 4:
+            continue
+        if det.get('ghost'):
             continue
         x1, y1, x2, y2 = [int(v) for v in box]
         if x1 <= click_x <= x2 and y1 <= click_y <= y2:
             area = max(1, (x2 - x1) * (y2 - y1))
             conf = float(det.get('conf', 0.0))
-            candidates.append((area, -conf, int(track_id)))
+            candidates.append((area, -conf, int(stable_id)))
 
     if not candidates:
         return False, 'No target at click point', None
@@ -668,7 +959,7 @@ def select_hq_target_from_normalized(x_norm, y_norm):
 
     selected_box = None
     for det in detections:
-        if det.get('track_id') == selected_id:
+        if det.get('stable_id') == selected_id:
             selected_box = det.get('box')
             break
 
@@ -703,42 +994,113 @@ def _hq_tt_normalize_names(model_names):
     return normalized
 
 
-def _hq_tt_should_prefer_coreml():
-    return platform.system() == 'Darwin'
+def _hq_tt_get_available_model_options():
+    options = []
+    for key, meta in HQ_TT_MODEL_OPTIONS.items():
+        options.append({
+            'key': key,
+            'label': str(meta.get('label', key)),
+        })
+    return options
 
 
-def _hq_tt_model_candidates():
-    if _hq_tt_should_prefer_coreml():
-        preferred = [
-            HQ_TT_MODEL_COREML_PATH,
-            HQ_TT_MODEL_COREML_FALLBACK_PATH,
-            HQ_TT_MODEL_PATH,
-            HQ_TT_MODEL_FALLBACK_PATH,
-        ]
-    else:
-        preferred = [
-            HQ_TT_MODEL_PATH,
-            HQ_TT_MODEL_FALLBACK_PATH,
-            HQ_TT_MODEL_COREML_PATH,
-            HQ_TT_MODEL_COREML_FALLBACK_PATH,
-        ]
+def _hq_tt_get_selected_model_key():
+    with hq_tt_model_lock:
+        selected = hq_tt_selected_model_key
+    if selected in HQ_TT_MODEL_OPTIONS:
+        return selected
+    return HQ_TT_DEFAULT_MODEL_KEY
 
-    candidates = []
-    seen = set()
-    for model_path in preferred:
-        if not model_path:
-            continue
-        if model_path in seen:
-            continue
-        seen.add(model_path)
+
+def _hq_tt_reset_runtime_locked():
+    global hq_tt_model, hq_tt_error, hq_tt_class_filter
+    global hq_tt_loaded_model_path, hq_tt_loaded_runtime_path, hq_tt_last_model_attempts
+    global hq_tt_stable_assigner, hq_tt_track_smoother, hq_tt_sticky_gate, hq_tt_names_by_id, hq_tt_frame_index
+    hq_tt_model = None
+    hq_tt_error = None
+    hq_tt_class_filter = None
+    hq_tt_loaded_model_path = None
+    hq_tt_loaded_runtime_path = None
+    hq_tt_last_model_attempts = []
+    hq_tt_stable_assigner = None
+    hq_tt_track_smoother = None
+    hq_tt_sticky_gate = None
+    hq_tt_names_by_id = None
+    hq_tt_frame_index = 0
+
+
+def _hq_tt_set_selected_model_key(model_key):
+    global hq_tt_selected_model_key, hq_tt_last_init_attempt_ts
+    if model_key not in HQ_TT_MODEL_OPTIONS:
+        return False
+
+    with hq_tt_model_lock:
+        if hq_tt_selected_model_key == model_key:
+            return True
+        hq_tt_selected_model_key = model_key
+        _hq_tt_reset_runtime_locked()
+        hq_tt_last_init_attempt_ts = 0.0
+
+    clear_hq_target_selection()
+    return True
+
+
+def _hq_tt_get_selected_model_path():
+    selected_key = _hq_tt_get_selected_model_key()
+    selected_meta = HQ_TT_MODEL_OPTIONS.get(selected_key, {})
+    model_path = selected_meta.get('path')
+    if isinstance(model_path, str) and model_path:
+        return model_path
+    return None
+
+
+def _hq_tt_resolve_runtime_model_path(selected_model_path):
+    if not selected_model_path:
+        return None, 'No target-tracking model selected.'
+
+    model_path = str(selected_model_path)
+    lower = model_path.lower()
+
+    if lower.endswith('.pt'):
         if os.path.exists(model_path):
-            candidates.append(model_path)
-    return candidates
+            return model_path, None
+        return None, f'Model not found: {model_path}'
+
+    stem, ext = os.path.splitext(model_path)
+    if lower.endswith('.pth'):
+        pt_path = f'{stem}.pt'
+        return None, (
+            f'Configured model is .pth ({model_path}). '
+            f'Use the .pt file directly instead (e.g. {pt_path}).'
+        )
+
+    if lower.endswith('.mlpackage'):
+        return None, (
+            f'Configured model is .mlpackage ({model_path}). '
+            'CoreML runtime is disabled. Use a .pt model path instead.'
+        )
+
+    return None, f'Unsupported model format: {ext} (use .pt only)'
 
 
-def _hq_tt_resolve_model_path():
-    candidates = _hq_tt_model_candidates()
-    return candidates[0] if candidates else None
+def _hq_tt_validate_model_runtime(model):
+    if not HQ_TT_VALIDATE_MODEL_ON_INIT:
+        return True, None
+
+    try:
+        size = int(max(32, HQ_TT_INIT_VALIDATION_IMAGE_SIZE))
+        test_frame = np.zeros((size, size, 3), dtype=np.uint8)
+        validation_device = _hq_tt_pick_device(HQ_TT_INIT_VALIDATION_DEVICE)
+        model.predict(
+            source=test_frame,
+            conf=0.01,
+            imgsz=size,
+            device=validation_device,
+            verbose=False,
+        )
+        return True, None
+    except Exception as validation_error:
+        return False, validation_error
 
 
 def _hq_tt_resolve_tracker_path():
@@ -769,37 +1131,96 @@ def _hq_tt_people_related_class_ids(names_by_id):
     return sorted(selected)
 
 
+def _hq_tt_init_pipeline(model):
+    global hq_tt_stable_assigner, hq_tt_track_smoother, hq_tt_sticky_gate, hq_tt_names_by_id, hq_tt_frame_index
+
+    names_by_id = _hq_tt_normalize_names(model.names)
+    hq_tt_names_by_id = names_by_id
+
+    hq_tt_stable_assigner = _HqStableIdAssigner(
+        max_gap=HQ_TT_STABLE_ID_MAX_GAP,
+        min_iou=HQ_TT_STABLE_ID_MIN_IOU,
+        max_center_dist=HQ_TT_STABLE_ID_MAX_CENTER_DIST,
+    )
+    hq_tt_track_smoother = _HqTrackSmoother(
+        alpha=HQ_TT_SMOOTH_ALPHA,
+        hold_frames=HQ_TT_HOLD_FRAMES,
+        min_track_hits=HQ_TT_MIN_TRACK_HITS,
+    )
+
+    lock_class_ids = {
+        idx
+        for idx, name in names_by_id.items()
+        if str(name).lower() in HQ_TT_STICKY_LOCK_CLASS_NAMES
+    }
+    hq_tt_sticky_gate = _HqStickyConfidenceGate(
+        lock_on_conf=HQ_TT_LOCK_ON_CONF,
+        min_conf=HQ_TT_STICK_MIN_CONF,
+        max_gap=max(HQ_TT_HOLD_FRAMES, HQ_TT_STABLE_ID_MAX_GAP),
+        lock_class_ids=lock_class_ids,
+    )
+    hq_tt_frame_index = 0
+
+
 def _hq_tt_build_runtime():
     global hq_tt_model, hq_tt_error, hq_tt_class_filter
+    global hq_tt_loaded_model_path, hq_tt_loaded_runtime_path, hq_tt_last_model_attempts, hq_tt_last_init_attempt_ts
     if hq_tt_model is not None:
         return True
+
+    now = time.time()
+    if hq_tt_error and (now - hq_tt_last_init_attempt_ts) < HQ_TT_INIT_RETRY_COOLDOWN_SEC:
+        return False
 
     with hq_tt_model_lock:
         if hq_tt_model is not None:
             return True
         try:
+            print('HQ TT: build runtime starting')
+            print('HQ TT: importing ultralytics')
             from ultralytics import YOLO
+            print('HQ TT: imported ultralytics')
 
-            model_candidates = _hq_tt_model_candidates()
-            if not model_candidates:
+            hq_tt_last_init_attempt_ts = time.time()
+
+            # Note: we already hold hq_tt_model_lock here; avoid calling helpers
+            # that also attempt to acquire the same lock (would deadlock).
+            selected_key = hq_tt_selected_model_key if hq_tt_selected_model_key in HQ_TT_MODEL_OPTIONS else HQ_TT_DEFAULT_MODEL_KEY
+            selected_meta = HQ_TT_MODEL_OPTIONS.get(selected_key, {})
+            selected_model_path = selected_meta.get('path')
+            print(f'HQ TT: selected_model_key={selected_key}', flush=True)
+            print(f'HQ TT: selected_model_path={selected_model_path}', flush=True)
+            try:
+                exists_flag = os.path.exists(selected_model_path) if selected_model_path else False
+            except Exception:
+                exists_flag = False
+            print(f'HQ TT: selected_model_path exists={exists_flag}', flush=True)
+            if not selected_model_path or not exists_flag:
                 hq_tt_error = 'Target Tracking model not found.'
+                hq_tt_loaded_model_path = None
+                hq_tt_loaded_runtime_path = None
+                hq_tt_last_model_attempts = []
                 return False
 
-            last_error = None
-            loaded_model_path = None
-            for model_path in model_candidates:
-                try:
-                    hq_tt_model = YOLO(model_path)
-                    loaded_model_path = model_path
-                    break
-                except Exception as model_error:
-                    last_error = model_error
-                    hq_tt_model = None
-
-            if hq_tt_model is None:
-                hq_tt_error = f'Target Tracking init failed: {last_error}'
-                print(hq_tt_error)
+            runtime_model_path, resolve_error = _hq_tt_resolve_runtime_model_path(selected_model_path)
+            if runtime_model_path is None:
+                hq_tt_error = resolve_error or 'Target Tracking runtime model unavailable.'
+                hq_tt_loaded_model_path = selected_model_path
+                hq_tt_loaded_runtime_path = None
+                hq_tt_last_model_attempts = []
                 return False
+
+            hq_tt_last_model_attempts = [runtime_model_path]
+
+            print(f'HQ TT: creating YOLO model from runtime path: {runtime_model_path}')
+            candidate_model = YOLO(runtime_model_path)
+            print('HQ TT: YOLO model object created')
+
+            is_valid, validation_error = _hq_tt_validate_model_runtime(candidate_model)
+            if not is_valid:
+                raise RuntimeError(f'Runtime validation failed for {runtime_model_path}: {validation_error}')
+
+            hq_tt_model = candidate_model
 
             if HQ_TT_PERSON_ONLY:
                 try:
@@ -811,14 +1232,91 @@ def _hq_tt_build_runtime():
             else:
                 hq_tt_class_filter = None
 
+            _hq_tt_init_pipeline(hq_tt_model)
+
             hq_tt_error = None
-            print(f"HQ Target Tracking initialized with model: {loaded_model_path}")
+            hq_tt_loaded_model_path = selected_model_path
+            hq_tt_loaded_runtime_path = runtime_model_path
+            hq_tt_last_model_attempts = hq_tt_last_model_attempts[-HQ_TT_STATUS_MAX_ATTEMPTS_TO_REPORT:]
+            if runtime_model_path and runtime_model_path != selected_model_path:
+                print(f"HQ Target Tracking initialized with model: {selected_model_path} (runtime: {runtime_model_path})")
+            else:
+                print(f"HQ Target Tracking initialized with model: {selected_model_path}")
             return True
         except Exception as e:
+            import traceback
             hq_tt_model = None
             hq_tt_error = f'Target Tracking init failed: {e}'
+            hq_tt_loaded_model_path = None
+            hq_tt_loaded_runtime_path = None
+            hq_tt_last_model_attempts = hq_tt_last_model_attempts[-HQ_TT_STATUS_MAX_ATTEMPTS_TO_REPORT:]
             print(hq_tt_error)
+            traceback.print_exc()
             return False
+
+
+def _hq_tt_initialize_runtime_worker():
+    global hq_tt_init_in_progress
+    try:
+        print('HQ TT: runtime worker starting', flush=True)
+        _hq_tt_build_runtime()
+        print('HQ TT: runtime worker completed', flush=True)
+    finally:
+        with hq_tt_model_lock:
+            hq_tt_init_in_progress = False
+
+
+def _hq_tt_start_async_runtime_init_if_needed():
+    global hq_tt_init_in_progress, hq_tt_error
+
+    now = time.time()
+    with hq_tt_model_lock:
+        if hq_tt_model is not None or hq_tt_init_in_progress:
+            return
+        if hq_tt_error and (now - hq_tt_last_init_attempt_ts) < HQ_TT_INIT_RETRY_COOLDOWN_SEC:
+            return
+        # Detect a common macOS crash scenario: both OpenCV (cv2) and PyAV
+        # bundle different libavdevice dylibs which conflict at load time.
+        # Skip this check entirely when HQ_TT_IGNORE_DYLIB_CONFLICT is enabled
+        # to avoid importing PyAV and triggering the conflict.
+        try:
+            if os.name == 'posix' and sys.platform == 'darwin' and not HQ_TT_IGNORE_DYLIB_CONFLICT:
+                av_pkg = None
+                try:
+                    import av as _av
+                    av_pkg = _av
+                except Exception:
+                    av_pkg = None
+
+                if av_pkg is not None:
+                    try:
+                        cv2_path = os.path.abspath(cv2.__file__)
+                    except Exception:
+                        cv2_path = '<unknown cv2 path>'
+                    try:
+                        av_path = os.path.abspath(av_pkg.__file__)
+                    except Exception:
+                        av_path = '<unknown av path>'
+
+                    conflict_msg = (
+                        'Detected both OpenCV and PyAV in the environment which often '
+                        'bundle conflicting libavdevice dylibs on macOS. This can crash '
+                        'the process when model code loads libav.\n'
+                        f'OpenCV path: {cv2_path}\n'
+                        f'PyAV path: {av_path}\n'
+                    )
+                    hq_tt_error = ('Model init disabled: conflicting libavdevice dylibs detected. '
+                                   'Set HQ_TT_IGNORE_DYLIB_CONFLICT=True to override or remove one package.')
+                    print('HQ TT: dylib conflict detected, aborting model init')
+                    print(conflict_msg)
+                    return
+        except Exception:
+            pass
+        hq_tt_init_in_progress = True
+        hq_tt_error = HQ_TT_INIT_STATUS_TEXT
+
+    print('HQ TT: scheduling async model init')
+    Thread(target=_hq_tt_initialize_runtime_worker, daemon=True).start()
 
 
 def _hq_tt_draw_status(frame, text, color):
@@ -874,15 +1372,16 @@ def _hq_tt_extract_detections(result):
             id_np = np.array(ids)
 
     for i, box in enumerate(boxes_np):
-        x1, y1, x2, y2 = [int(v) for v in box[:4]]
-        conf = float(conf_np[i]) if conf_np is not None and i < len(conf_np) else 0.0
-        cls_id = int(cls_np[i]) if cls_np is not None and i < len(cls_np) else -1
+        x1, y1, x2, y2 = [float(v) for v in box[:4]]
+        conf = float(conf_np[i]) if conf_np is not None and i < len(conf_np) else None
+        class_id = int(cls_np[i]) if cls_np is not None and i < len(cls_np) else 0
         track_id = int(id_np[i]) if id_np is not None and i < len(id_np) else None
         detections.append({
             'box': (x1, y1, x2, y2),
             'conf': conf,
-            'cls_id': cls_id,
+            'class_id': class_id,
             'track_id': track_id,
+            'stable_id': None,
         })
 
     return detections
@@ -905,8 +1404,10 @@ def _hq_tt_fallback_detect_and_draw(frame):
         detections.append({
             'box': (x, y, x + bw, y + bh),
             'conf': 0.5,
-            'cls_id': -1,
-            'track_id': idx + 1,
+            'class_id': -1,
+            'track_id': None,
+            'stable_id': idx + 1,
+            'ghost': False,
         })
 
     with hq_tt_state_lock:
@@ -919,7 +1420,7 @@ def _hq_tt_fallback_detect_and_draw(frame):
     target_det = None
     if selected_id is not None:
         for det in detections:
-            if det.get('track_id') == selected_id:
+            if det.get('stable_id') == selected_id:
                 target_det = det
                 break
         if target_det is None:
@@ -928,21 +1429,8 @@ def _hq_tt_fallback_detect_and_draw(frame):
     cx, cy = w // 2, h // 2
     cv2.drawMarker(frame, (cx, cy), (255, 255, 255), markerType=cv2.MARKER_CROSS, markerSize=16, thickness=1)
 
-    for det in detections:
-        x1, y1, x2, y2 = det['box']
-        is_target = target_det is not None and det.get('track_id') == target_det.get('track_id')
-        color = HQ_TT_TARGET_COLOR if is_target else HQ_TT_BOX_COLOR
-        thickness = 3 if is_target else 2
-        cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
-        cv2.putText(frame, 'Fallback target', (x1, max(20, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, HQ_TT_TEXT_COLOR, 1)
-
-    if target_det is not None:
-        tx1, ty1, tx2, ty2 = target_det['box']
-        tx, ty = int((tx1 + tx2) / 2), int((ty1 + ty2) / 2)
-        cv2.line(frame, (cx, cy), (tx, ty), HQ_TT_TARGET_COLOR, 2)
-        _hq_tt_draw_status(frame, f'Target Tracking: LOCKED (ID {target_det.get("track_id")}) (fallback)', HQ_TT_TARGET_COLOR)
-    else:
-        _hq_tt_draw_status(frame, 'Target Tracking: CLICK TARGET TO LOCK (fallback)', HQ_TT_BOX_COLOR)
+    # Fallback detector is deprecated — show message indicating it was disabled.
+    _hq_tt_draw_status(frame, 'Target Tracking fallback disabled; model required', (0, 0, 255))
 
 
 def apply_hq_cv_landing_mode(frame):
@@ -962,92 +1450,184 @@ def apply_hq_cv_landing_mode(frame):
 
 
 def apply_hq_cv_target_tracking_mode(frame):
-    if not _hq_tt_build_runtime():
-        if TEST_MODE and HQ_TT_FALLBACK_IN_TEST:
-            _hq_tt_fallback_detect_and_draw(frame)
+    global hq_tt_last_infer_ts
+    global hq_tt_latest_detections, hq_tt_latest_frame_width, hq_tt_latest_frame_height
+    global hq_tt_selected_track_id, hq_tt_selected_last_box, hq_tt_selected_missed_frames
+    global hq_tt_stable_assigner, hq_tt_track_smoother, hq_tt_sticky_gate, hq_tt_names_by_id, hq_tt_frame_index
+
+    try:
+        if hq_tt_model is None and HQ_TT_ASYNC_INIT_ENABLED:
+            _hq_tt_start_async_runtime_init_if_needed()
+            # Do not run the local fallback detector — show initializing/error status instead.
+            _hq_tt_draw_status(frame, hq_tt_error or HQ_TT_INIT_STATUS_TEXT, (0, 180, 255))
             return
-        _hq_tt_draw_status(frame, hq_tt_error or HQ_CV_TARGET_TRACKING_TEXT, (0, 0, 255))
+
+        if not _hq_tt_build_runtime():
+            # Model not ready — display error/status. No fallback detector.
+            _hq_tt_draw_status(frame, hq_tt_error or HQ_CV_TARGET_TRACKING_TEXT, (0, 0, 255))
+            return
+
+        if hq_tt_stable_assigner is None or hq_tt_track_smoother is None or hq_tt_sticky_gate is None:
+            _hq_tt_init_pipeline(hq_tt_model)
+
+        detections = None
+        smoothed_detections = None
+        should_run_infer = True
+        now = time.time()
+        with hq_tt_state_lock:
+            last_infer_ts = float(hq_tt_last_infer_ts)
+
+        if HQ_TT_INFER_MIN_INTERVAL_SEC > 0 and (now - last_infer_ts) < HQ_TT_INFER_MIN_INTERVAL_SEC:
+            should_run_infer = False
+
+        infer_lock_acquired = False
+        if should_run_infer:
+            infer_lock_acquired = hq_tt_infer_lock.acquire(blocking=False)
+            if not infer_lock_acquired:
+                should_run_infer = False
+
+        if should_run_infer:
+            try:
+                device = _hq_tt_pick_device(HQ_TT_DEVICE)
+                tracking_conf = min(HQ_TT_CONFIDENCE, HQ_TT_STICK_MIN_CONF)
+                result_list = hq_tt_model.track(
+                    source=frame,
+                    conf=tracking_conf,
+                    iou=HQ_TT_IOU,
+                    imgsz=HQ_TT_IMAGE_SIZE,
+                    tracker=_hq_tt_resolve_tracker_path(),
+                    persist=HQ_TT_PERSIST,
+                    rect=False,
+                    device=device,
+                    classes=hq_tt_class_filter,
+                    verbose=False,
+                )
+                result = result_list[0] if result_list else None
+                detections = _hq_tt_extract_detections(result)
+                hq_tt_frame_index += 1
+
+                if hq_tt_stable_assigner and hq_tt_track_smoother:
+                    detections = hq_tt_stable_assigner.assign(detections, hq_tt_frame_index)
+                    smoothed_detections = hq_tt_track_smoother.update(detections, hq_tt_frame_index)
+                else:
+                    smoothed_detections = detections
+
+                if hq_tt_sticky_gate:
+                    detections = hq_tt_sticky_gate.filter(smoothed_detections, hq_tt_frame_index)
+                else:
+                    detections = smoothed_detections
+
+                with hq_tt_state_lock:
+                    hq_tt_last_infer_ts = time.time()
+            except Exception as e:
+                _hq_tt_draw_status(frame, f'Target Tracking error: {e}', (0, 0, 255))
+                print(f'HQ TT: inference error: {e}')
+                return
+            finally:
+                if infer_lock_acquired:
+                    hq_tt_infer_lock.release()
+
+        if detections is None:
+            with hq_tt_state_lock:
+                detections = list(hq_tt_latest_detections)
+            smoothed_detections = list(detections)
+
+        h, w = frame.shape[:2]
+        with hq_tt_state_lock:
+            try:
+                hq_tt_latest_detections = detections
+                hq_tt_latest_frame_width = w
+                hq_tt_latest_frame_height = h
+                selected_id = hq_tt_selected_track_id
+                selected_last_box = hq_tt_selected_last_box
+                selected_missed_frames = hq_tt_selected_missed_frames
+            except Exception as e:
+                print(f'HQ TT: state update error: {e}')
+                selected_id = None
+                selected_last_box = None
+                selected_missed_frames = 0
+                hq_tt_latest_detections = []
+                hq_tt_latest_frame_width = w
+                hq_tt_latest_frame_height = h
+    except Exception as top_e:
+        print(f'HQ TT: unexpected error in apply_hq_cv_target_tracking_mode: {top_e}')
+        _hq_tt_draw_status(frame, 'Target Tracking unexpected error', (0, 0, 255))
         return
 
-    with hq_tt_infer_lock:
-        try:
-            device = _hq_tt_pick_device(HQ_TT_DEVICE)
-            result_list = hq_tt_model.track(
-                source=frame,
-                conf=HQ_TT_CONFIDENCE,
-                iou=HQ_TT_IOU,
-                imgsz=HQ_TT_IMAGE_SIZE,
-                tracker=_hq_tt_resolve_tracker_path(),
-                persist=HQ_TT_PERSIST,
-                rect=False,
-                device=device,
-                classes=hq_tt_class_filter,
-                verbose=False,
-            )
-            result = result_list[0] if result_list else None
-            detections = _hq_tt_extract_detections(result)
-        except Exception as e:
-            _hq_tt_draw_status(frame, f'Target Tracking error: {e}', (0, 0, 255))
-            return
-
-    h, w = frame.shape[:2]
-    with hq_tt_state_lock:
-        global hq_tt_latest_detections, hq_tt_latest_frame_width, hq_tt_latest_frame_height
-        global hq_tt_selected_track_id, hq_tt_selected_last_box, hq_tt_selected_missed_frames
-        hq_tt_latest_detections = detections
-        hq_tt_latest_frame_width = w
-        hq_tt_latest_frame_height = h
-        selected_id = hq_tt_selected_track_id
-        selected_last_box = hq_tt_selected_last_box
-        selected_missed_frames = hq_tt_selected_missed_frames
-
-    by_track_id = {
-        d['track_id']: d
-        for d in detections
-        if d.get('track_id') is not None
+    smoothed_detections = smoothed_detections or []
+    by_stable_id = {
+        d['stable_id']: d
+        for d in smoothed_detections
+        if d.get('stable_id') is not None
     }
 
     target_det = None
     if selected_id is not None:
-        target_det = by_track_id.get(selected_id)
-        if target_det is not None and target_det.get('conf', 0.0) >= HQ_TT_STICK_MIN_CONF:
-            selected_last_box = target_det.get('box')
-            selected_missed_frames = 0
+        target_det = by_stable_id.get(selected_id)
+        if target_det is not None:
+            if target_det.get('ghost'):
+                selected_missed_frames += 1
+            else:
+                selected_last_box = target_det.get('box')
+                selected_missed_frames = 0
         else:
-            target_det = None
-            # Keep holding/looking in last known area, but never reassign to a different ID.
             selected_missed_frames += 1
 
-            selected_hold_limit = max(1, int(HQ_TT_HOLD_FRAMES * HQ_TT_SELECTED_HOLD_MULTIPLIER))
-            if target_det is None and selected_missed_frames > selected_hold_limit:
-                selected_id = None
-                selected_last_box = None
+        selected_hold_limit = max(1, int(HQ_TT_HOLD_FRAMES * HQ_TT_SELECTED_HOLD_MULTIPLIER))
+        if target_det is None and selected_last_box is not None:
+            best_det = None
+            best_score = -1.0
+            max_center_dist = max(w, h) * HQ_TT_REACQUIRE_MAX_CENTER_DIST_RATIO
+            for det in smoothed_detections:
+                if det.get('ghost'):
+                    continue
+                if det.get('conf') is None or det.get('conf') < HQ_TT_LOCK_ON_CONF:
+                    continue
+                box = det.get('box')
+                if box is None:
+                    continue
+                iou_score = _hq_tt_box_iou(selected_last_box, box)
+                if iou_score < HQ_TT_REACQUIRE_MIN_IOU:
+                    continue
+                dist = _hq_tt_center_distance(selected_last_box, box)
+                if dist > max_center_dist:
+                    continue
+                score = iou_score - (dist / max(1.0, max_center_dist)) * 0.25
+                if score > best_score:
+                    best_score = score
+                    best_det = det
+
+            if best_det is not None:
+                selected_id = best_det.get('stable_id')
+                selected_last_box = best_det.get('box')
                 selected_missed_frames = 0
+                target_det = best_det
+        if selected_missed_frames > selected_hold_limit:
+            selected_id = None
+            selected_last_box = None
+            selected_missed_frames = 0
 
     with hq_tt_state_lock:
         hq_tt_selected_track_id = selected_id
         hq_tt_selected_last_box = selected_last_box
         hq_tt_selected_missed_frames = selected_missed_frames
 
-    names_by_id = None
-    try:
-        names_by_id = _hq_tt_normalize_names(hq_tt_model.names)
-    except Exception:
-        names_by_id = None
+    names_by_id = hq_tt_names_by_id
 
     for det in detections:
-        x1, y1, x2, y2 = det['box']
-        is_target = target_det is not None and det.get('track_id') == target_det.get('track_id')
+        x1, y1, x2, y2 = [int(v) for v in det['box']]
+        is_target = target_det is not None and det.get('stable_id') == target_det.get('stable_id')
         color = HQ_TT_TARGET_COLOR if is_target else HQ_TT_BOX_COLOR
         thickness = 3 if is_target else 2
         cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
 
         label_parts = []
-        if det.get('track_id') is not None:
-            label_parts.append(f"ID {det['track_id']}")
-        if names_by_id and det['cls_id'] in names_by_id:
-            label_parts.append(names_by_id[det['cls_id']])
-        label_parts.append(f"{det['conf']:.2f}")
+        if det.get('stable_id') is not None:
+            label_parts.append(f"ID {det['stable_id']}")
+        if names_by_id and det.get('class_id') in names_by_id:
+            label_parts.append(names_by_id[det['class_id']])
+        if det.get('conf') is not None:
+            label_parts.append(f"{det['conf']:.2f}")
         label = ' | '.join(label_parts)
         cv2.putText(frame, label, (x1, max(20, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, HQ_TT_TEXT_COLOR, 1)
 
@@ -1059,7 +1639,7 @@ def apply_hq_cv_target_tracking_mode(frame):
         tx = int((tx1 + tx2) / 2)
         ty = int((ty1 + ty2) / 2)
         cv2.line(frame, (cx, cy), (tx, ty), HQ_TT_TARGET_COLOR, 2)
-        _hq_tt_draw_status(frame, f"Target Tracking: LOCKED (ID {target_det.get('track_id')})", HQ_TT_TARGET_COLOR)
+        _hq_tt_draw_status(frame, f"Target Tracking: LOCKED (ID {target_det.get('stable_id')})", HQ_TT_TARGET_COLOR)
     else:
         if selected_id is not None and selected_last_box is not None:
             x1, y1, x2, y2 = [int(v) for v in selected_last_box]
@@ -1146,10 +1726,16 @@ async def receive_telemetry():
                 print("Connected to telemetry server (WebSocket).")
                 while True:
                     try:
-                        data = await asyncio.wait_for(ws.recv(), timeout=TELEMETRY_RECV_TIMEOUT_SEC)
-                    except asyncio.TimeoutError:
-                        print("Telemetry receive timeout, reconnecting...")
-                        await ws.close()
+                        # Wait for incoming telemetry without an artificial short timeout.
+                        # Rely on the WebSocket ping/pong (configured via
+                        # `ping_interval` / `ping_timeout`) to detect dead peers
+                        # and close the connection when necessary.
+                        data = await ws.recv()
+                    except websockets.exceptions.ConnectionClosed:
+                        print("Telemetry WebSocket closed, reconnecting...")
+                        break
+                    except Exception as e:
+                        print(f"Telemetry recv error: {e}, reconnecting...")
                         break
                     try:
                         telemetry_msg = json.loads(data)
@@ -1219,6 +1805,112 @@ def receive_mavlink():
             pass
 
 
+def _format_mavlink_message(msg):
+    msg_type = 'UNKNOWN'
+    message_dict = {}
+
+    try:
+        msg_type = str(msg.get_type())
+    except Exception:
+        return None
+
+    if msg_type not in MAVLINK_MONITOR_ALLOWED_MESSAGE_TYPES:
+        return None
+
+    try:
+        message_dict = msg.to_dict() or {}
+    except Exception:
+        message_dict = {}
+
+    if msg_type == 'STATUSTEXT':
+        severity = int(message_dict.get('severity', 6))
+        severity_label = MAVLINK_MONITOR_STATUSTEXT_SEVERITY_LABELS.get(severity, f'SEV{severity}')
+
+        raw_text = message_dict.get('text', '')
+        if isinstance(raw_text, bytes):
+            raw_text = raw_text.decode('utf-8', errors='replace')
+        text = str(raw_text).replace('\x00', '').strip()
+        if not text:
+            return None
+
+        timestamp = time.time()
+        line = f"[{time.strftime('%H:%M:%S', time.localtime(timestamp))}] {severity_label}: {text}"
+        return {
+            'timestamp': timestamp,
+            'type': msg_type,
+            'line': line,
+            'payload': {
+                'severity': severity,
+                'severity_label': severity_label,
+                'text': text,
+            },
+        }
+
+    return None
+
+
+def _append_mavlink_message_entry(entry):
+    global last_mavlink_message_time
+    with mavlink_message_lock:
+        mavlink_message_log.append(entry)
+    last_mavlink_message_time = entry.get('timestamp', time.time())
+
+
+def receive_mavlink_udp_messages():
+    """Receive decoded MAVLink messages from the configured Pixhawk UDP endpoint."""
+    global mavlink_monitor_online, last_mavlink_message_time
+
+    if not MAVLINK_MONITOR_ENABLED:
+        return
+
+    if mavutil is None:
+        mavlink_monitor_online = False
+        return
+
+    while True:
+        mav = None
+        try:
+            mav = mavutil.mavlink_connection(
+                MAVLINK_MONITOR_UDP_ENDPOINT,
+                source_system=MAVLINK_MONITOR_SOURCE_SYSTEM,
+                source_component=MAVLINK_MONITOR_SOURCE_COMPONENT,
+            )
+
+            while True:
+                msg = mav.recv_match(blocking=True, timeout=MAVLINK_MONITOR_RECV_TIMEOUT_SEC)
+                if msg is None:
+                    if (time.time() - last_mavlink_message_time) > STATUS_TIMEOUT:
+                        mavlink_monitor_online = False
+                    continue
+
+                # Keep terminal online status tied to MAVLink link health,
+                # regardless of whether this specific packet is shown.
+                mavlink_monitor_online = True
+                last_mavlink_message_time = time.time()
+
+                msg_type = ''
+                try:
+                    msg_type = msg.get_type()
+                except Exception:
+                    msg_type = ''
+
+                if msg_type in ('BAD_DATA',):
+                    continue
+
+                entry = _format_mavlink_message(msg)
+                if entry is not None:
+                    _append_mavlink_message_entry(entry)
+        except Exception:
+            mavlink_monitor_online = False
+            time.sleep(MAVLINK_MONITOR_RECONNECT_DELAY_SEC)
+        finally:
+            try:
+                if mav is not None and getattr(mav, 'close', None):
+                    mav.close()
+            except Exception:
+                pass
+
+
 def status_monitor():
     """Background thread to update connection status."""
     while True:
@@ -1244,7 +1936,7 @@ def gen_frames_cam0():
             draw_compass(f, mavlink_data.get('yaw', 0), 0, h - 130, 120)
             draw_attitude_indicator(f, mavlink_data.get('roll', 0), mavlink_data.get('pitch', 0), x=w - 130, y=h - 130, size=120)
             draw_battery_widget(f, mavlink_data.get('battery_remaining', 0), position=(10, 10), width=60, height=20)
-            draw_throttle_widget(f, mavlink_data.get('throttle', 0), position=(10, 40), width=60, height=20)
+            draw_throttle_widget(f, mavlink_data.get('throttle', 0), position=(10, 190), width=20, height=100)
             draw_telemetry_text(f, mavlink_data)
         except Exception as e:
             # Don't let telemetry/overlay errors break the video stream; log and continue
@@ -1457,8 +2149,22 @@ def api_status():
         'cam0_online': cam0_online,
         'cam1_online': cam1_online,
         'mav_online': mav_online,
+        'mavlink_terminal_online': mavlink_monitor_online,
         'map_online': is_map_online(),
         'hq_online': hq_online
+    })
+
+
+@app.route('/api/mavlink_messages')
+def api_mavlink_messages():
+    with mavlink_message_lock:
+        messages = list(mavlink_message_log)
+    return jsonify({
+        'online': mavlink_monitor_online,
+        'endpoint': MAVLINK_MONITOR_UDP_ENDPOINT,
+        'count': len(messages),
+        'messages': messages,
+        'server_time': time.time(),
     })
 
 
@@ -1752,6 +2458,54 @@ def api_hq_target_selection():
     }), status_code
 
 
+@app.route('/api/hq_target_tracking_status', methods=['GET'])
+def api_hq_target_tracking_status():
+    selected_model_key = _hq_tt_get_selected_model_key()
+    selected_meta = HQ_TT_MODEL_OPTIONS.get(selected_model_key, {})
+    return jsonify({
+        'mode': get_hq_cv_mode(),
+        'ready': hq_tt_model is not None,
+        'initializing': bool(hq_tt_init_in_progress),
+        'error': hq_tt_error,
+        'selected_model_key': selected_model_key,
+        'selected_model_label': str(selected_meta.get('label', selected_model_key)),
+        'available_models': _hq_tt_get_available_model_options(),
+        'loaded_model_path': hq_tt_loaded_model_path,
+        'loaded_runtime_path': hq_tt_loaded_runtime_path,
+        'attempted_models': list(hq_tt_last_model_attempts[-HQ_TT_STATUS_MAX_ATTEMPTS_TO_REPORT:]),
+    })
+
+
+@app.route('/api/hq_target_tracking_model', methods=['GET', 'POST'])
+def api_hq_target_tracking_model():
+    if request.method == 'GET':
+        selected_model_key = _hq_tt_get_selected_model_key()
+        selected_meta = HQ_TT_MODEL_OPTIONS.get(selected_model_key, {})
+        return jsonify({
+            'selected_model_key': selected_model_key,
+            'selected_model_label': str(selected_meta.get('label', selected_model_key)),
+            'available_models': _hq_tt_get_available_model_options(),
+        })
+
+    payload = request.json or {}
+    model_key = payload.get('model_key')
+    if not isinstance(model_key, str) or model_key not in HQ_TT_MODEL_OPTIONS:
+        return jsonify({'success': False, 'message': 'Invalid target-tracking model key'}), 400
+
+    ok = _hq_tt_set_selected_model_key(model_key)
+    if not ok:
+        return jsonify({'success': False, 'message': 'Failed to update target-tracking model'}), 500
+
+    selected_model_key = _hq_tt_get_selected_model_key()
+    selected_meta = HQ_TT_MODEL_OPTIONS.get(selected_model_key, {})
+    return jsonify({
+        'success': True,
+        'selected_model_key': selected_model_key,
+        'selected_model_label': str(selected_meta.get('label', selected_model_key)),
+        'available_models': _hq_tt_get_available_model_options(),
+    })
+
+
 @app.route('/map_embed')
 def map_embed():
     """Return a full standalone map HTML page for embedding in an iframe."""
@@ -1771,17 +2525,24 @@ if __name__ == '__main__':
 
     # Create a dedicated event loop for the command WebSocket
     import threading
-    command_loop = asyncio.new_event_loop()
-    def run_command_loop():
-        asyncio.set_event_loop(command_loop)
-        command_loop.run_until_complete(receive_commands())
-    Thread(target=run_command_loop, daemon=True).start()
+    if not TEST_MODE or TEST_MODE_ENABLE_COMMAND_WS:
+        command_loop = asyncio.new_event_loop()
+        def run_command_loop():
+            asyncio.set_event_loop(command_loop)
+            command_loop.run_until_complete(receive_commands())
+        Thread(target=run_command_loop, daemon=True).start()
+    else:
+        print('TEST_MODE: command websocket disabled (TEST_MODE_ENABLE_COMMAND_WS=False).')
 
     Thread(target=lambda: asyncio.run(receive_video(0, CAM0_PORT)), daemon=True).start()
     Thread(target=lambda: asyncio.run(receive_video(1, CAM1_PORT)), daemon=True).start()
     Thread(target=lambda: asyncio.run(receive_video(2, CAM_HQ_PORT)), daemon=True).start()
     Thread(target=lambda: asyncio.run(receive_telemetry()), daemon=True).start()
-    Thread(target=lambda: asyncio.run(receive_fiducials()), daemon=True).start()
+    if not TEST_MODE or TEST_MODE_ENABLE_FIDUCIAL_WS:
+        Thread(target=lambda: asyncio.run(receive_fiducials()), daemon=True).start()
+    else:
+        print('TEST_MODE: fiducial websocket disabled (TEST_MODE_ENABLE_FIDUCIAL_WS=False).')
     Thread(target=receive_mavlink, daemon=True).start()
+    Thread(target=receive_mavlink_udp_messages, daemon=True).start()
     Thread(target=status_monitor, daemon=True).start()
     app.run(port=8000, threaded=True)

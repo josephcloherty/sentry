@@ -15,8 +15,36 @@ from typing import Optional, Tuple
 
 import websockets
 
+try:
+    from pymavlink import mavutil
+except Exception:
+    mavutil = None
+
 PORT = 8888
 CLIENTS = set()
+
+# MAVLink UDP test publisher (for client MAVLink terminal tile)
+MAVLINK_TEST_ENABLED = True
+MAVLINK_TEST_UDP_ENDPOINT = 'udpout:127.0.0.1:14550'
+MAVLINK_TEST_SOURCE_SYSTEM = 42
+MAVLINK_TEST_SOURCE_COMPONENT = 1
+MAVLINK_TEST_AUTOPILOT_TYPE = 8  # MAV_AUTOPILOT_PX4
+MAVLINK_TEST_VEHICLE_TYPE = 2    # MAV_TYPE_QUADROTOR
+MAVLINK_TEST_SEND_HZ = 10
+MAVLINK_TEST_STATUSTEXT_INTERVAL_SEC = 2.5
+MAVLINK_TEST_PILOT_MESSAGES = [
+    (4, 'PreArm: GPS fix required'),
+    (4, 'PreArm: Compass not calibrated'),
+    (5, 'Arming checks running'),
+    (6, 'GPS: 3D fix acquired'),
+    (6, 'EKF2 IMU0 is using GPS'),
+    (5, 'Ready to arm'),
+]
+
+_mavlink_test_conn = None
+_mavlink_test_last_heartbeat_s = 0.0
+_mavlink_test_last_statustext_s = 0.0
+_mavlink_test_statustext_idx = 0
 
 # Camera stream ports (simple MJPEG placeholders)
 CAM0_PORT = 8886
@@ -42,9 +70,166 @@ TEST_VIDEO_FALLBACK_TO_PLACEHOLDER = True
 TEST_VIDEO_LABEL_COLOR = (60, 60, 60)
 TEST_VIDEO_CAPTURE_BACKENDS = (cv2.CAP_FFMPEG, cv2.CAP_ANY)
 
+
+def _get_mavlink_test_connection():
+    global _mavlink_test_conn
+
+    if not MAVLINK_TEST_ENABLED or mavutil is None:
+        return None
+
+    if _mavlink_test_conn is not None:
+        return _mavlink_test_conn
+
+    try:
+        _mavlink_test_conn = mavutil.mavlink_connection(
+            MAVLINK_TEST_UDP_ENDPOINT,
+            source_system=MAVLINK_TEST_SOURCE_SYSTEM,
+            source_component=MAVLINK_TEST_SOURCE_COMPONENT,
+        )
+        print(f'MAVLink test publisher: sending to {MAVLINK_TEST_UDP_ENDPOINT}')
+    except Exception as exc:
+        print(f'MAVLink test publisher: failed to open endpoint: {exc}')
+        _mavlink_test_conn = None
+
+    return _mavlink_test_conn
+
+
+def _send_mavlink_test_messages(*, now, roll, pitch, yaw, throttle, battery, lat, lon, alt, ground_speed):
+    global _mavlink_test_last_heartbeat_s, _mavlink_test_last_statustext_s, _mavlink_test_statustext_idx
+
+    conn = _get_mavlink_test_connection()
+    if conn is None:
+        return
+
+    def _send_named_value(now_ms_value, name_value, numeric_value):
+        last_exc = None
+        name_candidates = [str(name_value)]
+        try:
+            name_candidates.append(str(name_value).encode('utf-8'))
+        except Exception:
+            pass
+
+        for candidate in name_candidates:
+            try:
+                conn.mav.named_value_float_send(now_ms_value, candidate, float(numeric_value))
+                return
+            except Exception as exc:
+                last_exc = exc
+        if last_exc is not None:
+            raise last_exc
+
+    def _send_statustext(severity_value, text_value):
+        last_exc = None
+        text_candidates = [str(text_value)]
+        try:
+            text_candidates.append(str(text_value).encode('utf-8'))
+        except Exception:
+            pass
+
+        for candidate in text_candidates:
+            try:
+                conn.mav.statustext_send(int(severity_value), candidate)
+                return
+            except Exception as exc:
+                last_exc = exc
+        if last_exc is not None:
+            raise last_exc
+
+    try:
+        yaw_deg_signed = ((float(yaw) + 180.0) % 360.0) - 180.0
+        roll_rad = math.radians(float(roll))
+        pitch_rad = math.radians(float(pitch))
+        yaw_rad = math.radians(yaw_deg_signed)
+        throttle_pct = max(0.0, min(100.0, float(throttle)))
+        battery_pct = int(max(0, min(100, round(float(battery)))))
+        voltage_v = max(0.0, float(10.5 + (battery_pct / 100.0) * 2.1))
+        voltage_mv = int(voltage_v * 1000)
+        current_cA = int((6.0 + 4.0 * (throttle_pct / 100.0)) * 100)  # centi-amps
+        alt_m = float(alt)
+        rel_alt_m = max(0.0, alt_m - 95.0)
+        lat_int = int(float(lat) * 1e7)
+        lon_int = int(float(lon) * 1e7)
+        alt_mm = int(alt_m * 1000)
+        rel_alt_mm = int(rel_alt_m * 1000)
+        vx = int(float(ground_speed) * 100)  # cm/s
+
+        now_us = int(now * 1_000_000)
+        now_ms = int(now * 1000) & 0xFFFFFFFF
+
+        if (now - _mavlink_test_last_heartbeat_s) >= 1.0:
+            conn.mav.heartbeat_send(
+                MAVLINK_TEST_VEHICLE_TYPE,
+                MAVLINK_TEST_AUTOPILOT_TYPE,
+                0,
+                0,
+                0,
+            )
+            _mavlink_test_last_heartbeat_s = now
+
+        conn.mav.attitude_send(
+            now_ms,
+            roll_rad,
+            pitch_rad,
+            yaw_rad,
+            0.0,
+            0.0,
+            0.0,
+        )
+
+        conn.mav.sys_status_send(
+            0,
+            0,
+            0,
+            500,
+            voltage_mv,
+            current_cA,
+            battery_pct,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        )
+
+        conn.mav.global_position_int_send(
+            now_ms,
+            lat_int,
+            lon_int,
+            alt_mm,
+            rel_alt_mm,
+            vx,
+            0,
+            0,
+            int((float(yaw) % 360.0) * 100),
+        )
+
+        conn.mav.vfr_hud_send(
+            float(ground_speed),
+            float(ground_speed),
+            int(yaw) % 360,
+            int(throttle_pct),
+            alt_m,
+            0.0,
+        )
+
+        _send_named_value(now_ms, 'THROTTLE', throttle_pct)
+        _send_named_value(now_ms, 'BATT_PCT', battery_pct)
+        _send_named_value(now_ms, 'TEST_ALT', alt_m)
+
+        if (now - _mavlink_test_last_statustext_s) >= MAVLINK_TEST_STATUSTEXT_INTERVAL_SEC:
+            severity, text = MAVLINK_TEST_PILOT_MESSAGES[_mavlink_test_statustext_idx % len(MAVLINK_TEST_PILOT_MESSAGES)]
+            _send_statustext(severity, text)
+            _mavlink_test_statustext_idx += 1
+            _mavlink_test_last_statustext_s = now
+    except Exception as exc:
+        print(f'MAVLink test publisher: send failed: {exc}')
+
 async def producer():
     """Broadcast a synthetic yaw value to all connected clients at 20Hz."""
     t0 = time.time()
+    send_interval = 1.0 / max(1, int(MAVLINK_TEST_SEND_HZ))
+    next_mavlink_send = 0.0
     try:
         while True:
             now = time.time()
@@ -93,6 +278,22 @@ async def producer():
             })
             if CLIENTS:
                 await asyncio.gather(*(ws.send(payload) for ws in set(CLIENTS)))
+
+            if now >= next_mavlink_send:
+                _send_mavlink_test_messages(
+                    now=now,
+                    roll=roll,
+                    pitch=pitch,
+                    yaw=yaw,
+                    throttle=throttle,
+                    battery=battery,
+                    lat=lat,
+                    lon=lon,
+                    alt=100.0 + 5.0 * math.sin(t * 0.2),
+                    ground_speed=ground_speed,
+                )
+                next_mavlink_send = now + send_interval
+
             await asyncio.sleep(1.0 / 20.0)
     except asyncio.CancelledError:
         return
