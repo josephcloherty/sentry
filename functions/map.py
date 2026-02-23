@@ -15,6 +15,12 @@ PIN_MAX_COUNT = 500
 PIN_BUTTON_LABEL = 'Drop GPS Pin'
 CLEAR_PINS_BUTTON_LABEL = 'Clear Pins'
 FOLLOW_BUTTON_LABEL = 'Follow'
+GUIDED_MAP_MESSAGE_TYPE = 'sentry_guided_map_dblclick'
+GUIDED_MARKER_LABEL = 'Guided target'
+GUIDED_MARKER_COLOR = '#ef4444'
+GUIDED_MARKER_SIZE_PX = 22
+GUIDED_MARKER_STROKE_PX = 3
+GUIDED_MARKER_TIME_LABEL = 'Sent'
 
 # ===== MAP DATA CONFIG (adjustable) =====
 MAP_GPKG_FILENAME = 'NorthWest_Railways.gpkg'
@@ -189,54 +195,6 @@ def generate_map_html(lat, lon, yaw, test_mode=False):
         ).add_to(m)
 
     map_id = m.get_name()
-    reset_button = f"""
-    <div id="map-action-buttons" style="position: absolute; top: 16px; right: 16px; z-index: 1000; display: flex; flex-direction: column; gap: 8px;">
-        <button id="reset-btn" onclick="resetView()" aria-label="{FOLLOW_BUTTON_LABEL}" title="{FOLLOW_BUTTON_LABEL}" style="
-            width: 40px;
-            height: 40px;
-            padding: 0;
-            background: white;
-            border: 2px solid rgba(0,0,0,0.2);
-            border-radius: 6px;
-            cursor: pointer;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            box-shadow: 0 1px 5px rgba(0,0,0,0.4);
-        ">
-            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="3"></circle>
-                <circle cx="12" cy="12" r="10"></circle>
-                <line x1="12" y1="2" x2="12" y2="5"></line>
-                <line x1="12" y1="19" x2="12" y2="22"></line>
-                <line x1="2" y1="12" x2="5" y2="12"></line>
-                <line x1="19" y1="12" x2="22" y2="12"></line>
-            </svg>
-        </button>
-        <button id="clear-pins-btn" onclick="clearPins()" aria-label="{CLEAR_PINS_BUTTON_LABEL}" title="{CLEAR_PINS_BUTTON_LABEL}" style="
-            width: 40px;
-            height: 40px;
-            padding: 0;
-            background: white;
-            border: 2px solid rgba(0,0,0,0.2);
-            border-radius: 6px;
-            cursor: pointer;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            box-shadow: 0 1px 5px rgba(0,0,0,0.4);
-        ">
-            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="3 6 5 6 21 6"></polyline>
-                <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>
-                <line x1="10" y1="11" x2="10" y2="17"></line>
-                <line x1="14" y1="11" x2="14" y2="17"></line>
-            </svg>
-        </button>
-    </div>
-    """
-    m.get_root().html.add_child(folium.Element(reset_button))
 
     # Choose telemetry URL list. When `test_mode` is True include the local test WS as a fallback.
     if test_mode:
@@ -255,6 +213,12 @@ def generate_map_html(lat, lon, yaw, test_mode=False):
         var mapObj = null;
         var ws = null;
         var pinLayer = null;
+        var guidedLayer = null;
+        var guidedModeEnabled = false;
+        var guidedMarkerColor = '""" + GUIDED_MARKER_COLOR + """';
+        var guidedMarkerSizePx = """ + str(int(GUIDED_MARKER_SIZE_PX)) + """;
+        var guidedMarkerStrokePx = """ + str(int(GUIDED_MARKER_STROKE_PX)) + """;
+        var guidedMessageType = '""" + GUIDED_MAP_MESSAGE_TYPE + """';
         var pinStorageKey = '""" + PIN_STORAGE_KEY + """';
         var maxPins = """ + str(PIN_MAX_COUNT) + """;
         var isFollowing = true;  // Start with following enabled
@@ -294,6 +258,14 @@ def generate_map_html(lat, lon, yaw, test_mode=False):
             return pinLayer;
         }
 
+        function ensureGuidedLayer() {
+            if (!mapObj) return null;
+            if (!guidedLayer) {
+                guidedLayer = L.layerGroup().addTo(mapObj);
+            }
+            return guidedLayer;
+        }
+
         function renderPins(pins) {
             var layer = ensurePinLayer();
             if (!layer) return;
@@ -327,9 +299,81 @@ def generate_map_html(lat, lon, yaw, test_mode=False):
             renderPins([]);
         }
 
+        function buildGuidedIcon() {
+            var size = guidedMarkerSizePx;
+            var stroke = guidedMarkerStrokePx;
+            var html = '<div style="position:relative;width:' + size + 'px;height:' + size + 'px;">'
+                + '<span style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:' + stroke + 'px;height:' + size + 'px;background:' + guidedMarkerColor + ';border-radius:999px;"></span>'
+                + '<span style="position:absolute;left:0;top:50%;transform:translateY(-50%);width:' + size + 'px;height:' + stroke + 'px;background:' + guidedMarkerColor + ';border-radius:999px;"></span>'
+                + '</div>';
+
+            return L.divIcon({
+                className: 'guided-target-plus',
+                html: html,
+                iconSize: [size, size],
+                iconAnchor: [size / 2, size / 2]
+            });
+        }
+
+        function formatGuidedSecondsSince(sentTsMs) {
+            if (!Number.isFinite(sentTsMs)) return '--';
+            var elapsedMs = Math.max(0, Date.now() - sentTsMs);
+            var elapsedSec = elapsedMs / 1000.0;
+            if (elapsedSec < 60) {
+                return elapsedSec.toFixed(1) + 's ago';
+            }
+            var mins = Math.floor(elapsedSec / 60);
+            var secs = Math.floor(elapsedSec % 60);
+            return mins + 'm ' + secs + 's ago';
+        }
+
+        function buildGuidedTooltipHtml(lat, lon, alt, sentTsMs) {
+            var latText = Number.isFinite(lat) ? lat.toFixed(6) : '--';
+            var lonText = Number.isFinite(lon) ? lon.toFixed(6) : '--';
+            var altText = Number.isFinite(alt) ? alt.toFixed(1) + ' m' : '--';
+            var ageText = formatGuidedSecondsSince(sentTsMs);
+            return '<div style="font-size:12px;line-height:1.4;">'
+                + '<div><strong>Lat:</strong> ' + latText + '</div>'
+                + '<div><strong>Lon:</strong> ' + lonText + '</div>'
+                + '<div><strong>Alt:</strong> ' + altText + '</div>'
+                + '<div><strong>""" + GUIDED_MARKER_TIME_LABEL + """:</strong> ' + ageText + '</div>'
+                + '</div>';
+        }
+
+        function addGuidedTargetMarker(lat, lon, alt, sentTsMs) {
+            var layer = ensureGuidedLayer();
+            if (!layer) return;
+            var marker = L.marker([lat, lon], { icon: buildGuidedIcon() }).addTo(layer);
+            var sentAt = Number.isFinite(sentTsMs) ? sentTsMs : Date.now();
+            marker.bindTooltip(buildGuidedTooltipHtml(Number(lat), Number(lon), Number(alt), sentAt), {
+                direction: 'top',
+                opacity: 0.95
+            });
+            marker.on('mouseover', function() {
+                marker.setTooltipContent(buildGuidedTooltipHtml(Number(lat), Number(lon), Number(alt), sentAt));
+            });
+        }
+
+        function setGuidedModeEnabled(enabled) {
+            guidedModeEnabled = !!enabled;
+            window.guidedModeEnabled = guidedModeEnabled;
+            if (!mapObj) return;
+            try {
+                if (guidedModeEnabled) {
+                    mapObj.doubleClickZoom.disable();
+                } else {
+                    mapObj.doubleClickZoom.enable();
+                }
+            } catch (e) {
+                console.warn('Unable to toggle map double-click zoom', e);
+            }
+        }
+
         // Make pin methods globally accessible
         window.dropGpsPin = dropGpsPin;
         window.clearPins = clearPins;
+        window.setGuidedModeEnabled = setGuidedModeEnabled;
+        window.addGuidedTargetMarker = addGuidedTargetMarker;
 
         function resolveSentryMarker() {
             if (!mapObj) return null;
@@ -354,6 +398,24 @@ def generate_map_html(lat, lon, yaw, test_mode=False):
                 mapObj.on('dragstart', function() {
                     isFollowing = false;
                     window.isFollowing = false;
+                });
+
+                mapObj.on('dblclick', function(evt) {
+                    if (!guidedModeEnabled || !evt || !evt.latlng) {
+                        return;
+                    }
+
+                    try {
+                        if (window.parent && window.parent !== window) {
+                            window.parent.postMessage({
+                                type: guidedMessageType,
+                                lat: Number(evt.latlng.lat),
+                                lon: Number(evt.latlng.lng)
+                            }, '*');
+                        }
+                    } catch (e) {
+                        console.warn('Failed to notify parent about guided map click', e);
+                    }
                 });
 
                 renderPins(readPins());

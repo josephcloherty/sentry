@@ -2,7 +2,10 @@
 import asyncio
 import cv2
 import json
+import logging
 import numpy as np
+import os
+import platform
 import secrets
 import socket
 import struct
@@ -21,6 +24,11 @@ from functions.map import generate_map_html
 from functions.compass import draw_compass
 from functions.throttle import draw_throttle_widget
 
+try:
+    from fiducial_tracker import process_fiducial_frame
+except Exception:
+    process_fiducial_frame = None
+
 # ===== Configuration =====
 STATUS_UPDATE_INTERVAL_MS = 2000
 STATUS_TIMEOUT = 3.0
@@ -29,6 +37,9 @@ TELEMETRY_RECONNECT_DELAY_SEC = 2.0
 TELEMETRY_RECV_TIMEOUT_SEC = 5.0
 TELEMETRY_PING_INTERVAL_SEC = 5.0
 TELEMETRY_PING_TIMEOUT_SEC = 5.0
+VIDEO_RECONNECT_DELAY_SEC = 2.0
+FIDUCIAL_RECONNECT_DELAY_SEC = 2.0
+COMMAND_RECONNECT_DELAY_SEC = 2.0
 FIDUCIAL_OVERLAY_ENABLED = True
 FIDUCIAL_MIN_CONFIDENCE = 0.2
 FIDUCIAL_STALE_TIMEOUT_SEC = 2.0
@@ -38,10 +49,58 @@ FIDUCIAL_LINE_THICKNESS = 2
 FIDUCIAL_COLOR = (0, 0, 255)
 FIDUCIAL_APPLY_FRAME_SCALING = True
 FIDUCIAL_CLAMP_TO_FRAME = True
+HQ_CV_MODE_UNSELECTED = ''
+HQ_CV_MODE_NONE = 'none'
+HQ_CV_MODE_LANDING = 'landing_mode'
+HQ_CV_MODE_TARGET_TRACKING = 'target_tracking'
+HQ_CV_DEFAULT_MODE = HQ_CV_MODE_NONE
+HQ_CV_ALLOWED_MODES = {
+    HQ_CV_MODE_UNSELECTED,
+    HQ_CV_MODE_NONE,
+    HQ_CV_MODE_LANDING,
+    HQ_CV_MODE_TARGET_TRACKING,
+}
+HQ_CV_TARGET_TRACKING_TEXT = 'Target Tracking (Coming Soon)'
+HQ_CV_TARGET_TRACKING_TEXT_SCALE = 0.7
+HQ_CV_TARGET_TRACKING_TEXT_THICKNESS = 2
+HQ_CV_TARGET_TRACKING_TEXT_COLOR = (255, 220, 120)
 
-# Toggle test mode to use local test telemetry/streams (set True to enable)
-# When enabled: telemetry WS -> ws://localhost:8888, cam0 -> localhost:8886, cam1 -> localhost:8887, hq -> localhost:8885
-TEST_MODE = False
+# Target tracking workflow settings (mirrors object_detection defaults)
+HQ_TT_MODEL_COREML_PATH = './object_detection/coreml/best8np2.mlpackage'
+HQ_TT_MODEL_COREML_FALLBACK_PATH = './object_detection/coreml/best26p2.mlpackage'
+HQ_TT_MODEL_PATH = './object_detection/best8np2.pt'
+HQ_TT_MODEL_FALLBACK_PATH = './object_detection/best8np2.pt'
+HQ_TT_TRACKER_PATH = './object_detection/bytetrack_persist.yaml'
+HQ_TT_CONFIDENCE = 0.35
+HQ_TT_IOU = 0.2
+HQ_TT_IMAGE_SIZE = 800
+HQ_TT_PERSIST = True
+HQ_TT_DEVICE = 'auto'
+HQ_TT_PERSON_ONLY = False
+HQ_TT_LOCK_ON_CONF = 0.50
+HQ_TT_STICK_MIN_CONF = 0.15
+HQ_TT_HOLD_FRAMES = 12
+HQ_TT_SELECTED_HOLD_MULTIPLIER = 2
+HQ_TT_REACQUIRE_MIN_IOU = 0.08
+HQ_TT_REACQUIRE_MAX_CENTER_DIST_RATIO = 0.20
+HQ_TT_BOX_COLOR = (255, 170, 60)
+HQ_TT_TARGET_COLOR = (40, 220, 120)
+HQ_TT_TEXT_COLOR = (255, 255, 255)
+HQ_LANDING_LOCAL_FIDUCIAL_FALLBACK_IN_TEST = True
+HQ_LANDING_STATUS_TEXT_COLOR = (120, 220, 255)
+HQ_TT_FALLBACK_IN_TEST = True
+HQ_TT_FALLBACK_MIN_AREA_RATIO = 0.002
+GUIDED_GOTO_LAT_MIN = -90.0
+GUIDED_GOTO_LAT_MAX = 90.0
+GUIDED_GOTO_LON_MIN = -180.0
+GUIDED_GOTO_LON_MAX = 180.0
+GUIDED_GOTO_MIN_ALT_M = 1.0
+GUIDED_GOTO_MAX_ALT_M = 500.0
+HTTP_REQUEST_LOG_FILENAME = 'client_log'
+HTTP_REQUEST_LOG_ENCODING = 'utf-8'
+HTTP_REQUEST_LOG_LEVEL = logging.INFO
+
+TEST_MODE = True
 
 if TEST_MODE:
     SERVER_IP = 'localhost'
@@ -67,7 +126,7 @@ VALID_PASSWORD = 'sentry'
 DEFAULT_CAMERA_FUNCTION_TABS = {
     'cam0': ['go_dark', 'drop_gps_pin', 'emergency'],
     'cam1': ['go_dark', 'loiter', 'emergency'],
-    'hq': ['landing_mode', 'loiter', 'drop_gps_pin', 'emergency']
+    'hq': ['loiter', 'drop_gps_pin', 'emergency']
 }
 
 # Home screen tile ordering
@@ -97,6 +156,47 @@ ALLOWED_COMMAND_IDS = {
 
 # ===== Global State =====
 app = Flask(__name__, static_folder='templates', static_url_path='')
+
+
+def configure_http_request_logging():
+    """Route Werkzeug access logs to file while keeping startup messages in terminal."""
+    log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), HTTP_REQUEST_LOG_FILENAME)
+
+    # Clear log file on each client restart
+    with open(log_path, 'w', encoding=HTTP_REQUEST_LOG_ENCODING):
+        pass
+
+    def _is_http_access_log(record):
+        try:
+            message = record.getMessage()
+        except Exception:
+            return False
+        return isinstance(message, str) and 'HTTP/' in message
+
+    werkzeug_logger = logging.getLogger('werkzeug')
+    werkzeug_logger.setLevel(HTTP_REQUEST_LOG_LEVEL)
+    werkzeug_logger.handlers.clear()
+    werkzeug_logger.propagate = False
+
+    class AccessLogOnlyFilter(logging.Filter):
+        def filter(self, record):
+            return _is_http_access_log(record)
+
+    class NonAccessLogFilter(logging.Filter):
+        def filter(self, record):
+            return not _is_http_access_log(record)
+
+    terminal_handler = logging.StreamHandler()
+    terminal_handler.setLevel(HTTP_REQUEST_LOG_LEVEL)
+    terminal_handler.setFormatter(logging.Formatter('%(message)s'))
+    terminal_handler.addFilter(NonAccessLogFilter())
+    werkzeug_logger.addHandler(terminal_handler)
+
+    http_log_handler = logging.FileHandler(log_path, mode='a', encoding=HTTP_REQUEST_LOG_ENCODING)
+    http_log_handler.setLevel(HTTP_REQUEST_LOG_LEVEL)
+    http_log_handler.setFormatter(logging.Formatter('%(asctime)s %(message)s'))
+    http_log_handler.addFilter(AccessLogOnlyFilter())
+    werkzeug_logger.addHandler(http_log_handler)
 
 # Video frames (store dicts with timing info)
 frame_cam0 = None
@@ -134,6 +234,22 @@ mav_online = False
 # Fiducial detection state
 fiducial_state = None
 fiducial_lock = Lock()
+hq_cv_mode = HQ_CV_DEFAULT_MODE
+hq_cv_mode_lock = Lock()
+
+# Target tracking runtime state
+hq_tt_model = None
+hq_tt_model_lock = Lock()
+hq_tt_infer_lock = Lock()
+hq_tt_error = None
+hq_tt_class_filter = None
+hq_tt_state_lock = Lock()
+hq_tt_selected_track_id = None
+hq_tt_selected_last_box = None
+hq_tt_selected_missed_frames = 0
+hq_tt_latest_detections = []
+hq_tt_latest_frame_width = 0
+hq_tt_latest_frame_height = 0
 
 # Telemetry data
 mavlink_data = {
@@ -307,6 +423,55 @@ def draw_fiducial_overlay(frame):
     label = f"FID {fid_id}" if fid_id is not None else "FID"
     text = f"{label}  conf {confidence:.2f}"
     cv2.putText(frame, text, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, FIDUCIAL_TEXT_SCALE, FIDUCIAL_COLOR, FIDUCIAL_TEXT_THICKNESS)
+    return True
+
+
+def draw_fiducial_overlay_from_result(frame, result):
+    if result is None or not getattr(result, 'locked', False):
+        return False
+
+    try:
+        confidence = float(getattr(result, 'confidence', 0.0))
+    except Exception:
+        confidence = 0.0
+    if confidence < FIDUCIAL_MIN_CONFIDENCE:
+        return False
+
+    h, w = frame.shape[:2]
+    corners = getattr(result, 'corners', None)
+    cx = cy = None
+
+    if corners is not None:
+        try:
+            pts = np.array(corners, dtype=np.float32)
+            if FIDUCIAL_CLAMP_TO_FRAME:
+                pts[:, 0] = np.clip(pts[:, 0], 0, w - 1)
+                pts[:, 1] = np.clip(pts[:, 1], 0, h - 1)
+            pts = pts.astype(np.int32)
+            cv2.polylines(frame, [pts], True, FIDUCIAL_COLOR, FIDUCIAL_LINE_THICKNESS)
+            cx = int(np.mean(pts[:, 0]))
+            cy = int(np.mean(pts[:, 1]))
+        except Exception:
+            cx = cy = None
+
+    if cx is None or cy is None:
+        try:
+            error_x = float(getattr(result, 'error_x', 0.0))
+            error_y = float(getattr(result, 'error_y', 0.0))
+            cx = int((w / 2) + error_x * (w / 2))
+            cy = int((h / 2) + error_y * (h / 2))
+            if FIDUCIAL_CLAMP_TO_FRAME:
+                cx = int(np.clip(cx, 0, w - 1))
+                cy = int(np.clip(cy, 0, h - 1))
+        except Exception:
+            return False
+
+    cv2.drawMarker(frame, (cx, cy), FIDUCIAL_COLOR, markerType=cv2.MARKER_CROSS, markerSize=14, thickness=FIDUCIAL_LINE_THICKNESS)
+    fid_id = getattr(result, 'fiducial_id', None)
+    label = f"FID {fid_id}" if fid_id is not None else "FID"
+    text = f"{label}  conf {confidence:.2f}"
+    cv2.putText(frame, text, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, FIDUCIAL_TEXT_SCALE, FIDUCIAL_COLOR, FIDUCIAL_TEXT_THICKNESS)
+    return True
 
 
 def get_request_token():
@@ -389,6 +554,525 @@ def sanitize_settings(payload):
     return settings
 
 
+def get_hq_cv_mode():
+    with hq_cv_mode_lock:
+        return hq_cv_mode
+
+
+def set_hq_cv_mode(mode):
+    global hq_cv_mode, hq_tt_selected_track_id, hq_tt_selected_last_box, hq_tt_selected_missed_frames
+    if mode not in HQ_CV_ALLOWED_MODES:
+        return False
+    with hq_cv_mode_lock:
+        hq_cv_mode = mode
+    if mode != HQ_CV_MODE_TARGET_TRACKING:
+        with hq_tt_state_lock:
+            hq_tt_selected_track_id = None
+            hq_tt_selected_last_box = None
+            hq_tt_selected_missed_frames = 0
+    return True
+
+
+def get_hq_target_selection_state():
+    with hq_tt_state_lock:
+        selected_id = hq_tt_selected_track_id
+    return {
+        'selected': selected_id is not None,
+        'track_id': selected_id,
+    }
+
+
+def clear_hq_target_selection():
+    global hq_tt_selected_track_id, hq_tt_selected_last_box, hq_tt_selected_missed_frames
+    with hq_tt_state_lock:
+        hq_tt_selected_track_id = None
+        hq_tt_selected_last_box = None
+        hq_tt_selected_missed_frames = 0
+
+
+def _hq_tt_box_iou(box_a, box_b):
+    ax1, ay1, ax2, ay2 = box_a
+    bx1, by1, bx2, by2 = box_b
+
+    inter_x1 = max(ax1, bx1)
+    inter_y1 = max(ay1, by1)
+    inter_x2 = min(ax2, bx2)
+    inter_y2 = min(ay2, by2)
+
+    inter_w = max(0.0, inter_x2 - inter_x1)
+    inter_h = max(0.0, inter_y2 - inter_y1)
+    inter_area = inter_w * inter_h
+    if inter_area <= 0.0:
+        return 0.0
+
+    area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+    area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+    denom = area_a + area_b - inter_area
+    if denom <= 0.0:
+        return 0.0
+    return inter_area / denom
+
+
+def _hq_tt_center_distance(box_a, box_b):
+    ax1, ay1, ax2, ay2 = box_a
+    bx1, by1, bx2, by2 = box_b
+    acx = (ax1 + ax2) / 2.0
+    acy = (ay1 + ay2) / 2.0
+    bcx = (bx1 + bx2) / 2.0
+    bcy = (by1 + by2) / 2.0
+    dx = acx - bcx
+    dy = acy - bcy
+    return (dx * dx + dy * dy) ** 0.5
+
+
+def select_hq_target_from_normalized(x_norm, y_norm):
+    global hq_tt_selected_track_id, hq_tt_selected_last_box, hq_tt_selected_missed_frames
+
+    try:
+        x_norm = float(x_norm)
+        y_norm = float(y_norm)
+    except Exception:
+        return False, 'Invalid click coordinates', None
+
+    if not (0.0 <= x_norm <= 1.0 and 0.0 <= y_norm <= 1.0):
+        return False, 'Click coordinates out of range', None
+
+    with hq_tt_state_lock:
+        detections = list(hq_tt_latest_detections)
+        frame_w = int(hq_tt_latest_frame_width)
+        frame_h = int(hq_tt_latest_frame_height)
+
+    if frame_w <= 0 or frame_h <= 0:
+        return False, 'No tracking frame available', None
+
+    click_x = int(x_norm * frame_w)
+    click_y = int(y_norm * frame_h)
+
+    candidates = []
+    for det in detections:
+        track_id = det.get('track_id')
+        box = det.get('box')
+        if track_id is None or box is None or len(box) != 4:
+            continue
+        x1, y1, x2, y2 = [int(v) for v in box]
+        if x1 <= click_x <= x2 and y1 <= click_y <= y2:
+            area = max(1, (x2 - x1) * (y2 - y1))
+            conf = float(det.get('conf', 0.0))
+            candidates.append((area, -conf, int(track_id)))
+
+    if not candidates:
+        return False, 'No target at click point', None
+
+    candidates.sort(key=lambda item: (item[0], item[1]))
+    selected_id = candidates[0][2]
+
+    selected_box = None
+    for det in detections:
+        if det.get('track_id') == selected_id:
+            selected_box = det.get('box')
+            break
+
+    with hq_tt_state_lock:
+        hq_tt_selected_track_id = selected_id
+        hq_tt_selected_last_box = selected_box
+        hq_tt_selected_missed_frames = 0
+
+    return True, 'Target selected', selected_id
+
+
+def _hq_tt_pick_device(device_arg):
+    if device_arg != 'auto':
+        return device_arg
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return 'cuda'
+        if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            return 'mps'
+    except Exception:
+        pass
+    return 'cpu'
+
+
+def _hq_tt_normalize_names(model_names):
+    if isinstance(model_names, list):
+        return {idx: name for idx, name in enumerate(model_names)}
+    normalized = {}
+    for key, value in model_names.items():
+        normalized[int(key)] = str(value)
+    return normalized
+
+
+def _hq_tt_should_prefer_coreml():
+    return platform.system() == 'Darwin'
+
+
+def _hq_tt_model_candidates():
+    if _hq_tt_should_prefer_coreml():
+        preferred = [
+            HQ_TT_MODEL_COREML_PATH,
+            HQ_TT_MODEL_COREML_FALLBACK_PATH,
+            HQ_TT_MODEL_PATH,
+            HQ_TT_MODEL_FALLBACK_PATH,
+        ]
+    else:
+        preferred = [
+            HQ_TT_MODEL_PATH,
+            HQ_TT_MODEL_FALLBACK_PATH,
+            HQ_TT_MODEL_COREML_PATH,
+            HQ_TT_MODEL_COREML_FALLBACK_PATH,
+        ]
+
+    candidates = []
+    seen = set()
+    for model_path in preferred:
+        if not model_path:
+            continue
+        if model_path in seen:
+            continue
+        seen.add(model_path)
+        if os.path.exists(model_path):
+            candidates.append(model_path)
+    return candidates
+
+
+def _hq_tt_resolve_model_path():
+    candidates = _hq_tt_model_candidates()
+    return candidates[0] if candidates else None
+
+
+def _hq_tt_resolve_tracker_path():
+    if HQ_TT_TRACKER_PATH and os.path.exists(HQ_TT_TRACKER_PATH):
+        return HQ_TT_TRACKER_PATH
+    return HQ_TT_TRACKER_PATH
+
+
+def _hq_tt_people_related_class_ids(names_by_id):
+    people_related_exact = {
+        'person', 'pedestrian', 'people', 'bicycle', 'cyclist', 'rider',
+        'motor', 'motorbike', 'motorcycle', 'tricycle', 'awning-tricycle'
+    }
+    people_related_keywords = ('person', 'pedestrian', 'people', 'rider', 'cyclist', 'bicycle', 'bike', 'motor', 'tricycle', 'human')
+    action_keywords = ('walk', 'run', 'sit', 'stand', 'ride', 'jump', 'fall', 'action')
+
+    selected = set()
+    for idx, name in names_by_id.items():
+        lowered = str(name).lower()
+        if lowered in people_related_exact:
+            selected.add(idx)
+            continue
+        if any(keyword in lowered for keyword in people_related_keywords):
+            selected.add(idx)
+            continue
+        if any(keyword in lowered for keyword in action_keywords):
+            selected.add(idx)
+    return sorted(selected)
+
+
+def _hq_tt_build_runtime():
+    global hq_tt_model, hq_tt_error, hq_tt_class_filter
+    if hq_tt_model is not None:
+        return True
+
+    with hq_tt_model_lock:
+        if hq_tt_model is not None:
+            return True
+        try:
+            from ultralytics import YOLO
+
+            model_candidates = _hq_tt_model_candidates()
+            if not model_candidates:
+                hq_tt_error = 'Target Tracking model not found.'
+                return False
+
+            last_error = None
+            loaded_model_path = None
+            for model_path in model_candidates:
+                try:
+                    hq_tt_model = YOLO(model_path)
+                    loaded_model_path = model_path
+                    break
+                except Exception as model_error:
+                    last_error = model_error
+                    hq_tt_model = None
+
+            if hq_tt_model is None:
+                hq_tt_error = f'Target Tracking init failed: {last_error}'
+                print(hq_tt_error)
+                return False
+
+            if HQ_TT_PERSON_ONLY:
+                try:
+                    names_by_id = _hq_tt_normalize_names(hq_tt_model.names)
+                    class_ids = _hq_tt_people_related_class_ids(names_by_id)
+                    hq_tt_class_filter = class_ids if class_ids else None
+                except Exception:
+                    hq_tt_class_filter = None
+            else:
+                hq_tt_class_filter = None
+
+            hq_tt_error = None
+            print(f"HQ Target Tracking initialized with model: {loaded_model_path}")
+            return True
+        except Exception as e:
+            hq_tt_model = None
+            hq_tt_error = f'Target Tracking init failed: {e}'
+            print(hq_tt_error)
+            return False
+
+
+def _hq_tt_draw_status(frame, text, color):
+    cv2.putText(
+        frame,
+        text,
+        (10, 30),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.7,
+        color,
+        2,
+    )
+
+
+def _hq_tt_extract_detections(result):
+    detections = []
+    if result is None or not hasattr(result, 'boxes') or result.boxes is None:
+        return detections
+
+    boxes = result.boxes
+    xyxy = boxes.xyxy
+    confs = boxes.conf if hasattr(boxes, 'conf') else None
+    classes = boxes.cls if hasattr(boxes, 'cls') else None
+    ids = boxes.id if hasattr(boxes, 'id') else None
+
+    if xyxy is None:
+        return detections
+
+    try:
+        boxes_np = xyxy.cpu().numpy()
+    except Exception:
+        boxes_np = np.array(xyxy)
+
+    conf_np = None
+    if confs is not None:
+        try:
+            conf_np = confs.cpu().numpy()
+        except Exception:
+            conf_np = np.array(confs)
+
+    cls_np = None
+    if classes is not None:
+        try:
+            cls_np = classes.cpu().numpy()
+        except Exception:
+            cls_np = np.array(classes)
+
+    id_np = None
+    if ids is not None:
+        try:
+            id_np = ids.cpu().numpy()
+        except Exception:
+            id_np = np.array(ids)
+
+    for i, box in enumerate(boxes_np):
+        x1, y1, x2, y2 = [int(v) for v in box[:4]]
+        conf = float(conf_np[i]) if conf_np is not None and i < len(conf_np) else 0.0
+        cls_id = int(cls_np[i]) if cls_np is not None and i < len(cls_np) else -1
+        track_id = int(id_np[i]) if id_np is not None and i < len(id_np) else None
+        detections.append({
+            'box': (x1, y1, x2, y2),
+            'conf': conf,
+            'cls_id': cls_id,
+            'track_id': track_id,
+        })
+
+    return detections
+
+
+def _hq_tt_fallback_detect_and_draw(frame):
+    h, w = frame.shape[:2]
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    _, mask = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    min_area = max(80, int(w * h * HQ_TT_FALLBACK_MIN_AREA_RATIO))
+    detections = []
+    for idx, cnt in enumerate(contours):
+        area = cv2.contourArea(cnt)
+        if area < min_area:
+            continue
+        x, y, bw, bh = cv2.boundingRect(cnt)
+        detections.append({
+            'box': (x, y, x + bw, y + bh),
+            'conf': 0.5,
+            'cls_id': -1,
+            'track_id': idx + 1,
+        })
+
+    with hq_tt_state_lock:
+        global hq_tt_latest_detections, hq_tt_latest_frame_width, hq_tt_latest_frame_height, hq_tt_selected_track_id
+        hq_tt_latest_detections = detections
+        hq_tt_latest_frame_width = w
+        hq_tt_latest_frame_height = h
+        selected_id = hq_tt_selected_track_id
+
+    target_det = None
+    if selected_id is not None:
+        for det in detections:
+            if det.get('track_id') == selected_id:
+                target_det = det
+                break
+        if target_det is None:
+            clear_hq_target_selection()
+
+    cx, cy = w // 2, h // 2
+    cv2.drawMarker(frame, (cx, cy), (255, 255, 255), markerType=cv2.MARKER_CROSS, markerSize=16, thickness=1)
+
+    for det in detections:
+        x1, y1, x2, y2 = det['box']
+        is_target = target_det is not None and det.get('track_id') == target_det.get('track_id')
+        color = HQ_TT_TARGET_COLOR if is_target else HQ_TT_BOX_COLOR
+        thickness = 3 if is_target else 2
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
+        cv2.putText(frame, 'Fallback target', (x1, max(20, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, HQ_TT_TEXT_COLOR, 1)
+
+    if target_det is not None:
+        tx1, ty1, tx2, ty2 = target_det['box']
+        tx, ty = int((tx1 + tx2) / 2), int((ty1 + ty2) / 2)
+        cv2.line(frame, (cx, cy), (tx, ty), HQ_TT_TARGET_COLOR, 2)
+        _hq_tt_draw_status(frame, f'Target Tracking: LOCKED (ID {target_det.get("track_id")}) (fallback)', HQ_TT_TARGET_COLOR)
+    else:
+        _hq_tt_draw_status(frame, 'Target Tracking: CLICK TARGET TO LOCK (fallback)', HQ_TT_BOX_COLOR)
+
+
+def apply_hq_cv_landing_mode(frame):
+    drawn = bool(draw_fiducial_overlay(frame))
+
+    if (not drawn and TEST_MODE and HQ_LANDING_LOCAL_FIDUCIAL_FALLBACK_IN_TEST and process_fiducial_frame is not None):
+        try:
+            local_result = process_fiducial_frame(frame)
+            drawn = bool(draw_fiducial_overlay_from_result(frame, local_result))
+        except Exception:
+            drawn = False
+
+    if drawn:
+        _hq_tt_draw_status(frame, 'Landing Mode: LOCKED', HQ_LANDING_STATUS_TEXT_COLOR)
+    else:
+        _hq_tt_draw_status(frame, 'Landing Mode: SEARCHING', HQ_LANDING_STATUS_TEXT_COLOR)
+
+
+def apply_hq_cv_target_tracking_mode(frame):
+    if not _hq_tt_build_runtime():
+        if TEST_MODE and HQ_TT_FALLBACK_IN_TEST:
+            _hq_tt_fallback_detect_and_draw(frame)
+            return
+        _hq_tt_draw_status(frame, hq_tt_error or HQ_CV_TARGET_TRACKING_TEXT, (0, 0, 255))
+        return
+
+    with hq_tt_infer_lock:
+        try:
+            device = _hq_tt_pick_device(HQ_TT_DEVICE)
+            result_list = hq_tt_model.track(
+                source=frame,
+                conf=HQ_TT_CONFIDENCE,
+                iou=HQ_TT_IOU,
+                imgsz=HQ_TT_IMAGE_SIZE,
+                tracker=_hq_tt_resolve_tracker_path(),
+                persist=HQ_TT_PERSIST,
+                rect=False,
+                device=device,
+                classes=hq_tt_class_filter,
+                verbose=False,
+            )
+            result = result_list[0] if result_list else None
+            detections = _hq_tt_extract_detections(result)
+        except Exception as e:
+            _hq_tt_draw_status(frame, f'Target Tracking error: {e}', (0, 0, 255))
+            return
+
+    h, w = frame.shape[:2]
+    with hq_tt_state_lock:
+        global hq_tt_latest_detections, hq_tt_latest_frame_width, hq_tt_latest_frame_height
+        global hq_tt_selected_track_id, hq_tt_selected_last_box, hq_tt_selected_missed_frames
+        hq_tt_latest_detections = detections
+        hq_tt_latest_frame_width = w
+        hq_tt_latest_frame_height = h
+        selected_id = hq_tt_selected_track_id
+        selected_last_box = hq_tt_selected_last_box
+        selected_missed_frames = hq_tt_selected_missed_frames
+
+    by_track_id = {
+        d['track_id']: d
+        for d in detections
+        if d.get('track_id') is not None
+    }
+
+    target_det = None
+    if selected_id is not None:
+        target_det = by_track_id.get(selected_id)
+        if target_det is not None and target_det.get('conf', 0.0) >= HQ_TT_STICK_MIN_CONF:
+            selected_last_box = target_det.get('box')
+            selected_missed_frames = 0
+        else:
+            target_det = None
+            # Keep holding/looking in last known area, but never reassign to a different ID.
+            selected_missed_frames += 1
+
+            selected_hold_limit = max(1, int(HQ_TT_HOLD_FRAMES * HQ_TT_SELECTED_HOLD_MULTIPLIER))
+            if target_det is None and selected_missed_frames > selected_hold_limit:
+                selected_id = None
+                selected_last_box = None
+                selected_missed_frames = 0
+
+    with hq_tt_state_lock:
+        hq_tt_selected_track_id = selected_id
+        hq_tt_selected_last_box = selected_last_box
+        hq_tt_selected_missed_frames = selected_missed_frames
+
+    names_by_id = None
+    try:
+        names_by_id = _hq_tt_normalize_names(hq_tt_model.names)
+    except Exception:
+        names_by_id = None
+
+    for det in detections:
+        x1, y1, x2, y2 = det['box']
+        is_target = target_det is not None and det.get('track_id') == target_det.get('track_id')
+        color = HQ_TT_TARGET_COLOR if is_target else HQ_TT_BOX_COLOR
+        thickness = 3 if is_target else 2
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
+
+        label_parts = []
+        if det.get('track_id') is not None:
+            label_parts.append(f"ID {det['track_id']}")
+        if names_by_id and det['cls_id'] in names_by_id:
+            label_parts.append(names_by_id[det['cls_id']])
+        label_parts.append(f"{det['conf']:.2f}")
+        label = ' | '.join(label_parts)
+        cv2.putText(frame, label, (x1, max(20, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, HQ_TT_TEXT_COLOR, 1)
+
+    cx, cy = w // 2, h // 2
+    cv2.drawMarker(frame, (cx, cy), (255, 255, 255), markerType=cv2.MARKER_CROSS, markerSize=16, thickness=1)
+
+    if target_det is not None:
+        tx1, ty1, tx2, ty2 = target_det['box']
+        tx = int((tx1 + tx2) / 2)
+        ty = int((ty1 + ty2) / 2)
+        cv2.line(frame, (cx, cy), (tx, ty), HQ_TT_TARGET_COLOR, 2)
+        _hq_tt_draw_status(frame, f"Target Tracking: LOCKED (ID {target_det.get('track_id')})", HQ_TT_TARGET_COLOR)
+    else:
+        if selected_id is not None and selected_last_box is not None:
+            x1, y1, x2, y2 = [int(v) for v in selected_last_box]
+            cv2.rectangle(frame, (x1, y1), (x2, y2), HQ_TT_TARGET_COLOR, 2)
+            _hq_tt_draw_status(
+                frame,
+                f'Target Tracking: HOLDING AREA (ID {selected_id}) [{selected_missed_frames}/{max(1, int(HQ_TT_HOLD_FRAMES * HQ_TT_SELECTED_HOLD_MULTIPLIER))}]',
+                HQ_TT_TARGET_COLOR,
+            )
+        else:
+            _hq_tt_draw_status(frame, 'Target Tracking: CLICK TARGET TO LOCK', HQ_TT_BOX_COLOR)
+
+
 # ===== Video Receivers =====
 async def receive_video(cam_id, port):
     """Generic video receiver for a camera."""
@@ -440,10 +1124,12 @@ async def receive_video(cam_id, port):
                         if timestamp:
                             hq_frame_timestamp = timestamp
         except websockets.exceptions.ConnectionClosed:
-            print(f"Camera {cam_id} WebSocket disconnected, reconnecting in 2 seconds...")
-        except Exception as e:
-            print(f"Camera {cam_id} error: {e}, reconnecting in 2 seconds...")
-        await asyncio.sleep(2)
+            print(f"Camera {cam_id} disconnected, reconnecting in {VIDEO_RECONNECT_DELAY_SEC:.0f} seconds...")
+        except (ConnectionRefusedError, OSError):
+            print(f"Camera {cam_id} connect failed, reconnecting in {VIDEO_RECONNECT_DELAY_SEC:.0f} seconds...")
+        except Exception:
+            print(f"Camera {cam_id} reconnecting in {VIDEO_RECONNECT_DELAY_SEC:.0f} seconds...")
+        await asyncio.sleep(VIDEO_RECONNECT_DELAY_SEC)
 
 
 async def receive_telemetry():
@@ -483,10 +1169,10 @@ async def receive_telemetry():
                         last_mav_time = current_time
                     except json.JSONDecodeError:
                         print(f"Failed to parse telemetry JSON: {data}")
-        except websockets.exceptions.ConnectionRefused:
-            print(f"Telemetry server not available, retrying in {TELEMETRY_RECONNECT_DELAY_SEC:.0f} seconds...")
-        except Exception as e:
-            print(f"Telemetry WebSocket error: {e}")
+        except (ConnectionRefusedError, OSError):
+            print(f"Telemetry connect failed, reconnecting in {TELEMETRY_RECONNECT_DELAY_SEC:.0f} seconds...")
+        except Exception:
+            print(f"Telemetry reconnecting in {TELEMETRY_RECONNECT_DELAY_SEC:.0f} seconds...")
         await asyncio.sleep(TELEMETRY_RECONNECT_DELAY_SEC)
 
 
@@ -506,11 +1192,11 @@ async def receive_fiducials():
                                 fiducial_state = payload
                     except json.JSONDecodeError:
                         pass
-        except websockets.exceptions.ConnectionRefused:
-            print("Fiducial server not available, retrying in 2 seconds...")
-        except Exception as e:
-            print(f"Fiducial WebSocket error: {e}")
-        await asyncio.sleep(2)
+        except (ConnectionRefusedError, OSError):
+            print(f"Fiducial connect failed, reconnecting in {FIDUCIAL_RECONNECT_DELAY_SEC:.0f} seconds...")
+        except Exception:
+            print(f"Fiducial reconnecting in {FIDUCIAL_RECONNECT_DELAY_SEC:.0f} seconds...")
+        await asyncio.sleep(FIDUCIAL_RECONNECT_DELAY_SEC)
 
 
 def receive_mavlink():
@@ -669,7 +1355,11 @@ def gen_frames_hq():
         processing_start = time.time()
 
         try:
-            draw_fiducial_overlay(f)
+            mode = get_hq_cv_mode()
+            if mode == HQ_CV_MODE_LANDING:
+                apply_hq_cv_landing_mode(f)
+            elif mode == HQ_CV_MODE_TARGET_TRACKING:
+                apply_hq_cv_target_tracking_mode(f)
         except Exception as e:
             print(f"Overlay drawing error (hq): {e}")
 
@@ -869,13 +1559,13 @@ async def receive_commands():
                             command_state.update(msg['commands'])
                     except json.JSONDecodeError:
                         pass
-        except websockets.exceptions.ConnectionRefused:
-            print("Command server not available, retrying in 2 seconds...")
-        except Exception as e:
-            print(f"Command WebSocket error: {e}")
+        except (ConnectionRefusedError, OSError):
+            print(f"Command connect failed, reconnecting in {COMMAND_RECONNECT_DELAY_SEC:.0f} seconds...")
+        except Exception:
+            print(f"Command reconnecting in {COMMAND_RECONNECT_DELAY_SEC:.0f} seconds...")
         finally:
             command_ws = None
-        await asyncio.sleep(2)
+        await asyncio.sleep(COMMAND_RECONNECT_DELAY_SEC)
 
 
 @app.route('/api/commands')
@@ -918,6 +1608,53 @@ def api_command_toggle():
     else:
         print("[Flask] Warning: command_ws is None, cannot forward to server")
     return jsonify({'success': True, 'commands': command_state})
+
+
+@app.route('/api/guided_goto', methods=['POST'])
+def api_guided_goto():
+    """Forward a guided goto request (lat/lon[/alt]) to the server command socket."""
+    data = request.json or {}
+
+    try:
+        lat = float(data.get('lat'))
+        lon = float(data.get('lon'))
+    except Exception:
+        return jsonify({'success': False, 'message': 'Invalid coordinates'}), 400
+
+    if not (GUIDED_GOTO_LAT_MIN <= lat <= GUIDED_GOTO_LAT_MAX):
+        return jsonify({'success': False, 'message': 'Latitude out of range'}), 400
+    if not (GUIDED_GOTO_LON_MIN <= lon <= GUIDED_GOTO_LON_MAX):
+        return jsonify({'success': False, 'message': 'Longitude out of range'}), 400
+
+    alt = data.get('alt')
+    if alt is not None:
+        try:
+            alt = float(alt)
+        except Exception:
+            return jsonify({'success': False, 'message': 'Invalid altitude'}), 400
+        alt = max(GUIDED_GOTO_MIN_ALT_M, min(GUIDED_GOTO_MAX_ALT_M, alt))
+
+    if not command_ws:
+        return jsonify({'success': False, 'message': 'Command link unavailable'}), 503
+
+    msg = {
+        'type': 'guided_goto',
+        'lat': lat,
+        'lon': lon,
+    }
+    if alt is not None:
+        msg['alt'] = alt
+
+    try:
+        asyncio.run_coroutine_threadsafe(
+            command_ws.send(json.dumps(msg)),
+            command_loop
+        )
+    except Exception as e:
+        print(f"Failed to forward guided goto to server: {e}")
+        return jsonify({'success': False, 'message': 'Failed to send guided command'}), 500
+
+    return jsonify({'success': True, 'lat': lat, 'lon': lon, 'alt': alt})
 
 
 @app.route('/api/snapshot_cam0')
@@ -975,6 +1712,46 @@ def api_snapshot_hq():
     return ('', 204)
 
 
+@app.route('/api/hq_cv_mode', methods=['GET', 'POST'])
+def api_hq_cv_mode():
+    if request.method == 'GET':
+        return jsonify({'mode': get_hq_cv_mode()})
+
+    payload = request.json or {}
+    mode = payload.get('mode')
+    if not isinstance(mode, str) or mode not in HQ_CV_ALLOWED_MODES:
+        return jsonify({'success': False, 'message': 'Invalid HQ CV mode'}), 400
+
+    set_hq_cv_mode(mode)
+    return jsonify({'success': True, 'mode': get_hq_cv_mode()})
+
+
+@app.route('/api/hq_target_selection', methods=['GET', 'POST'])
+def api_hq_target_selection():
+    if request.method == 'GET':
+        return jsonify(get_hq_target_selection_state())
+
+    payload = request.json or {}
+    action = payload.get('action', 'select')
+
+    if action == 'clear':
+        clear_hq_target_selection()
+        state = get_hq_target_selection_state()
+        return jsonify({'success': True, **state})
+
+    x_norm = payload.get('x_norm')
+    y_norm = payload.get('y_norm')
+    success, message, track_id = select_hq_target_from_normalized(x_norm, y_norm)
+    state = get_hq_target_selection_state()
+    status_code = 200 if success else 400
+    return jsonify({
+        'success': success,
+        'message': message,
+        'track_id': track_id,
+        **state,
+    }), status_code
+
+
 @app.route('/map_embed')
 def map_embed():
     """Return a full standalone map HTML page for embedding in an iframe."""
@@ -990,6 +1767,8 @@ def map_embed():
 
 # ===== Main =====
 if __name__ == '__main__':
+    configure_http_request_logging()
+
     # Create a dedicated event loop for the command WebSocket
     import threading
     command_loop = asyncio.new_event_loop()

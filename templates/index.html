@@ -138,6 +138,17 @@
                 <span id="main-status-dot" class="status-dot {{ 'on' if main_online else 'off' }}"></span>
                 <span>System Status</span>
             </div>
+            <div id="guidedModeToolbar" class="guided-mode-toolbar" aria-label="Guided mode controls">
+                <span class="guided-mode-toolbar-label">Guided Mode</span>
+                <label class="switch guided-mode-switch" for="guidedModeSwitch" aria-label="Guided mode switch">
+                    <input type="checkbox" id="guidedModeSwitch" aria-label="Enable guided mode">
+                    <span class="slider"></span>
+                </label>
+                <div id="guidedAltitudeWrap" class="guided-altitude-wrap" aria-hidden="true">
+                    <label for="guidedAltitudeInput">Alt (m)</label>
+                    <input type="number" id="guidedAltitudeInput" min="1" max="500" step="1" value="20" inputmode="decimal">
+                </div>
+            </div>
             <div id="banner-slot"></div>
             <button id="settingsBtn" class="settings-button" aria-label="Open settings">
                 <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -178,6 +189,14 @@
             <div class="card-header" data-header>
                 <span id="hq-status-dot" class="status-dot {{ 'on' if hq_online else 'off' }}"></span>
                 <h2>High Quality Camera</h2>
+                <div class="guided-mode-toolbar hq-cv-toolbar" data-hq-cv-switch aria-label="High quality camera CV mode selector">
+                    <div class="guided-mode-toolbar-label">CV Mode</div>
+                    <div class="hq-cv-mode-buttons" role="group" aria-label="CV processing mode">
+                        <button type="button" class="hq-cv-mode-btn" data-hq-cv-mode="none" aria-pressed="false">No CV</button>
+                        <button type="button" class="hq-cv-mode-btn" data-hq-cv-mode="landing_mode" aria-pressed="false">Landing</button>
+                        <button type="button" class="hq-cv-mode-btn" data-hq-cv-mode="target_tracking" aria-pressed="false">Target</button>
+                    </div>
+                </div>
                 <button class="minimize" data-minimize>Minimize</button>
             </div>
             <div class="media">
@@ -406,7 +425,20 @@
 
     <!-- Minimap overlay (bottom-right) - toggle button is now inside camera rails -->
     <div id="minimap" class="minimap" aria-hidden="true">
-        <div class="minimap-bar" id="minimap-bar"></div>
+        <div class="minimap-bar" id="minimap-bar">
+            <button type="button" id="minimapCenterBtn" class="minimap-control-btn" aria-label="Return minimap to center" title="Return to Center">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"></circle><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"></circle><line x1="12" y1="1" x2="12" y2="4" stroke="currentColor" stroke-width="2"></line><line x1="12" y1="20" x2="12" y2="23" stroke="currentColor" stroke-width="2"></line><line x1="1" y1="12" x2="4" y2="12" stroke="currentColor" stroke-width="2"></line><line x1="20" y1="12" x2="23" y2="12" stroke="currentColor" stroke-width="2"></line></svg>
+            </button>
+            <button type="button" id="minimapClearBtn" class="minimap-control-btn" aria-label="Clear markers" title="Clear Markers">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><polyline points="3 6 5 6 21 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></polyline><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><line x1="10" y1="11" x2="10" y2="17" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line><line x1="14" y1="11" x2="14" y2="17" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line></svg>
+            </button>
+            <button type="button" id="minimapGuidedBtn" class="minimap-control-btn" aria-label="Toggle guided mode in minimap" aria-pressed="false" title="Guided Mode">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"></circle><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"></circle><line x1="12" y1="2" x2="12" y2="5" stroke="currentColor" stroke-width="2"></line><line x1="12" y1="19" x2="12" y2="22" stroke="currentColor" stroke-width="2"></line><line x1="2" y1="12" x2="5" y2="12" stroke="currentColor" stroke-width="2"></line><line x1="19" y1="12" x2="22" y2="12" stroke="currentColor" stroke-width="2"></line></svg>
+            </button>
+            <button type="button" id="minimapEnlargeBtn" class="minimap-control-btn" aria-label="Enlarge minimap" aria-pressed="false" title="Enlarge Minimap">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><polyline points="15 3 21 3 21 9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></polyline><polyline points="9 21 3 21 3 15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></polyline><line x1="21" y1="3" x2="14" y2="10" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line><line x1="3" y1="21" x2="10" y2="14" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line></svg>
+            </button>
+        </div>
         <div class="minimap-content" id="minimap-content">
             <!-- iframe cloned here when available; no text per design -->
         </div>
@@ -454,6 +486,15 @@
         const SERVER_USER_SETTINGS = JSON.parse(document.getElementById(USER_SETTINGS_DATA_ID)?.textContent || 'null');
         const LATENCY_SNAPSHOT_TIMEOUT_MS = 1500;
         const MAP_RAIL_COMMAND_ID = 'drop_gps_pin';
+        const MAP_GUIDED_MODE_LABEL = 'Guided Mode';
+        const MINIMAP_ENLARGE_ACTIVE_CLASS = 'is-large';
+        const MAP_GUIDED_MODE_MESSAGE_TYPE = 'sentry_guided_map_dblclick';
+        const MAP_GUIDED_GOTO_ENDPOINT = '/api/guided_goto';
+        const MAP_GUIDED_GOTO_TIMEOUT_MS = 5000;
+        const MAP_GUIDED_DEFAULT_ALT_M = 20;
+        const MAP_GUIDED_MIN_ALT_M = 1;
+        const MAP_GUIDED_MAX_ALT_M = 500;
+        const MAP_GUIDED_ALT_STEP_M = 1;
         const LATENCY_THRESHOLD_GOOD_MS = 100;
         const LATENCY_THRESHOLD_WARNING_MS = 300;
         const LATENCY_HEADER_FRAME_TS = 'X-Frame-Ts';
@@ -464,6 +505,10 @@
             cam1: '/api/snapshot_cam1',
             hq: '/api/snapshot_hq'
         };
+        const CAMERA_RAIL_BLOCKED_COMMAND_IDS = new Set(['landing_mode']);
+        const HQ_CV_MODE_ENDPOINT = '/api/hq_cv_mode';
+        const HQ_TARGET_SELECTION_ENDPOINT = '/api/hq_target_selection';
+        const HQ_CV_DEFAULT_MODE = '';
 
         let userSettings = mergeSettings(DEFAULT_USER_SETTINGS, SERVER_USER_SETTINGS || {});
         let cameraFunctionTabs = userSettings.camera_function_tabs || DEFAULT_CAMERA_FUNCTION_TABS;
@@ -471,9 +516,16 @@
         let statusUpdateIntervalMs = userSettings.status_update_interval_ms || DEFAULT_USER_SETTINGS.status_update_interval_ms;
         let latencyIntervalId = null;
         let statusIntervalId = null;
+        let hqCvMode = HQ_CV_DEFAULT_MODE;
+        let hqTargetSelected = false;
+        let hqTargetTrackId = null;
+        let guidedModeEnabled = false;
+        let guidedModeAltitudeM = MAP_GUIDED_DEFAULT_ALT_M;
+        let minimapLarge = false;
         
         // ===== GLOBAL DOM ELEMENTS =====
         const bannerSlot = document.getElementById('banner-slot');
+        const bannerRight = document.querySelector('#banner .banner-right');
         const loginModal = document.getElementById('loginModal');
         const loginForm = document.getElementById('loginForm');
         const loginError = document.getElementById('loginError');
@@ -484,6 +536,14 @@
         const settingsCancelBtn = document.getElementById('settingsCancelBtn');
         const settingsLogoutBtn = document.getElementById('settingsLogoutBtn');
         const settingsReloadWsBtn = document.getElementById('settingsReloadWsBtn');
+        const guidedModeToolbarEl = document.getElementById('guidedModeToolbar');
+        const guidedModeSwitchEl = document.getElementById('guidedModeSwitch');
+        const guidedAltitudeWrapEl = document.getElementById('guidedAltitudeWrap');
+        const guidedAltitudeInputEl = document.getElementById('guidedAltitudeInput');
+        const minimapCenterBtnEl = document.getElementById('minimapCenterBtn');
+        const minimapClearBtnEl = document.getElementById('minimapClearBtn');
+        const minimapGuidedBtnEl = document.getElementById('minimapGuidedBtn');
+        const minimapEnlargeBtnEl = document.getElementById('minimapEnlargeBtn');
         
         // ===== GLOBAL STATE =====
         let latencyState = {
@@ -787,7 +847,9 @@
             const inactiveList = container.querySelector('[data-camera-inactive]');
             if (!activeList || !inactiveList) return;
 
-            const allCommandIds = COMMAND_DEFS.map(def => def.id);
+            const allCommandIds = COMMAND_DEFS
+                .map(def => def.id)
+                .filter(id => !CAMERA_RAIL_BLOCKED_COMMAND_IDS.has(id));
             const activeIds = (selectedIds || []).filter(id => allCommandIds.includes(id));
             const inactiveIds = allCommandIds.filter(id => !activeIds.includes(id));
 
@@ -1163,7 +1225,120 @@
 
                 const clearPinsBtn = doc.getElementById('clear-pins-btn');
                 if (clearPinsBtn) clearPinsBtn.style.display = isExpanded ? 'block' : 'none';
+
+                iframe.contentWindow?.setGuidedModeEnabled?.(guidedModeEnabled);
             });
+        }
+
+        function applyMapGuidedToggleUI() {
+            if (guidedModeSwitchEl) {
+                guidedModeSwitchEl.checked = guidedModeEnabled;
+            }
+            if (guidedAltitudeWrapEl) {
+                guidedAltitudeWrapEl.classList.toggle('is-active', guidedModeEnabled);
+                guidedAltitudeWrapEl.setAttribute('aria-hidden', guidedModeEnabled ? 'false' : 'true');
+            }
+            if (minimapGuidedBtnEl) {
+                minimapGuidedBtnEl.classList.toggle('is-active', guidedModeEnabled);
+                minimapGuidedBtnEl.setAttribute('aria-pressed', guidedModeEnabled ? 'true' : 'false');
+            }
+        }
+
+        function updateGuidedToolbarVisibility() {
+            const visible = isMapExpanded();
+            if (!guidedModeToolbarEl) return;
+            guidedModeToolbarEl.classList.toggle('is-visible', visible);
+            guidedModeToolbarEl.setAttribute('aria-hidden', visible ? 'false' : 'true');
+        }
+
+        function attachGuidedToolbarToMapHeader(headerEl) {
+            if (!guidedModeToolbarEl || !headerEl) return;
+            const minimizeBtn = headerEl.querySelector('.minimize');
+            if (minimizeBtn) {
+                headerEl.insertBefore(guidedModeToolbarEl, minimizeBtn);
+            } else {
+                headerEl.appendChild(guidedModeToolbarEl);
+            }
+            guidedModeToolbarEl.classList.add('in-map-header');
+        }
+
+        function restoreGuidedToolbarToBanner() {
+            if (!guidedModeToolbarEl || !bannerRight) return;
+            if (guidedModeToolbarEl.parentElement !== bannerRight) {
+                bannerRight.insertBefore(guidedModeToolbarEl, bannerSlot);
+            }
+            guidedModeToolbarEl.classList.remove('in-map-header');
+        }
+
+        function clampGuidedAltitude(value) {
+            if (!Number.isFinite(value)) return MAP_GUIDED_DEFAULT_ALT_M;
+            return Math.min(MAP_GUIDED_MAX_ALT_M, Math.max(MAP_GUIDED_MIN_ALT_M, value));
+        }
+
+        function getGuidedAltitudeValue() {
+            const rawValue = Number(guidedAltitudeInputEl?.value ?? guidedModeAltitudeM);
+            guidedModeAltitudeM = clampGuidedAltitude(rawValue);
+            if (guidedAltitudeInputEl) {
+                guidedAltitudeInputEl.value = String(guidedModeAltitudeM);
+            }
+            return guidedModeAltitudeM;
+        }
+
+        function setMapGuidedMode(enabled) {
+            guidedModeEnabled = Boolean(enabled);
+            applyMapGuidedToggleUI();
+            callMapMethod('setGuidedModeEnabled', guidedModeEnabled);
+            callMinimapMethod('setGuidedModeEnabled', guidedModeEnabled);
+        }
+
+        function isMapExpanded() {
+            const mapCard = document.querySelector('[data-card-id="map"]');
+            return Boolean(mapCard?.classList.contains('expanded'));
+        }
+
+        async function sendGuidedGoto(lat, lon) {
+            const guidedAlt = getGuidedAltitudeValue();
+            const sentTsMs = Date.now();
+
+            // Show marker immediately so operator gets instant visual feedback.
+            callMapMethod('addGuidedTargetMarker', lat, lon, guidedAlt, sentTsMs);
+            callMinimapMethod('addGuidedTargetMarker', lat, lon, guidedAlt, sentTsMs);
+
+            try {
+                const response = await fetchWithTimeout(
+                    MAP_GUIDED_GOTO_ENDPOINT,
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ lat, lon, alt: guidedAlt })
+                    },
+                    MAP_GUIDED_GOTO_TIMEOUT_MS
+                );
+
+                if (!response.ok) {
+                    return;
+                }
+
+                const data = await response.json();
+                if (!data?.success) {
+                    console.warn('Guided goto rejected by backend:', data?.message || 'unknown error');
+                    return;
+                }
+            } catch (err) {
+                console.error('Failed to send guided goto command:', err);
+            }
+        }
+
+        function handleGuidedMapMessage(event) {
+            const payload = event?.data;
+            if (!payload || payload.type !== MAP_GUIDED_MODE_MESSAGE_TYPE) return;
+            if (!guidedModeEnabled) return;
+
+            const lat = Number(payload.lat);
+            const lon = Number(payload.lon);
+            if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+            sendGuidedGoto(lat, lon);
         }
 
         // ===== MINIMAP (small persistent map) =====
@@ -1219,6 +1394,7 @@
                                     setTimeout(() => obs.disconnect(), 3000);
                                 } catch (e) {}
                             }
+                            clone.contentWindow?.setGuidedModeEnabled?.(guidedModeEnabled);
                         } catch (e) {
                             console.warn('Unable to hide controls in cloned iframe minimap', e);
                         }
@@ -1268,10 +1444,59 @@
             if (minimapOpen) hideMinimap(); else showMinimap();
         }
 
-        function callMapMethod(methodName) {
+        function toggleMinimapEnlarge() {
+            minimapLarge = !minimapLarge;
+            if (!minimapOpen) {
+                showMinimap();
+            }
+            applyMinimapUiState();
+        }
+
+        function executeOnMinimapIframe(callback) {
+            const iframe = document.querySelector('#minimap-content iframe');
+            if (!iframe) return;
+
+            if (iframe.contentDocument?.readyState === 'complete') {
+                callback(iframe);
+            } else {
+                iframe.addEventListener('load', () => callback(iframe), { once: true });
+            }
+        }
+
+        function callMapMethod(methodName, ...args) {
             executeOnIframe((iframe) => {
-                setTimeout(() => iframe.contentWindow?.[methodName]?.(), 0);
+                setTimeout(() => {
+                    const fn = iframe.contentWindow?.[methodName];
+                    if (typeof fn === 'function') {
+                        fn(...args);
+                    }
+                }, 0);
             });
+        }
+
+        function callMinimapMethod(methodName, ...args) {
+            executeOnMinimapIframe((iframe) => {
+                setTimeout(() => {
+                    const fn = iframe.contentWindow?.[methodName];
+                    if (typeof fn === 'function') {
+                        fn(...args);
+                    }
+                }, 0);
+            });
+        }
+
+        function applyMinimapUiState() {
+            const minimapEl = document.getElementById('minimap');
+            if (minimapEl) {
+                minimapEl.classList.toggle(MINIMAP_ENLARGE_ACTIVE_CLASS, minimapLarge);
+            }
+            if (minimapEnlargeBtnEl) {
+                minimapEnlargeBtnEl.classList.toggle('is-active', minimapLarge);
+                minimapEnlargeBtnEl.setAttribute('aria-pressed', minimapLarge ? 'true' : 'false');
+                minimapEnlargeBtnEl.setAttribute('aria-label', minimapLarge ? 'Unenlarge minimap' : 'Enlarge minimap');
+                minimapEnlargeBtnEl.setAttribute('title', minimapLarge ? 'Unenlarge Minimap' : 'Enlarge Minimap');
+            }
+            applyMapGuidedToggleUI();
         }
 
         function fitMapToBounds() {
@@ -1313,12 +1538,6 @@
                 label: 'Loiter',
                 type: 'toggle',
                 icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5a7 7 0 1 1-6.2 3.8" fill="none" stroke="currentColor" stroke-width="2"></path><path d="M5 5v4h4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>'
-            },
-            {
-                id: 'landing_mode',
-                label: 'Landing Mode',
-                type: 'pulse',
-                icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path><path d="M7 10l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M4 21h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path></svg>'
             }
         ];
 
@@ -1398,13 +1617,29 @@
         function renderCameraFunctionTabs() {
             document.querySelectorAll('[data-function-rail]').forEach(rail => {
                 const cameraId = rail.dataset.cameraId;
-                const selectedIds = (cameraFunctionTabs && cameraFunctionTabs[cameraId]) || [];
+                const selectedIds = ((cameraFunctionTabs && cameraFunctionTabs[cameraId]) || [])
+                    .filter(id => !CAMERA_RAIL_BLOCKED_COMMAND_IDS.has(id));
                 rail.innerHTML = '';
 
                 selectedIds.forEach(id => {
                     const def = getCommandDef(id);
                     if (def) rail.appendChild(buildCameraFunctionButton(def));
                 });
+
+                if (cameraId === 'hq') {
+                    const clearTargetBtn = document.createElement('button');
+                    clearTargetBtn.type = 'button';
+                    clearTargetBtn.className = 'camera-function-tab rail-clear-target-tab';
+                    clearTargetBtn.innerHTML = '<span class="camera-tab-icon"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"></circle><path d="M12 9v3"></path><path d="M9 12h3"></path><path d="m4 4 16 16"></path></svg></span><span class="camera-tab-label">Clear Target</span>';
+                    clearTargetBtn.setAttribute('aria-label', 'Clear target selection');
+                    clearTargetBtn.setAttribute('aria-pressed', 'false');
+                    clearTargetBtn.addEventListener('click', async (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        await clearHqTargetSelection();
+                    });
+                    rail.appendChild(clearTargetBtn);
+                }
 
                 // add minimap toggle into the rail so tab is part of camera rails
                 const minimapBtn = document.createElement('button');
@@ -1415,16 +1650,267 @@
                 minimapBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleMinimap(); });
                 rail.appendChild(minimapBtn);
 
-                rail.classList.toggle('is-empty', selectedIds.length === 0);
+                rail.classList.toggle('is-empty', rail.children.length === 0);
             });
+
+            applyHqTargetSelectionToUI();
         }
 
         function renderMapFunctionRail() {
             const rail = document.getElementById('map-function-rail');
             if (!rail) return;
             rail.innerHTML = '';
+
             const def = getCommandDef(MAP_RAIL_COMMAND_ID);
             if (def) rail.appendChild(buildCameraFunctionButton(def));
+            applyMapGuidedToggleUI();
+        }
+
+        function setupGuidedModeToolbar() {
+            if (guidedAltitudeInputEl) {
+                guidedAltitudeInputEl.min = String(MAP_GUIDED_MIN_ALT_M);
+                guidedAltitudeInputEl.max = String(MAP_GUIDED_MAX_ALT_M);
+                guidedAltitudeInputEl.step = String(MAP_GUIDED_ALT_STEP_M);
+                guidedAltitudeInputEl.value = String(guidedModeAltitudeM);
+
+                guidedAltitudeInputEl.addEventListener('change', () => {
+                    getGuidedAltitudeValue();
+                });
+            }
+
+            guidedModeSwitchEl?.addEventListener('change', () => {
+                setMapGuidedMode(Boolean(guidedModeSwitchEl.checked));
+            });
+
+            applyMapGuidedToggleUI();
+            updateGuidedToolbarVisibility();
+        }
+
+        function setupMinimapControls() {
+            minimapCenterBtnEl?.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                callMinimapMethod('resetView');
+            });
+
+            minimapClearBtnEl?.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                callMinimapMethod('clearPins');
+            });
+
+            minimapGuidedBtnEl?.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setMapGuidedMode(!guidedModeEnabled);
+            });
+
+            minimapEnlargeBtnEl?.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                toggleMinimapEnlarge();
+            });
+
+            applyMinimapUiState();
+        }
+
+        function applyHqCvModeToUI() {
+            const buttons = document.querySelectorAll('.hq-cv-mode-btn[data-hq-cv-mode]');
+            buttons.forEach((btn) => {
+                const isActive = btn.dataset.hqCvMode === hqCvMode;
+                btn.classList.toggle('is-active', isActive);
+                btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+            });
+            applyHqTargetSelectionToUI();
+            updateHqStreamSelectionState();
+        }
+
+        function applyHqTargetSelectionToUI() {
+            const clearButtons = document.querySelectorAll('.rail-clear-target-tab');
+            const shouldShow = hqCvMode === 'target_tracking';
+            clearButtons.forEach(btn => {
+                btn.style.display = shouldShow ? '' : 'none';
+                btn.classList.toggle('is-active', hqTargetSelected);
+                btn.setAttribute('aria-pressed', hqTargetSelected ? 'true' : 'false');
+                const label = hqTargetSelected && hqTargetTrackId != null
+                    ? `Clear target (ID ${hqTargetTrackId})`
+                    : 'Clear target selection';
+                btn.setAttribute('aria-label', label);
+                btn.setAttribute('title', label);
+            });
+        }
+
+        function updateHqStreamSelectionState() {
+            const hqCard = document.querySelector('[data-card-id="hq"]');
+            const hqImg = document.getElementById('stream_hq');
+            if (!hqCard || !hqImg) return;
+            const canSelect = hqCvMode === 'target_tracking' && hqCard.classList.contains('expanded');
+            hqImg.classList.toggle('hq-target-select-enabled', canSelect);
+            hqImg.title = canSelect
+                ? 'Click a detected target to lock tracking'
+                : '';
+        }
+
+        async function loadHqTargetSelection() {
+            try {
+                const res = await fetch(HQ_TARGET_SELECTION_ENDPOINT, { cache: 'no-store' });
+                if (!res.ok) return;
+                const data = await res.json();
+                hqTargetSelected = Boolean(data?.selected);
+                hqTargetTrackId = Number.isFinite(Number(data?.track_id)) ? Number(data.track_id) : null;
+                applyHqTargetSelectionToUI();
+            } catch (err) {
+                console.error('Failed to load HQ target selection:', err);
+            }
+        }
+
+        async function clearHqTargetSelection() {
+            try {
+                const res = await fetch(HQ_TARGET_SELECTION_ENDPOINT, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'clear' })
+                });
+                if (!res.ok) return;
+                const data = await res.json();
+                hqTargetSelected = Boolean(data?.selected);
+                hqTargetTrackId = Number.isFinite(Number(data?.track_id)) ? Number(data.track_id) : null;
+                applyHqTargetSelectionToUI();
+            } catch (err) {
+                console.error('Failed to clear HQ target selection:', err);
+            }
+        }
+
+        function getNormalizedImagePointForClick(imgEl, event) {
+            if (!imgEl) return null;
+            const rect = imgEl.getBoundingClientRect();
+            if (!rect.width || !rect.height) return null;
+
+            const clickX = event.clientX - rect.left;
+            const clickY = event.clientY - rect.top;
+            const displayW = rect.width;
+            const displayH = rect.height;
+
+            const naturalW = imgEl.naturalWidth || displayW;
+            const naturalH = imgEl.naturalHeight || displayH;
+            const objectFit = getComputedStyle(imgEl).objectFit || 'fill';
+
+            let drawW = displayW;
+            let drawH = displayH;
+            let offsetX = 0;
+            let offsetY = 0;
+
+            if (objectFit === 'contain') {
+                const scale = Math.min(displayW / naturalW, displayH / naturalH);
+                drawW = naturalW * scale;
+                drawH = naturalH * scale;
+                offsetX = (displayW - drawW) / 2;
+                offsetY = (displayH - drawH) / 2;
+            } else if (objectFit === 'cover') {
+                const scale = Math.max(displayW / naturalW, displayH / naturalH);
+                drawW = naturalW * scale;
+                drawH = naturalH * scale;
+                offsetX = (displayW - drawW) / 2;
+                offsetY = (displayH - drawH) / 2;
+            }
+
+            const localX = clickX - offsetX;
+            const localY = clickY - offsetY;
+
+            if (localX < 0 || localY < 0 || localX > drawW || localY > drawH) {
+                return null;
+            }
+
+            const srcX = (localX / drawW) * naturalW;
+            const srcY = (localY / drawH) * naturalH;
+            return {
+                x: Math.max(0, Math.min(1, srcX / naturalW)),
+                y: Math.max(0, Math.min(1, srcY / naturalH)),
+            };
+        }
+
+        function setupHqTargetSelectionInteraction() {
+            const hqImg = document.getElementById('stream_hq');
+            if (!hqImg) return;
+
+            hqImg.addEventListener('click', async (e) => {
+                const hqCard = document.querySelector('[data-card-id="hq"]');
+                if (!hqCard?.classList.contains('expanded')) return;
+                if (hqCvMode !== 'target_tracking') return;
+
+                const point = getNormalizedImagePointForClick(hqImg, e);
+                if (!point) return;
+
+                e.preventDefault();
+                e.stopPropagation();
+
+                try {
+                    const res = await fetch(HQ_TARGET_SELECTION_ENDPOINT, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ action: 'select', x_norm: point.x, y_norm: point.y })
+                    });
+                    const data = await res.json();
+                    hqTargetSelected = Boolean(data?.selected);
+                    hqTargetTrackId = Number.isFinite(Number(data?.track_id)) ? Number(data.track_id) : null;
+                    applyHqTargetSelectionToUI();
+                } catch (err) {
+                    console.error('Failed to select HQ target:', err);
+                }
+            }, true);
+        }
+
+        async function loadHqCvMode() {
+            try {
+                const res = await fetch(HQ_CV_MODE_ENDPOINT, { cache: 'no-store' });
+                if (!res.ok) return;
+                const data = await res.json();
+                if (typeof data?.mode === 'string') {
+                    hqCvMode = data.mode;
+                    applyHqCvModeToUI();
+                }
+            } catch (err) {
+                console.error('Failed to load HQ CV mode:', err);
+            }
+        }
+
+        async function setHqCvMode(nextMode) {
+            if (!nextMode || nextMode === hqCvMode) return;
+            try {
+                const res = await fetch(HQ_CV_MODE_ENDPOINT, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mode: nextMode })
+                });
+                if (!res.ok) return;
+                const data = await res.json();
+                if (data?.success && typeof data?.mode === 'string') {
+                    hqCvMode = data.mode;
+                    applyHqCvModeToUI();
+                }
+            } catch (err) {
+                console.error('Failed to set HQ CV mode:', err);
+            }
+        }
+
+        function setupHqCvModeSwitch() {
+            document.addEventListener('click', (e) => {
+                const toolbar = e.target?.closest?.('[data-hq-cv-switch]');
+                if (!toolbar) return;
+                const modeBtn = e.target?.closest?.('.hq-cv-mode-btn[data-hq-cv-mode]');
+                if (!modeBtn) return;
+                e.preventDefault();
+                e.stopPropagation();
+                setHqCvMode(modeBtn.dataset.hqCvMode);
+            }, true);
+
+            document.addEventListener('click', (e) => {
+                if (e.target?.closest?.('[data-hq-cv-switch]')) {
+                    e.stopPropagation();
+                }
+            }, true);
+
+            applyHqCvModeToUI();
         }
 
         /* Hover floating label removed — hover/tooltip UI is handled externally */
@@ -1432,6 +1918,7 @@
         function applyCommandStateToUI() {
             document.querySelectorAll('.command-btn, .camera-function-tab').forEach(btn => {
                 const id = btn.dataset.commandId;
+                if (!id) return;
                 const isActive = Boolean(commandState[id]);
                 btn.classList.toggle('is-active', isActive);
                 btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
@@ -1494,12 +1981,15 @@
         }
 
         function clearExpanded() {
+            restoreGuidedToolbarToBanner();
             bannerSlot.innerHTML = '';
             document.querySelectorAll('.card.expanded').forEach(c => c.classList.remove('expanded'));
             document.body.classList.remove('expanded');
             document.exitFullscreen?.().catch(() => {});
             updateMapControls();
             updateMinimapVisibility();
+            updateGuidedToolbarVisibility();
+            updateHqStreamSelectionState();
         }
 
         // ===== CARD EXPANSION HANDLERS =====
@@ -1535,9 +2025,16 @@
                         const headerClone = header.cloneNode(true);
                         headerClone.classList.add('in-banner');
                         bannerSlot.appendChild(headerClone);
+                        if (card.getAttribute('data-card-id') === 'map') {
+                            attachGuidedToolbarToMapHeader(headerClone);
+                        } else {
+                            restoreGuidedToolbarToBanner();
+                        }
                         document.documentElement.requestFullscreen?.().catch(() => {});
                         updateMapControls();
-                            updateMinimapVisibility();
+                        updateMinimapVisibility();
+                        updateGuidedToolbarVisibility();
+                        updateHqStreamSelectionState();
                     }
                 });
             });
@@ -1686,15 +2183,25 @@
             setupCardExpansion();
             setupLoginHandlers();
             setupSettingsHandlers();
+            setupGuidedModeToolbar();
+            setupMinimapControls();
+            setupHqCvModeSwitch();
+            setupHqTargetSelectionInteraction();
+            window.addEventListener('message', handleGuidedMapMessage);
             updateMapControls();
             updateMinimapVisibility();
+            updateGuidedToolbarVisibility();
+            updateHqStreamSelectionState();
             // minimap toggle buttons are created inside each camera function rail
 
             applySettingsToUI(userSettings);
             renderCommandSuite();
             renderMapFunctionRail();
+            loadHqCvMode();
+            loadHqTargetSelection();
             fetchCommandState();
             setInterval(fetchCommandState, 2000);
+            setInterval(loadHqTargetSelection, 1000);
 
             refreshLatencyData();
             startLatencyPolling();

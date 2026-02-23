@@ -47,6 +47,24 @@ TELEMETRY_PORT = 8764
 TELEMETRY_HZ = 50
 COMMAND_PORT = 8763
 FIDUCIAL_PORT = 8770
+MAVLINK_CONNECTION_STRING = 'udp:127.0.0.1:14550'
+GUIDED_GOTO_DEFAULT_ALT_M = 20.0
+GUIDED_GOTO_MIN_ALT_M = 1.0
+GUIDED_GOTO_MAX_ALT_M = 500.0
+GUIDED_GOTO_LAT_MIN = -90.0
+GUIDED_GOTO_LAT_MAX = 90.0
+GUIDED_GOTO_LON_MIN = -180.0
+GUIDED_GOTO_LON_MAX = 180.0
+GUIDED_GOTO_TYPE_MASK = (
+    mavutil.mavlink.POSITION_TARGET_TYPEMASK_VX_IGNORE |
+    mavutil.mavlink.POSITION_TARGET_TYPEMASK_VY_IGNORE |
+    mavutil.mavlink.POSITION_TARGET_TYPEMASK_VZ_IGNORE |
+    mavutil.mavlink.POSITION_TARGET_TYPEMASK_AX_IGNORE |
+    mavutil.mavlink.POSITION_TARGET_TYPEMASK_AY_IGNORE |
+    mavutil.mavlink.POSITION_TARGET_TYPEMASK_AZ_IGNORE |
+    mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_IGNORE |
+    mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE
+)
 
 # ===== Global State =====
 mavlink_data = {
@@ -71,7 +89,8 @@ command_clients = set()
 
 # ===== MAVLink & Socket Setup =====
 print("Connecting to MAVLink...")
-mav = mavutil.mavlink_connection('udp:127.0.0.1:14550')
+mav = mavutil.mavlink_connection(MAVLINK_CONNECTION_STRING)
+print(f"MAVLink connection endpoint: {MAVLINK_CONNECTION_STRING}")
 print("Awaiting MAVLink heartbeat...")
 mav.wait_heartbeat()
 print("MAVLink heartbeat received.")
@@ -325,6 +344,98 @@ def encode_frame_with_timestamp_quality(frame, quality):
     return struct.pack('d', time.time()) + buffer.tobytes()
 
 
+def set_guided_mode():
+    """Attempt to set vehicle mode to GUIDED."""
+    try:
+        mav.set_mode_apm('GUIDED')
+        return True
+    except Exception:
+        pass
+
+    try:
+        mode_mapping = mav.mode_mapping() or {}
+        guided_mode = mode_mapping.get('GUIDED')
+        if guided_mode is None:
+            return False
+        mav.mav.set_mode_send(
+            mav.target_system,
+            mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
+            guided_mode
+        )
+        return True
+    except Exception:
+        return False
+
+
+def send_guided_goto(lat, lon, alt=None):
+    """Send a MAVLink guided goto command to a global lat/lon target."""
+    try:
+        lat = float(lat)
+        lon = float(lon)
+    except Exception:
+        return False, 'Invalid coordinates'
+
+    if not (GUIDED_GOTO_LAT_MIN <= lat <= GUIDED_GOTO_LAT_MAX):
+        return False, 'Latitude out of range'
+    if not (GUIDED_GOTO_LON_MIN <= lon <= GUIDED_GOTO_LON_MAX):
+        return False, 'Longitude out of range'
+
+    try:
+        alt_val = GUIDED_GOTO_DEFAULT_ALT_M if alt is None else float(alt)
+    except Exception:
+        return False, 'Invalid altitude'
+    alt_val = max(GUIDED_GOTO_MIN_ALT_M, min(GUIDED_GOTO_MAX_ALT_M, alt_val))
+
+    mode_ok = set_guided_mode()
+
+    try:
+        mav.mav.command_long_send(
+            mav.target_system,
+            mav.target_component,
+            mavutil.mavlink.MAV_CMD_NAV_GUIDED_ENABLE,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+        )
+    except Exception:
+        pass
+
+    try:
+        mav.mav.set_position_target_global_int_send(
+            0,
+            mav.target_system,
+            mav.target_component,
+            mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
+            GUIDED_GOTO_TYPE_MASK,
+            int(lat * 1e7),
+            int(lon * 1e7),
+            alt_val,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+        )
+        print(
+            "[GUIDED] Sent MAVLink SET_POSITION_TARGET_GLOBAL_INT "
+            f"via {MAVLINK_CONNECTION_STRING} -> lat={lat:.6f}, lon={lon:.6f}, alt={alt_val:.1f}m"
+        )
+    except Exception as e:
+        return False, f'Failed to send position target: {e}'
+
+    if not mode_ok:
+        return True, 'Guided goto sent (mode switch unconfirmed)'
+    return True, 'Guided goto sent'
+
+
 # ===== Video Streaming =====
 async def stream_cam0(ws):
     print("Client connected to video stream (cam0).")
@@ -469,11 +580,33 @@ async def command_handler(ws):
             except json.JSONDecodeError:
                 continue
 
+            msg_type = msg.get('type')
+            if msg_type == 'guided_goto':
+                print(
+                    "[GUIDED] Received guided_goto request from client: "
+                    f"lat={msg.get('lat')}, lon={msg.get('lon')}, alt={msg.get('alt')}"
+                )
+                ok, message = send_guided_goto(
+                    msg.get('lat'),
+                    msg.get('lon'),
+                    msg.get('alt')
+                )
+                try:
+                    await ws.send(json.dumps({
+                        'type': 'guided_goto_ack',
+                        'success': bool(ok),
+                        'message': message,
+                        'lat': msg.get('lat'),
+                        'lon': msg.get('lon')
+                    }))
+                except Exception:
+                    pass
+                continue
+
             cmd_id = msg.get('id')
             if cmd_id not in command_state:
                 continue
 
-            msg_type = msg.get('type')
             if msg_type == 'toggle':
                 command_state[cmd_id] = bool(msg.get('value'))
                 await broadcast_command_state()

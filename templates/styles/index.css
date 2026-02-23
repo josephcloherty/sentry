@@ -43,6 +43,27 @@ body {
     --settings-drag-item-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
     --settings-drag-handle-color: #94a3b8;
     --settings-drag-over-border: #60a5fa;
+
+    /* HQ CV mode switch variables */
+    --hq-cv-switch-bg: rgba(255, 255, 255, 0.92);
+    --hq-cv-switch-border: rgba(148, 163, 184, 0.35);
+    --hq-cv-switch-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+    --hq-cv-switch-title-color: #1e3c72;
+    --hq-cv-switch-btn-bg: #f1f5f9;
+    --hq-cv-switch-btn-color: #1e3c72;
+    --hq-cv-switch-btn-active-bg: #1e40af;
+    --hq-cv-switch-btn-active-color: #ffffff;
+
+    /* Guided mode top toolbar variables */
+    --guided-toolbar-bg: rgba(255, 255, 255, 0.16);
+    --guided-toolbar-border: rgba(255, 255, 255, 0.26);
+    --guided-toolbar-text: #ffffff;
+    --guided-alt-bg: rgba(255, 255, 255, 0.95);
+    --guided-alt-text: #1e3c72;
+
+    /* Latency card sizing variables */
+    --latency-collapsed-group-max-height: 108px;
+    --latency-collapsed-group-padding: 12px 14px;
 }
 
 /* Emergency mode - red glow effect */
@@ -663,6 +684,77 @@ body.emergency-mode::before {
     gap: 12px;
 }
 
+.guided-mode-toolbar {
+    display: none;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 10px;
+    border-radius: 10px;
+    background: var(--guided-toolbar-bg);
+    border: 1px solid var(--guided-toolbar-border);
+    color: var(--guided-toolbar-text);
+}
+
+.guided-mode-toolbar.is-visible {
+    display: inline-flex;
+}
+
+#banner-slot .guided-mode-toolbar.in-map-header {
+    background: #ffffff;
+    border: 1px solid #dbe6f5;
+    color: #1e3c72;
+    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+    margin-right: 10px;
+}
+
+#banner-slot .guided-mode-toolbar.in-map-header .guided-mode-toolbar-label {
+    color: #1e3c72;
+}
+
+#banner-slot .guided-mode-toolbar.in-map-header .guided-altitude-wrap label {
+    color: #334155;
+}
+
+.guided-mode-toolbar-label {
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.guided-mode-toolbar .switch {
+    width: 44px;
+    height: 24px;
+}
+
+.guided-altitude-wrap {
+    display: none;
+    align-items: center;
+    gap: 6px;
+    padding-left: 4px;
+}
+
+.guided-altitude-wrap.is-active {
+    display: inline-flex;
+}
+
+.guided-altitude-wrap label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #e2e8f0;
+    white-space: nowrap;
+}
+
+.guided-altitude-wrap input {
+    width: 72px;
+    border-radius: 8px;
+    border: 1px solid #cbd5e1;
+    padding: 4px 8px;
+    background: var(--guided-alt-bg);
+    color: var(--guided-alt-text);
+    font-size: 12px;
+    font-weight: 600;
+}
+
 #banner img {
     height: 50px;
     width: auto;
@@ -774,6 +866,62 @@ body.emergency-mode::before {
     object-fit: cover;
 }
 
+#stream_hq.hq-target-select-enabled {
+    cursor: crosshair;
+}
+
+.hq-cv-toolbar {
+    display: none;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 10px;
+    border-radius: 10px;
+    border: 1px solid var(--hq-cv-switch-border);
+    background: var(--hq-cv-switch-bg);
+    box-shadow: var(--hq-cv-switch-shadow);
+    margin-right: 6px;
+    color: var(--hq-cv-switch-title-color);
+}
+
+.hq-cv-toolbar .guided-mode-toolbar-label {
+    color: var(--hq-cv-switch-title-color);
+}
+
+.hq-cv-mode-buttons {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.hq-cv-mode-btn {
+    border: 1px solid #cbd5e1;
+    border-radius: 999px;
+    background: var(--hq-cv-switch-btn-bg);
+    color: var(--hq-cv-switch-btn-color);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+    padding: 6px 10px;
+    cursor: pointer;
+    transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease, transform 0.1s ease;
+}
+
+.hq-cv-mode-btn:hover,
+.hq-cv-mode-btn:focus-visible {
+    border-color: #1e40af;
+    transform: translateY(-1px);
+}
+
+.hq-cv-mode-btn.is-active {
+    background: var(--hq-cv-switch-btn-active-bg);
+    color: var(--hq-cv-switch-btn-active-color);
+    border-color: var(--hq-cv-switch-btn-active-bg);
+}
+
+#banner-slot .hq-cv-toolbar {
+    display: inline-flex;
+}
+
 /* ===== CAMERA FUNCTION TABS ===== */
 .camera-function-rail {
     /* kept hidden by default; when card is expanded it will be positioned
@@ -873,6 +1021,12 @@ body.emergency-mode::before {
     background: var(--camera-tab-active-bg);
     color: var(--camera-tab-active-color);
     border-color: var(--camera-tab-active-bg);
+}
+
+.camera-function-tab.rail-clear-target-tab.is-active {
+    background: #ef4444;
+    border-color: #ef4444;
+    color: #ffffff;
 }
 
 .camera-function-tab.is-pulse {
@@ -1137,23 +1291,27 @@ body.emergency-mode::before {
 }
 
 .card[data-card-id="latency"]:not(.expanded) .latency-content {
-    max-height: 260px; /* reduce latency card content height when minimized */
-    overflow: hidden;
+    max-height: none;
+    overflow: visible;
 }
 
 /* Use flex layout for map and latency cards so header stays visible
-   and inner media/content can occupy 60% of the card height. */
+    while inner media/content sizing can be controlled per-card. */
 .card[data-card-id="map"],
 .card[data-card-id="latency"] {
     display: flex;
     flex-direction: column;
 }
 
-.card[data-card-id="map"] .media_map,
-.card[data-card-id="latency"] .latency-content {
+.card[data-card-id="map"] .media_map {
     /* Make the visual area occupy 60% of the card's height */
     flex: 0 0 60%;
     max-height: none; /* override earlier caps */
+}
+
+.card[data-card-id="latency"] .latency-content {
+    flex: 1 1 auto;
+    max-height: none;
 }
 
 .card[data-card-id="latency"] .latency-dashboard {
@@ -1167,6 +1325,23 @@ body.emergency-mode::before {
 
 .card[data-card-id="latency"]:not(.expanded) .latency-breakdown {
     display: none;
+}
+
+.card[data-card-id="latency"]:not(.expanded) .latency-stats {
+    display: none;
+}
+
+.card[data-card-id="latency"]:not(.expanded) .latency-dashboard {
+    grid-auto-rows: max-content;
+    align-items: start;
+}
+
+.card[data-card-id="latency"]:not(.expanded) .latency-group {
+    min-height: 0;
+    max-height: var(--latency-collapsed-group-max-height);
+    padding: var(--latency-collapsed-group-padding);
+    gap: 8px;
+    overflow: hidden;
 }
 
 .card[data-card-id="map"] .desc_map {
@@ -1234,6 +1409,10 @@ body.emergency-mode::before {
     box-shadow: 0 10px 40px rgba(2,6,23,0.6);
 }
 
+.minimap.is-large {
+    width: min(720px, 70vw);
+}
+
 .minimap.open { display: block; }
 
 .minimap .minimap-bar {
@@ -1241,13 +1420,45 @@ body.emergency-mode::before {
     right: 0;
     top: 0;
     bottom: 0;
-    width: 32px;
+    width: 40px;
     background: #2563eb;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
+    gap: 10px;
     color: #fff;
+    cursor: default;
+    z-index: 20;
+}
+
+.minimap-control-btn {
+    width: 28px;
+    height: 28px;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     cursor: pointer;
+}
+
+.minimap-control-btn:hover,
+.minimap-control-btn:focus-visible {
+    background: rgba(255, 255, 255, 0.24);
+    border-color: rgba(255, 255, 255, 0.7);
+}
+
+.minimap-control-btn.is-active {
+    background: #10b981;
+    border-color: #10b981;
+}
+
+.minimap-control-btn svg {
+    width: 16px;
+    height: 16px;
 }
 
 .minimap .minimap-content {
@@ -1261,6 +1472,7 @@ body.emergency-mode::before {
     align-items: stretch;
     justify-content: stretch;
     color: #cbd5e1;
+    z-index: 5;
 }
 
 /* Hide leaflet controls inside minimap clones (inline HTML clones) */
@@ -1284,7 +1496,7 @@ body.expanded .grid > .card:not(.expanded) {
 /* Hide any login modal and banner-slot extras */
 body.expanded .login-modal { display: none !important; }
 /* keep the banner slot visible (contains the cloned header/minimize button) */
-body.expanded #banner .banner-right > *:not(.main-status):not(#logoutBtn):not(#banner-slot) { display: none !important; }
+body.expanded #banner .banner-right > *:not(.main-status):not(#logoutBtn):not(#banner-slot):not(.guided-mode-toolbar) { display: none !important; }
 
 @media (max-width: 900px) {
     .grid { grid-template-columns: repeat(2, minmax(220px, 1fr)); }

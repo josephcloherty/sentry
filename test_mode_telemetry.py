@@ -11,6 +11,7 @@ import time
 import cv2
 import numpy as np
 import struct
+from typing import Optional, Tuple
 
 import websockets
 
@@ -21,6 +22,9 @@ CLIENTS = set()
 CAM0_PORT = 8886
 CAM1_PORT = 8887
 CAM_HQ_PORT = 8885
+CAM_FRAME_WIDTH = 640
+CAM_FRAME_HEIGHT = 480
+CAM_FPS = 10
 HQ_FRAME_WIDTH = 854
 HQ_FRAME_HEIGHT = 480
 HQ_FPS = 10
@@ -30,6 +34,13 @@ HQ_TAG_BORDER = 4
 HQ_MIN_SCALE = 0.2
 HQ_MAX_SCALE = 0.9
 HQ_SCALE_SPEED = 0.35
+TEST_VIDEO_FILE_PATH = '/Users/josephcloherty/Downloads/dronetest2.mp4'  # Example: '/Users/you/Videos/test_clip.mp4' (plays on all feeds when set)
+TEST_VIDEO_LOOP = True
+TEST_VIDEO_REOPEN_DELAY_SEC = 2.0
+TEST_VIDEO_FRAME_SLEEP_SEC = 0.01
+TEST_VIDEO_FALLBACK_TO_PLACEHOLDER = True
+TEST_VIDEO_LABEL_COLOR = (60, 60, 60)
+TEST_VIDEO_CAPTURE_BACKENDS = (cv2.CAP_FFMPEG, cv2.CAP_ANY)
 
 async def producer():
     """Broadcast a synthetic yaw value to all connected clients at 20Hz."""
@@ -127,9 +138,58 @@ def make_loading_frame(t, w=640, h=480, name='cam'):
 def make_cam_ws_handler(name):
     async def handler(ws):
         print(f'Camera server "{name}": client connected')
+        cap = None
+        next_reopen_time = 0.0
+        last_open_message = None
         try:
             while True:
-                img = make_loading_frame(time.time(), name=name)
+                now = time.time()
+                img = None
+                has_video_source = bool(TEST_VIDEO_FILE_PATH.strip())
+
+                if has_video_source:
+                    if cap is None and now >= next_reopen_time:
+                        cap, open_message = _open_test_video_capture()
+                        if open_message != last_open_message:
+                            print(f'Camera server "{name}": {open_message}')
+                            last_open_message = open_message
+                        if cap is None:
+                            next_reopen_time = now + TEST_VIDEO_REOPEN_DELAY_SEC
+
+                    if cap is not None:
+                        ok, frame = cap.read()
+                        if ok and frame is not None:
+                            img = _prepare_video_frame(frame, CAM_FRAME_WIDTH, CAM_FRAME_HEIGHT, f'{name.upper()} TEST SOURCE: FILE')
+                        else:
+                            rewound = False
+                            if TEST_VIDEO_LOOP:
+                                rewound = cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                                if rewound:
+                                    ok, frame = cap.read()
+                                    if ok and frame is not None:
+                                        img = _prepare_video_frame(frame, CAM_FRAME_WIDTH, CAM_FRAME_HEIGHT, f'{name.upper()} TEST SOURCE: FILE')
+                            if img is None:
+                                try:
+                                    cap.release()
+                                except Exception:
+                                    pass
+                                cap = None
+                                next_reopen_time = now + TEST_VIDEO_REOPEN_DELAY_SEC
+
+                if img is None:
+                    img = make_loading_frame(now, w=CAM_FRAME_WIDTH, h=CAM_FRAME_HEIGHT, name=name)
+                    if has_video_source and TEST_VIDEO_FALLBACK_TO_PLACEHOLDER:
+                        cv2.putText(
+                            img,
+                            'VIDEO FILE UNAVAILABLE - FALLBACK ACTIVE',
+                            (10, 28),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.55,
+                            (50, 50, 180),
+                            1,
+                            cv2.LINE_AA,
+                        )
+
                 _, jpeg = cv2.imencode('.jpg', img, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
                 jpeg_bytes = jpeg.tobytes()
                 payload = struct.pack('d', time.time()) + jpeg_bytes
@@ -138,7 +198,7 @@ def make_cam_ws_handler(name):
                 except Exception as e:
                     print(f'Camera server "{name}": send error: {e}')
                     raise
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(1.0 / CAM_FPS)
         except websockets.exceptions.ConnectionClosed:
             print(f'Camera server "{name}": client disconnected')
             return
@@ -150,6 +210,12 @@ def make_cam_ws_handler(name):
             except Exception:
                 pass
             return
+        finally:
+            if cap is not None:
+                try:
+                    cap.release()
+                except Exception:
+                    pass
 
     return handler
 
@@ -187,12 +253,112 @@ def make_apriltag_frame(t, w=HQ_FRAME_WIDTH, h=HQ_FRAME_HEIGHT):
     return img
 
 
+def _open_test_video_capture() -> Tuple[Optional[cv2.VideoCapture], str]:
+    def _open_capture_with_probe(file_path: str) -> Tuple[Optional[cv2.VideoCapture], str]:
+        if not file_path:
+            return None, 'TEST_VIDEO_FILE_PATH is empty'
+        for backend in TEST_VIDEO_CAPTURE_BACKENDS:
+            try:
+                cap = cv2.VideoCapture(file_path, backend)
+            except Exception:
+                cap = cv2.VideoCapture(file_path)
+            if not cap or not cap.isOpened():
+                try:
+                    cap.release()
+                except Exception:
+                    pass
+                continue
+            ok, frame = cap.read()
+            if ok and frame is not None and frame.size > 0:
+                return cap, f'opened stream with backend={backend}'
+            try:
+                cap.release()
+            except Exception:
+                pass
+        return None, 'opencv could not decode video file'
+
+    cap, cap_msg = _open_capture_with_probe(TEST_VIDEO_FILE_PATH.strip())
+    if cap is not None:
+        return cap, f'file stream opened ({cap_msg})'
+    return None, f'could not open test video source (file): {cap_msg}'
+
+
+def _prepare_video_frame(frame, width, height, source_label):
+    if frame is None:
+        return None
+    resized = cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
+    cv2.putText(
+        resized,
+        source_label,
+        (10, height - 12),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        TEST_VIDEO_LABEL_COLOR,
+        1,
+        cv2.LINE_AA,
+    )
+    return resized
+
+
 def make_hq_ws_handler():
     async def handler(ws):
         print('Camera server "hq": client connected')
+        cap = None
+        next_reopen_time = 0.0
+        last_open_message = None
         try:
             while True:
-                img = make_apriltag_frame(time.time())
+                now = time.time()
+                img = None
+                has_video_source = bool(TEST_VIDEO_FILE_PATH.strip())
+
+                if has_video_source:
+                    if cap is None and now >= next_reopen_time:
+                        cap, open_message = _open_test_video_capture()
+                        if open_message != last_open_message:
+                            print(f'Camera server "hq": {open_message}')
+                            last_open_message = open_message
+                        if cap is None:
+                            next_reopen_time = now + TEST_VIDEO_REOPEN_DELAY_SEC
+
+                    if cap is not None:
+                        ok, frame = cap.read()
+                        if ok and frame is not None:
+                            img = _prepare_video_frame(frame, HQ_FRAME_WIDTH, HQ_FRAME_HEIGHT, 'HQ TEST SOURCE: FILE')
+                        else:
+                            rewound = False
+                            if TEST_VIDEO_LOOP:
+                                rewound = cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                                if rewound:
+                                    ok, frame = cap.read()
+                                    if ok and frame is not None:
+                                        img = _prepare_video_frame(frame, HQ_FRAME_WIDTH, HQ_FRAME_HEIGHT, 'HQ TEST SOURCE: FILE')
+                            if img is None:
+                                try:
+                                    cap.release()
+                                except Exception:
+                                    pass
+                                cap = None
+                                next_reopen_time = now + TEST_VIDEO_REOPEN_DELAY_SEC
+
+                if img is None:
+                    img = make_apriltag_frame(now)
+                    if has_video_source and TEST_VIDEO_FALLBACK_TO_PLACEHOLDER:
+                        cv2.putText(
+                            img,
+                            'VIDEO FILE UNAVAILABLE - FALLBACK ACTIVE',
+                            (10, 28),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.55,
+                            (50, 50, 180),
+                            1,
+                            cv2.LINE_AA,
+                        )
+
+                if img is None:
+                    await asyncio.sleep(TEST_VIDEO_FRAME_SLEEP_SEC)
+                    continue
+
                 _, jpeg = cv2.imencode('.jpg', img, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
                 payload = struct.pack('d', time.time()) + jpeg.tobytes()
                 try:
@@ -212,6 +378,12 @@ def make_hq_ws_handler():
             except Exception:
                 pass
             return
+        finally:
+            if cap is not None:
+                try:
+                    cap.release()
+                except Exception:
+                    pass
 
     return handler
 

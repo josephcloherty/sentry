@@ -16,3 +16,9 @@ folium>=0.15.0
 
 # Geospatial data handling (optional, for GeoJSON/GeoPackage support)
 geopandas>=0.14.0
+
+# YOLO inference (used by HQ target tracking)
+ultralytics>=8.3.0
+
+# Apple Silicon Core ML export/runtime support (optional, macOS only)
+coremltools>=7.2; platform_system == "Darwin"
