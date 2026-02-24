@@ -199,8 +199,6 @@
                     <div class="hq-tt-model-row" data-hq-tt-model-row>
                         <label class="hq-tt-model-label" for="hqTtModelSelect">Model</label>
                         <select id="hqTtModelSelect" class="hq-tt-model-select" data-hq-tt-model-select aria-label="Target tracking model selector">
-                            <option value="best8np2">best8np2</option>
-                            <option value="best_stg1">best_stg1</option>
                         </select>
                     </div>
                 </div>
@@ -470,12 +468,18 @@
 
     <script type="application/json" id="camera-function-tabs-data">{{ camera_function_tabs | tojson }}</script>
     <script type="application/json" id="user-settings-data">{{ user_settings | tojson }}</script>
+    <script type="application/json" id="flight-mode-options-data">{{ flight_mode_options | tojson }}</script>
+    <script type="application/json" id="flight-mode-default-data">{{ flight_mode_default | tojson }}</script>
 
     <script>
         // ===== GLOBAL CONFIGURATION =====
         const CAMERA_FUNCTION_TABS_DATA_ID = 'camera-function-tabs-data';
         const USER_SETTINGS_DATA_ID = 'user-settings-data';
+        const FLIGHT_MODE_OPTIONS_DATA_ID = 'flight-mode-options-data';
+        const FLIGHT_MODE_DEFAULT_DATA_ID = 'flight-mode-default-data';
         const DEFAULT_CAMERA_FUNCTION_TABS = JSON.parse(document.getElementById(CAMERA_FUNCTION_TABS_DATA_ID)?.textContent || '{}');
+        const FLIGHT_MODE_OPTIONS = JSON.parse(document.getElementById(FLIGHT_MODE_OPTIONS_DATA_ID)?.textContent || '[]');
+        const FLIGHT_MODE_DEFAULT = JSON.parse(document.getElementById(FLIGHT_MODE_DEFAULT_DATA_ID)?.textContent || '"LOITER"');
         const SETTINGS_CAMERA_ACTIVE_TITLE = 'Active';
         const SETTINGS_CAMERA_INACTIVE_TITLE = 'Inactive';
         const SETTINGS_CAMERA_HINT_TEXT = 'Drag functions between Active and Inactive. The Active order matches the camera rail.';
@@ -529,6 +533,8 @@
         const LATENCY_HEADER_FRAME_TS = 'X-Frame-Ts';
         const LATENCY_HEADER_NETWORK_MS = 'X-Network-Ms';
         const LATENCY_HEADER_PROCESSING_MS = 'X-Processing-Ms';
+        const ARM_ENDPOINT = '/api/arm';
+        const FLIGHT_MODE_ENDPOINT = '/api/flight_mode';
         const LATENCY_VIDEO_SNAPSHOT_ENDPOINTS = {
             cam0: '/api/snapshot_cam0',
             cam1: '/api/snapshot_cam1',
@@ -561,6 +567,8 @@
         let guidedModeEnabled = false;
         let guidedModeAltitudeM = MAP_GUIDED_DEFAULT_ALT_M;
         let minimapLarge = false;
+        let armState = false;
+        let flightModeSelected = FLIGHT_MODE_DEFAULT;
         
         // ===== GLOBAL DOM ELEMENTS =====
         const bannerSlot = document.getElementById('banner-slot');
@@ -583,6 +591,10 @@
         const minimapClearBtnEl = document.getElementById('minimapClearBtn');
         const minimapGuidedBtnEl = document.getElementById('minimapGuidedBtn');
         const minimapEnlargeBtnEl = document.getElementById('minimapEnlargeBtn');
+        let armToggleBtnEls = [];
+        let armStatusTextEls = [];
+        let flightModeSelectEls = [];
+        let flightModeStatusEls = [];
         
         // ===== GLOBAL STATE =====
         let latencyState = {
@@ -1569,6 +1581,187 @@
             });
         }
 
+        function normalizeFlightModeOptions(options) {
+            if (!Array.isArray(options)) return [];
+            return options
+                .map(opt => {
+                    if (typeof opt === 'string') {
+                        return { id: opt, label: opt };
+                    }
+                    if (opt && typeof opt === 'object') {
+                        const id = String(opt.id || opt.key || '').trim().toUpperCase();
+                        if (!id) return null;
+                        const label = String(opt.label || id);
+                        return { id, label };
+                    }
+                    return null;
+                })
+                .filter(Boolean);
+        }
+
+        function setControlStatusText(elOrEls, text, isError = false) {
+            const elements = Array.isArray(elOrEls) ? elOrEls : [elOrEls];
+            elements.filter(Boolean).forEach(el => {
+                el.textContent = text || '--';
+                el.classList.toggle('is-error', Boolean(isError));
+            });
+        }
+
+        function applyArmStateToUI() {
+            if (!armToggleBtnEls.length) return;
+            const armed = Boolean(armState);
+            armToggleBtnEls.forEach(btn => {
+                btn.classList.toggle('is-armed', armed);
+                btn.textContent = armed ? 'Disarm' : 'Arm';
+                btn.setAttribute('aria-pressed', armed ? 'true' : 'false');
+            });
+            setControlStatusText(armStatusTextEls, armed ? 'Status: ARMED' : 'Status: DISARMED');
+        }
+
+        function applyFlightModeToUI() {
+            if (flightModeSelected) {
+                flightModeSelectEls.forEach(selectEl => {
+                    selectEl.value = flightModeSelected;
+                });
+            }
+            setControlStatusText(flightModeStatusEls, flightModeSelected ? `Mode: ${flightModeSelected}` : 'Mode: --');
+        }
+
+        function buildArmControlTile() {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'command-btn arm-toggle-btn';
+            btn.textContent = 'Arm';
+            btn.setAttribute('aria-pressed', 'false');
+            btn.setAttribute('data-arm-toggle', 'true');
+
+            const status = document.createElement('span');
+            status.className = 'command-control-status';
+            status.textContent = 'Status: --';
+            status.setAttribute('data-arm-status', 'true');
+
+            const wrap = document.createElement('div');
+            wrap.className = 'command-control-tile';
+            wrap.appendChild(btn);
+            wrap.appendChild(status);
+            return wrap;
+        }
+
+        function buildModeControlTile() {
+            const label = document.createElement('label');
+            label.className = 'command-control-label';
+            label.textContent = 'Mode';
+
+            const select = document.createElement('select');
+            select.className = 'flight-mode-select';
+            select.setAttribute('aria-label', 'Flight mode selector');
+            select.setAttribute('data-flight-mode-select', 'true');
+
+            const status = document.createElement('span');
+            status.className = 'command-control-status';
+            status.textContent = 'Mode: --';
+            status.setAttribute('data-flight-mode-status', 'true');
+
+            const wrap = document.createElement('div');
+            wrap.className = 'command-control-tile';
+            wrap.appendChild(label);
+            wrap.appendChild(select);
+            wrap.appendChild(status);
+            return wrap;
+        }
+
+        async function setArmState(nextState) {
+            if (!armToggleBtnEls.length) return;
+            armToggleBtnEls.forEach(btn => { btn.disabled = true; });
+            setControlStatusText(armStatusTextEls, nextState ? 'Status: ARMING…' : 'Status: DISARMING…');
+            try {
+                const res = await fetch(ARM_ENDPOINT, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ armed: nextState })
+                });
+                const data = await res.json();
+                if (res.ok && data?.success) {
+                    armState = Boolean(data.armed);
+                } else {
+                    setControlStatusText(armStatusTextEls, data?.message || 'Status: Arm command failed', true);
+                }
+            } catch (err) {
+                setControlStatusText(armStatusTextEls, 'Status: Arm command failed', true);
+                console.error('Failed to send arm command:', err);
+            } finally {
+                armToggleBtnEls.forEach(btn => { btn.disabled = false; });
+                applyArmStateToUI();
+            }
+        }
+
+        async function setFlightMode(nextMode) {
+            if (!flightModeSelectEls.length) return;
+            const mode = String(nextMode || '').trim().toUpperCase();
+            if (!mode) return;
+            flightModeSelectEls.forEach(selectEl => { selectEl.disabled = true; });
+            setControlStatusText(flightModeStatusEls, `Mode: ${mode} (sending…)`);
+            try {
+                const res = await fetch(FLIGHT_MODE_ENDPOINT, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mode })
+                });
+                const data = await res.json();
+                if (res.ok && data?.success) {
+                    flightModeSelected = String(data?.mode || mode).toUpperCase();
+                } else {
+                    setControlStatusText(flightModeStatusEls, data?.message || 'Mode: change failed', true);
+                }
+            } catch (err) {
+                setControlStatusText(flightModeStatusEls, 'Mode: change failed', true);
+                console.error('Failed to send flight mode:', err);
+            } finally {
+                flightModeSelectEls.forEach(selectEl => { selectEl.disabled = false; });
+                applyFlightModeToUI();
+            }
+        }
+
+        function setupArmModeControls() {
+            if (!armToggleBtnEls.length || !flightModeSelectEls.length) return;
+
+            const normalizedModes = normalizeFlightModeOptions(FLIGHT_MODE_OPTIONS);
+            flightModeSelectEls.forEach(selectEl => {
+                selectEl.innerHTML = '';
+                normalizedModes.forEach(mode => {
+                    const opt = document.createElement('option');
+                    opt.value = mode.id;
+                    opt.textContent = mode.label;
+                    selectEl.appendChild(opt);
+                });
+            });
+
+            if (flightModeSelected) {
+                flightModeSelectEls.forEach(selectEl => {
+                    selectEl.value = flightModeSelected;
+                });
+            }
+
+            armToggleBtnEls.forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setArmState(!armState);
+                });
+            });
+
+            flightModeSelectEls.forEach(selectEl => {
+                selectEl.addEventListener('change', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setFlightMode(selectEl.value);
+                });
+            });
+
+            applyArmStateToUI();
+            applyFlightModeToUI();
+        }
+
         function applyMinimapUiState() {
             const minimapEl = document.getElementById('minimap');
             if (minimapEl) {
@@ -1688,6 +1881,11 @@
             compactEl.innerHTML = '';
             fullEl.innerHTML = '';
 
+            compactEl.appendChild(buildArmControlTile());
+            compactEl.appendChild(buildModeControlTile());
+            fullEl.appendChild(buildArmControlTile());
+            fullEl.appendChild(buildModeControlTile());
+
             COMMAND_MINIMIZED_ORDER.forEach(id => {
                 const def = getCommandDef(id);
                 if (def) compactEl.appendChild(buildCommandButton(def));
@@ -1696,6 +1894,11 @@
             COMMAND_DEFS.forEach(def => {
                 fullEl.appendChild(buildCommandButton(def));
             });
+
+            armToggleBtnEls = Array.from(document.querySelectorAll('[data-arm-toggle]'));
+            armStatusTextEls = Array.from(document.querySelectorAll('[data-arm-status]'));
+            flightModeSelectEls = Array.from(document.querySelectorAll('[data-flight-mode-select]'));
+            flightModeStatusEls = Array.from(document.querySelectorAll('[data-flight-mode-status]'));
         }
 
         function renderCameraFunctionTabs() {
@@ -1821,14 +2024,18 @@
             });
 
             selects.forEach(selectEl => {
-                const existing = new Set(Array.from(selectEl.options).map(opt => opt.value));
-                hqTargetTrackingModelOptions.forEach(opt => {
-                    if (existing.has(opt.key)) return;
+                const options = hqTargetTrackingModelOptions
+                    .filter(opt => typeof opt?.key === 'string')
+                    .map(opt => ({ key: opt.key, label: String(opt?.label || opt.key) }));
+
+                selectEl.innerHTML = '';
+                options.forEach(opt => {
                     const optionEl = document.createElement('option');
                     optionEl.value = opt.key;
                     optionEl.textContent = opt.label;
                     selectEl.appendChild(optionEl);
                 });
+
                 if (hqTargetTrackingModelKey) {
                     selectEl.value = hqTargetTrackingModelKey;
                 }
@@ -2417,6 +2624,7 @@
 
             applySettingsToUI(userSettings);
             renderCommandSuite();
+            setupArmModeControls();
             renderMapFunctionRail();
             loadHqCvMode();
             loadHqTargetTrackingModel();

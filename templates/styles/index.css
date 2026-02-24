@@ -21,6 +21,18 @@ body {
     --emergency-body-glow-strength-max: 0.45; /* body inset glow opacity (max) */
     --emergency-border-opacity: 0.6;
 
+    /* Arm/mode control variables */
+    --arm-btn-bg: #ffffff;
+    --arm-btn-border: #dbe5f2;
+    --arm-btn-color: #1e3c72;
+    --arm-btn-armed-bg: #10b981;
+    --arm-btn-armed-border: #10b981;
+    --arm-btn-armed-color: #ffffff;
+    --arm-control-muted: #64748b;
+    --arm-control-error: #ef4444;
+    --flight-mode-select-bg: #ffffff;
+    --flight-mode-select-border: #cbd5e1;
+
     /* Camera function tab appearance variables */
     --camera-tab-width: 30px;
     --camera-tab-expanded-width: 170px;
@@ -1143,6 +1155,74 @@ body.emergency-mode::before {
 
 
 /* ===== COMMAND SUITE ===== */
+.command-control-tile {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    padding: 8px 10px;
+    border: 1px solid #dbe5f2;
+    background: #ffffff;
+    border-radius: 10px;
+    min-height: 42px;
+    box-sizing: border-box;
+}
+
+.command-control-tile .command-btn {
+    width: 100%;
+    justify-content: center;
+    border: none;
+    box-shadow: none;
+    padding: 6px 8px;
+}
+
+.command-control-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #1e3c72;
+}
+
+.arm-toggle-btn {
+    border: 1px solid var(--arm-btn-border);
+    background: var(--arm-btn-bg);
+    color: var(--arm-btn-color);
+    font-weight: 700;
+}
+
+.arm-toggle-btn.is-armed {
+    background: var(--arm-btn-armed-bg);
+    border-color: var(--arm-btn-armed-border);
+    color: var(--arm-btn-armed-color);
+    box-shadow: 0 8px 20px rgba(16, 185, 129, 0.2);
+}
+
+.arm-toggle-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.flight-mode-select {
+    width: 100%;
+    border: 1px solid var(--flight-mode-select-border);
+    border-radius: 8px;
+    background: var(--flight-mode-select-bg);
+    color: #1e3c72;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 6px 10px;
+}
+
+.command-control-status {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--arm-control-muted);
+}
+
+.command-control-status.is-error {
+    color: var(--arm-control-error);
+}
+
 .command-grid {
     display: grid;
     gap: 8px;

@@ -48,6 +48,15 @@ TELEMETRY_HZ = 50
 COMMAND_PORT = 8763
 FIDUCIAL_PORT = 8770
 MAVLINK_CONNECTION_STRING = 'udp:127.0.0.1:14550'
+MAVLINK_ALLOWED_MODES = [
+    'STABILIZE',
+    'ALT_HOLD',
+    'LOITER',
+    'GUIDED',
+    'AUTO',
+    'RTL',
+    'LAND'
+]
 GUIDED_GOTO_DEFAULT_ALT_M = 20.0
 GUIDED_GOTO_MIN_ALT_M = 1.0
 GUIDED_GOTO_MAX_ALT_M = 500.0
@@ -344,6 +353,57 @@ def encode_frame_with_timestamp_quality(frame, quality):
     return struct.pack('d', time.time()) + buffer.tobytes()
 
 
+def send_arm_command(armed):
+    """Send a MAVLink arm/disarm command."""
+    try:
+        mav.mav.command_long_send(
+            mav.target_system,
+            mav.target_component,
+            mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+            0,
+            1 if armed else 0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+        )
+        return True, 'Arm command sent' if armed else 'Disarm command sent'
+    except Exception as e:
+        return False, f'Failed to send arm command: {e}'
+
+
+def set_vehicle_mode(mode):
+    """Set the vehicle flight mode if it is allowed."""
+    if not mode:
+        return False, 'Missing mode'
+
+    mode_name = str(mode).strip().upper()
+    if mode_name not in MAVLINK_ALLOWED_MODES:
+        return False, f'Mode {mode_name} not allowed'
+
+    try:
+        mav.set_mode_apm(mode_name)
+        return True, f'Mode set to {mode_name}'
+    except Exception:
+        pass
+
+    try:
+        mode_mapping = mav.mode_mapping() or {}
+        custom_mode = mode_mapping.get(mode_name)
+        if custom_mode is None:
+            return False, f'Mode {mode_name} not supported'
+        mav.mav.set_mode_send(
+            mav.target_system,
+            mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
+            custom_mode
+        )
+        return True, f'Mode set to {mode_name}'
+    except Exception as e:
+        return False, f'Failed to set mode: {e}'
+
+
 def set_guided_mode():
     """Attempt to set vehicle mode to GUIDED."""
     try:
@@ -598,6 +658,34 @@ async def command_handler(ws):
                         'message': message,
                         'lat': msg.get('lat'),
                         'lon': msg.get('lon')
+                    }))
+                except Exception:
+                    pass
+                continue
+
+            if msg_type == 'arm':
+                desired = bool(msg.get('armed'))
+                ok, message = send_arm_command(desired)
+                try:
+                    await ws.send(json.dumps({
+                        'type': 'arm_ack',
+                        'success': bool(ok),
+                        'armed': desired,
+                        'message': message
+                    }))
+                except Exception:
+                    pass
+                continue
+
+            if msg_type == 'mode':
+                mode = msg.get('mode')
+                ok, message = set_vehicle_mode(mode)
+                try:
+                    await ws.send(json.dumps({
+                        'type': 'mode_ack',
+                        'success': bool(ok),
+                        'mode': str(mode).strip().upper() if mode else None,
+                        'message': message
                     }))
                 except Exception:
                     pass

@@ -1,4 +1,3 @@
-# Import libraries
 import asyncio
 import cv2
 import json
@@ -58,7 +57,7 @@ HQ_CV_MODE_UNSELECTED = ''
 HQ_CV_MODE_NONE = 'none'
 HQ_CV_MODE_LANDING = 'landing_mode'
 HQ_CV_MODE_TARGET_TRACKING = 'target_tracking'
-HQ_CV_DEFAULT_MODE = HQ_CV_MODE_UNSELECTED
+HQ_CV_DEFAULT_MODE = HQ_CV_MODE_NONE
 HQ_CV_ALLOWED_MODES = {
     HQ_CV_MODE_UNSELECTED,
     HQ_CV_MODE_NONE,
@@ -71,20 +70,27 @@ HQ_CV_TARGET_TRACKING_TEXT_THICKNESS = 2
 HQ_CV_TARGET_TRACKING_TEXT_COLOR = (255, 220, 120)
 
 # Target tracking workflow settings
-HQ_TT_PRIMARY_MODEL_PATH = './object_detection/best8np2.pt'
-HQ_TT_SECONDARY_MODEL_PATH = './object_detection/RTv4-S-hgnet.autopt.pt'
-HQ_TT_MODEL_KEY_PRIMARY = 'Fast'
-HQ_TT_MODEL_KEY_SECONDARY = 'Context-Aware'
-HQ_TT_DEFAULT_MODEL_KEY = HQ_TT_MODEL_KEY_PRIMARY
-HQ_TT_MODEL_OPTIONS = {
-    HQ_TT_MODEL_KEY_PRIMARY: {
+HQ_TT_MODEL_CATALOG = [
+    {
+        'key': 'YOLOv8',
         'label': 'best8np2',
-        'path': HQ_TT_PRIMARY_MODEL_PATH,
+        'path': './object_detection/best8np2.pt',
     },
-    HQ_TT_MODEL_KEY_SECONDARY: {
-        'label': 'best_stg1',
-        'path': HQ_TT_SECONDARY_MODEL_PATH,
+    {
+        'key': 'YOLO26',
+        'label': 'best26p2',
+        'path': './object_detection/best26p2.pt',
     },
+]
+HQ_TT_MODEL_KEYS = [model.get('key') for model in HQ_TT_MODEL_CATALOG if model.get('key')]
+HQ_TT_DEFAULT_MODEL_KEY = HQ_TT_MODEL_KEYS[0] if HQ_TT_MODEL_KEYS else HQ_CV_MODE_UNSELECTED
+HQ_TT_MODEL_OPTIONS = {
+    model['key']: {
+        'label': model.get('label', model['key']),
+        'path': model.get('path'),
+    }
+    for model in HQ_TT_MODEL_CATALOG
+    if model.get('key')
 }
 HQ_TT_TRACKER_PATH = './object_detection/bytetrack_persist.yaml'
 HQ_TT_STATUS_MAX_ATTEMPTS_TO_REPORT = 8
@@ -95,7 +101,7 @@ HQ_TT_INIT_RETRY_COOLDOWN_SEC = 5.0
 HQ_TT_ASYNC_INIT_ENABLED = True
 HQ_TT_INIT_STATUS_TEXT = 'Target Tracking: INITIALIZING MODEL...'
 HQ_TT_IGNORE_DYLIB_CONFLICT = True
-HQ_TT_CONFIDENCE = 0.35
+HQ_TT_CONFIDENCE = 0.45
 HQ_TT_IOU = 0.2
 HQ_TT_IMAGE_SIZE = 800
 HQ_TT_PERSIST = True
@@ -104,10 +110,10 @@ HQ_TT_INFER_MIN_INTERVAL_SEC = 0.12
 HQ_TT_PERSON_ONLY = False
 HQ_TT_LOCK_ON_CONF = 0.50
 HQ_TT_STICK_MIN_CONF = 0.15
-HQ_TT_HOLD_FRAMES = 12
-HQ_TT_SELECTED_HOLD_MULTIPLIER = 2
+HQ_TT_HOLD_FRAMES = 6
+HQ_TT_SELECTED_HOLD_MULTIPLIER = 4
 HQ_TT_REACQUIRE_MIN_IOU = 0.08
-HQ_TT_REACQUIRE_MAX_CENTER_DIST_RATIO = 0.20
+HQ_TT_REACQUIRE_MAX_CENTER_DIST_RATIO = 0.4
 HQ_TT_BOX_COLOR = (255, 170, 60)
 HQ_TT_TARGET_COLOR = (40, 220, 120)
 HQ_TT_TEXT_COLOR = (255, 255, 255)
@@ -147,6 +153,17 @@ MAVLINK_MONITOR_STATUSTEXT_SEVERITY_LABELS = {
     6: 'INFO',
     7: 'DEBUG',
 }
+FLIGHT_MODE_OPTIONS = [
+    {'id': 'STABILIZE', 'label': 'Stabilize'},
+    {'id': 'ALT_HOLD', 'label': 'Alt Hold'},
+    {'id': 'LOITER', 'label': 'Loiter'},
+    {'id': 'GUIDED', 'label': 'Guided'},
+    {'id': 'AUTO', 'label': 'Auto'},
+    {'id': 'RTL', 'label': 'RTL'},
+    {'id': 'LAND', 'label': 'Land'},
+]
+FLIGHT_MODE_DEFAULT = 'LOITER'
+FLIGHT_MODE_IDS = {mode['id'] for mode in FLIGHT_MODE_OPTIONS}
 
 TEST_MODE = True
 TEST_MODE_ENABLE_COMMAND_WS = False
@@ -356,7 +373,6 @@ sock.setblocking(False)
 
 # ===== Helper Functions =====
 def update_connection_status():
-    """Update connection status based on last received data timestamps."""
     global cam0_online, cam1_online, hq_online, mav_online
     current_time = time.time()
     cam0_online = last_cam0_time > 0 and (current_time - last_cam0_time) < STATUS_TIMEOUT
@@ -374,7 +390,6 @@ def is_map_online():
 
 
 def decode_video_frame(data):
-    """Extract timestamp and decode JPEG from video data."""
     if len(data) > 8:
         timestamp = struct.unpack('d', data[:8])[0]
         jpeg_data = data[8:]
@@ -386,7 +401,6 @@ def decode_video_frame(data):
 
 
 def draw_telemetry_text(frame, data):
-    """Draw telemetry overlay text on frame."""
     font = cv2.FONT_HERSHEY_DUPLEX
     color = (255, 255, 255)
     scale, thickness = 0.4, 1
@@ -999,7 +1013,7 @@ def _hq_tt_get_available_model_options():
     for key, meta in HQ_TT_MODEL_OPTIONS.items():
         options.append({
             'key': key,
-            'label': str(meta.get('label', key)),
+            'label': str(key),
         })
     return options
 
@@ -1953,9 +1967,11 @@ def gen_frames_cam0():
         # Record samples: (network_latency, backend_processing_latency)
         cam0_latency_samples.append((network_ms, processing_ms))
 
-        # Update median stats for network latency
-        nets = [n for n, r in cam0_latency_samples if n is not None]
-        procs = [r for n, r in cam0_latency_samples if r is not None]
+        # Update median stats for network latency (copy deque first to avoid
+        # 'deque mutated during iteration' if another thread appends)
+        _samples = list(cam0_latency_samples)
+        nets = [n for n, r in _samples if n is not None]
+        procs = [r for n, r in _samples if r is not None]
         if procs:
             cam0_processing_latency_ms = statistics.median(procs)
         else:
@@ -2006,9 +2022,10 @@ def gen_frames_cam1():
         # Record samples
         cam1_latency_samples.append((network_ms, processing_ms))
 
-        # Update median stats
-        nets = [n for n, r in cam1_latency_samples if n is not None]
-        procs = [r for n, r in cam1_latency_samples if r is not None]
+        # Update median stats (copy deque first to avoid mutation during iteration)
+        _samples = list(cam1_latency_samples)
+        nets = [n for n, r in _samples if n is not None]
+        procs = [r for n, r in _samples if r is not None]
         if procs:
             cam1_processing_latency_ms = statistics.median(procs)
         else:
@@ -2065,9 +2082,10 @@ def gen_frames_hq():
         # Record samples
         hq_latency_samples.append((network_ms, processing_ms))
 
-        # Update median stats
-        nets = [n for n, r in hq_latency_samples if n is not None]
-        procs = [r for n, r in hq_latency_samples if r is not None]
+        # Update median stats (copy deque first to avoid mutation during iteration)
+        _samples = list(hq_latency_samples)
+        nets = [n for n, r in _samples if n is not None]
+        procs = [r for n, r in _samples if r is not None]
         if procs:
             hq_processing_latency_ms = statistics.median(procs)
         else:
@@ -2114,7 +2132,9 @@ def index():
         ),
         status_update_interval_ms=user_settings.get('status_update_interval_ms', STATUS_UPDATE_INTERVAL_MS),
         camera_function_tabs=user_settings.get('camera_function_tabs', DEFAULT_CAMERA_FUNCTION_TABS),
-        user_settings=user_settings
+        user_settings=user_settings,
+        flight_mode_options=FLIGHT_MODE_OPTIONS,
+        flight_mode_default=FLIGHT_MODE_DEFAULT
     )
 
 
@@ -2314,6 +2334,53 @@ def api_command_toggle():
     else:
         print("[Flask] Warning: command_ws is None, cannot forward to server")
     return jsonify({'success': True, 'commands': command_state})
+
+
+@app.route('/api/arm', methods=['POST'])
+def api_arm():
+    """Send arm/disarm request to the server command socket."""
+    data = request.json or {}
+    armed = bool(data.get('armed'))
+
+    if not command_ws:
+        return jsonify({'success': False, 'message': 'Command link unavailable'}), 503
+
+    msg = {'type': 'arm', 'armed': armed}
+    try:
+        asyncio.run_coroutine_threadsafe(
+            command_ws.send(json.dumps(msg)),
+            command_loop
+        )
+    except Exception as e:
+        print(f"Failed to forward arm command to server: {e}")
+        return jsonify({'success': False, 'message': 'Failed to send arm command'}), 500
+
+    return jsonify({'success': True, 'armed': armed})
+
+
+@app.route('/api/flight_mode', methods=['POST'])
+def api_flight_mode():
+    """Send a flight mode change request to the server command socket."""
+    data = request.json or {}
+    mode = str(data.get('mode', '')).strip().upper()
+
+    if mode not in FLIGHT_MODE_IDS:
+        return jsonify({'success': False, 'message': 'Invalid flight mode'}), 400
+
+    if not command_ws:
+        return jsonify({'success': False, 'message': 'Command link unavailable'}), 503
+
+    msg = {'type': 'mode', 'mode': mode}
+    try:
+        asyncio.run_coroutine_threadsafe(
+            command_ws.send(json.dumps(msg)),
+            command_loop
+        )
+    except Exception as e:
+        print(f"Failed to forward flight mode to server: {e}")
+        return jsonify({'success': False, 'message': 'Failed to send mode change'}), 500
+
+    return jsonify({'success': True, 'mode': mode})
 
 
 @app.route('/api/guided_goto', methods=['POST'])
