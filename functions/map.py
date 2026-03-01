@@ -21,6 +21,9 @@ GUIDED_MARKER_COLOR = '#ef4444'
 GUIDED_MARKER_SIZE_PX = 22
 GUIDED_MARKER_STROKE_PX = 3
 GUIDED_MARKER_TIME_LABEL = 'Sent'
+MAP_TELEMETRY_WS_URLS_NORMAL_JS = "['ws://100.112.223.17:8764']"
+MAP_TELEMETRY_WS_URLS_TEST_JS = "['ws://localhost:8888', 'ws://100.112.223.17:8764']"
+MAP_TELEMETRY_WS_URLS_SITL_JS = "['ws://localhost:8764']"
 
 # ===== MAP DATA CONFIG (adjustable) =====
 MAP_GPKG_FILENAME = 'NorthWest_Railways.gpkg'
@@ -103,7 +106,7 @@ def load_geodata():
     return results
 
 
-def generate_map_html(lat, lon, yaw, test_mode=False):
+def generate_map_html(lat, lon, yaw, test_mode=False, sitl_mode=False):
     """Generate interactive map HTML with current telemetry data."""
     geojson_data = load_geodata()
 
@@ -196,12 +199,14 @@ def generate_map_html(lat, lon, yaw, test_mode=False):
 
     map_id = m.get_name()
 
-    # Choose telemetry URL list. When `test_mode` is True include the local test WS as a fallback.
-    if test_mode:
+    # Choose telemetry URL list.
+    if sitl_mode:
+        urls_js = MAP_TELEMETRY_WS_URLS_SITL_JS
+    elif test_mode:
         # Prefer localhost first in test mode to reduce connection delays during development
-        urls_js = "['ws://localhost:8888', 'ws://100.112.223.17:8764']"
+        urls_js = MAP_TELEMETRY_WS_URLS_TEST_JS
     else:
-        urls_js = "['ws://100.112.223.17:8764']"
+        urls_js = MAP_TELEMETRY_WS_URLS_NORMAL_JS
 
     telemetry_ws_script = """
     <script>

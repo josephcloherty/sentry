@@ -163,13 +163,17 @@ FLIGHT_MODE_OPTIONS = [
 FLIGHT_MODE_DEFAULT = 'LOITER'
 FLIGHT_MODE_IDS = {mode['id'] for mode in FLIGHT_MODE_OPTIONS}
 
-SERVER_IP = '100.112.223.17'
-CAM0_PORT = 8765
-CAM1_PORT = 8766
-CAM_HQ_PORT = 8767
-TELEMETRY_PORT = 8764
-COMMAND_PORT = 8763
-FIDUCIAL_PORT = 8770
+TEST_MODE = True
+TEST_MODE_ENABLE_COMMAND_WS = False
+TEST_MODE_ENABLE_FIDUCIAL_WS = False
+
+SERVER_IP = 'localhost'
+CAM0_PORT = 8886
+CAM1_PORT = 8887
+CAM_HQ_PORT = 8885
+TELEMETRY_PORT = 8888
+COMMAND_PORT = 8889
+FIDUCIAL_PORT = 8890
 MAVLINK_MONITOR_UDP_ENDPOINT = 'udpin:0.0.0.0:14550'
 VALID_USERNAME = 'argus'
 VALID_PASSWORD = 'sentry'
@@ -187,6 +191,7 @@ DEFAULT_TILE_ORDER = ['cam0', 'cam1', 'hq', 'map', 'latency', 'mavlink_terminal'
 
 # Per-user UI settings defaults
 DEFAULT_SETTINGS = {
+    'test_mode': TEST_MODE,
     'latency_polling_rate_ms': 500,
     'status_update_interval_ms': 30000,
     'visible_tiles': {
@@ -580,6 +585,10 @@ def sanitize_settings(payload):
     settings = deepcopy(DEFAULT_SETTINGS)
 
     if isinstance(payload, dict):
+        test_mode = payload.get('test_mode')
+        if isinstance(test_mode, bool):
+            settings['test_mode'] = test_mode
+
         latency_rate = payload.get('latency_polling_rate_ms')
         if isinstance(latency_rate, (int, float)):
             settings['latency_polling_rate_ms'] = int(max(200, min(5000, latency_rate)))
@@ -1357,6 +1366,13 @@ def _hq_tt_extract_detections(result):
 def apply_hq_cv_landing_mode(frame):
     drawn = bool(draw_fiducial_overlay(frame))
 
+    if (not drawn and TEST_MODE and HQ_LANDING_LOCAL_FIDUCIAL_FALLBACK_IN_TEST and process_fiducial_frame is not None):
+        try:
+            local_result = process_fiducial_frame(frame)
+            drawn = bool(draw_fiducial_overlay_from_result(frame, local_result))
+        except Exception:
+            drawn = False
+
     if drawn:
         _hq_tt_draw_status(frame, 'Landing Mode: LOCKED', HQ_LANDING_STATUS_TEXT_COLOR)
     else:
@@ -1976,6 +1992,7 @@ def _build_snapshot_response(frame_entry):
 def index():
     update_connection_status()
     user_settings = get_settings_for_request()
+    effective_test_mode = bool(user_settings.get('test_mode')) or TEST_MODE
     return render_template(
         'index.html',
         main_online=is_main_online(),
@@ -1986,7 +2003,8 @@ def index():
         map_html=generate_map_html(
             mavlink_data['lat'],
             mavlink_data['lon'],
-            mavlink_data['yaw']
+            mavlink_data['yaw'],
+            test_mode=effective_test_mode
         ),
         status_update_interval_ms=user_settings.get('status_update_interval_ms', STATUS_UPDATE_INTERVAL_MS),
         camera_function_tabs=user_settings.get('camera_function_tabs', DEFAULT_CAMERA_FUNCTION_TABS),
@@ -2468,7 +2486,8 @@ def map_embed():
     html = generate_map_html(
         mavlink_data['lat'],
         mavlink_data['lon'],
-        mavlink_data['yaw']
+        mavlink_data['yaw'],
+        test_mode=bool(user_settings.get('test_mode'))
     )
     return Response(html, mimetype='text/html')
 
@@ -2479,17 +2498,23 @@ if __name__ == '__main__':
 
     # Create a dedicated event loop for the command WebSocket
     import threading
-    command_loop = asyncio.new_event_loop()
-    def run_command_loop():
-        asyncio.set_event_loop(command_loop)
-        command_loop.run_until_complete(receive_commands())
-    Thread(target=run_command_loop, daemon=True).start()
+    if not TEST_MODE or TEST_MODE_ENABLE_COMMAND_WS:
+        command_loop = asyncio.new_event_loop()
+        def run_command_loop():
+            asyncio.set_event_loop(command_loop)
+            command_loop.run_until_complete(receive_commands())
+        Thread(target=run_command_loop, daemon=True).start()
+    else:
+        print('TEST_MODE: command websocket disabled (TEST_MODE_ENABLE_COMMAND_WS=False).')
 
     Thread(target=lambda: asyncio.run(receive_video(0, CAM0_PORT)), daemon=True).start()
     Thread(target=lambda: asyncio.run(receive_video(1, CAM1_PORT)), daemon=True).start()
     Thread(target=lambda: asyncio.run(receive_video(2, CAM_HQ_PORT)), daemon=True).start()
     Thread(target=lambda: asyncio.run(receive_telemetry()), daemon=True).start()
-    Thread(target=lambda: asyncio.run(receive_fiducials()), daemon=True).start()
+    if not TEST_MODE or TEST_MODE_ENABLE_FIDUCIAL_WS:
+        Thread(target=lambda: asyncio.run(receive_fiducials()), daemon=True).start()
+    else:
+        print('TEST_MODE: fiducial websocket disabled (TEST_MODE_ENABLE_FIDUCIAL_WS=False).')
     Thread(target=receive_mavlink, daemon=True).start()
     Thread(target=receive_mavlink_udp_messages, daemon=True).start()
     Thread(target=status_monitor, daemon=True).start()

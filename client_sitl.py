@@ -47,6 +47,8 @@ TELEMETRY_PING_TIMEOUT_SEC = 5.0
 VIDEO_RECONNECT_DELAY_SEC = 2.0
 FIDUCIAL_RECONNECT_DELAY_SEC = 2.0
 COMMAND_RECONNECT_DELAY_SEC = 2.0
+TELEMETRY_WS_RELAY_HOST = '0.0.0.0'
+TELEMETRY_WS_RELAY_PORT = 8764
 FIDUCIAL_OVERLAY_ENABLED = True
 FIDUCIAL_MIN_CONFIDENCE = 0.2
 FIDUCIAL_STALE_TIMEOUT_SEC = 2.0
@@ -163,13 +165,33 @@ FLIGHT_MODE_OPTIONS = [
 FLIGHT_MODE_DEFAULT = 'LOITER'
 FLIGHT_MODE_IDS = {mode['id'] for mode in FLIGHT_MODE_OPTIONS}
 
-SERVER_IP = '100.112.223.17'
-CAM0_PORT = 8765
-CAM1_PORT = 8766
-CAM_HQ_PORT = 8767
-TELEMETRY_PORT = 8764
+# SITL mode (local ArduPilot SITL integration)
+# Connect to cameras on ports 8100/8101/8102 and
+# poll telemetry from the local SITL HTTP endpoints.
+SITL_MODE = True
+SITL_STATUS_URL = 'http://localhost:5001/status'
+SITL_PARAMS_URL = 'http://localhost:5001/params'
+SITL_TELEMETRY_COORD_SCALE = 1e7
+SITL_TELEMETRY_LAT_KEYS = ('lat', 'latitude')
+SITL_TELEMETRY_LON_KEYS = ('lon', 'lng', 'longitude')
+SITL_TELEMETRY_ALT_KEYS = ('alt', 'altitude', 'relative_alt', 'relative_altitude')
+SITL_TELEMETRY_LOCATION_KEYS = (
+    'location',
+    'position',
+    'gps',
+    'global_position',
+    'global_relative_frame',
+    'coords',
+)
+
+SERVER_IP = 'localhost'
+CAM0_PORT = 8100
+CAM1_PORT = 8101
+CAM_HQ_PORT = 8102
+TELEMETRY_PORT = None
 COMMAND_PORT = 8763
 FIDUCIAL_PORT = 8770
+FIDUCIAL_OVERLAY_ENABLED = False
 MAVLINK_MONITOR_UDP_ENDPOINT = 'udpin:0.0.0.0:14550'
 VALID_USERNAME = 'argus'
 VALID_PASSWORD = 'sentry'
@@ -187,6 +209,7 @@ DEFAULT_TILE_ORDER = ['cam0', 'cam1', 'hq', 'map', 'latency', 'mavlink_terminal'
 
 # Per-user UI settings defaults
 DEFAULT_SETTINGS = {
+    'test_mode': False,
     'latency_polling_rate_ms': 500,
     'status_update_interval_ms': 30000,
     'visible_tiles': {
@@ -325,12 +348,17 @@ mavlink_data = {
     "timestamp": 0, "server_latency_ms": 0
 }
 telemetry_latency_ms = 0
-# Auxiliary telemetry parameters store
+# Parameters fetched from SITL /params (when SITL_MODE enabled)
 vehicle_params = {}
 
 # SSE telemetry subscribers (for live map updates)
 telemetry_subscribers = []
 telemetry_subscribers_lock = Lock()
+
+# Telemetry websocket relay subscribers (for map websocket updates)
+telemetry_ws_clients = set()
+telemetry_ws_clients_lock = Lock()
+telemetry_ws_loop = None
 
 # MAVLink message monitor state (raw decoded messages from Pixhawk UDP endpoint)
 mavlink_message_log = deque(maxlen=MAVLINK_MONITOR_MESSAGE_BUFFER_SIZE)
@@ -580,6 +608,10 @@ def sanitize_settings(payload):
     settings = deepcopy(DEFAULT_SETTINGS)
 
     if isinstance(payload, dict):
+        test_mode = payload.get('test_mode')
+        if isinstance(test_mode, bool):
+            settings['test_mode'] = test_mode
+
         latency_rate = payload.get('latency_polling_rate_ms')
         if isinstance(latency_rate, (int, float)):
             settings['latency_polling_rate_ms'] = int(max(200, min(5000, latency_rate)))
@@ -1601,6 +1633,178 @@ def _set_latest_video_frame(cam_id, frame, timestamp, receive_time):
         hq_frame_timestamp = timestamp
 
 
+def get_sitl_telemetry_dict(msg, current_time, telemetry_latency_ms):
+    """Map SITL /status JSON into the client's mavlink_data schema."""
+    def _to_float(value):
+        try:
+            if value is None:
+                return None
+            return float(value)
+        except Exception:
+            return None
+
+    def _read_first_numeric(payload, keys):
+        if not isinstance(payload, dict):
+            return None
+        for key in keys:
+            if key in payload:
+                parsed = _to_float(payload.get(key))
+                if parsed is not None:
+                    return parsed
+        return None
+
+    def _extract_sitl_location(payload):
+        containers = []
+        if isinstance(payload, dict):
+            containers.append(payload)
+            for key in SITL_TELEMETRY_LOCATION_KEYS:
+                nested = payload.get(key)
+                if isinstance(nested, dict):
+                    containers.append(nested)
+
+            vehicle = payload.get('vehicle')
+            if isinstance(vehicle, dict):
+                containers.append(vehicle)
+                vehicle_location = vehicle.get('location')
+                if isinstance(vehicle_location, dict):
+                    containers.append(vehicle_location)
+                    for key in SITL_TELEMETRY_LOCATION_KEYS:
+                        nested = vehicle_location.get(key)
+                        if isinstance(nested, dict):
+                            containers.append(nested)
+
+        lat = lon = alt = None
+        for container in containers:
+            if lat is None:
+                lat = _read_first_numeric(container, SITL_TELEMETRY_LAT_KEYS)
+            if lon is None:
+                lon = _read_first_numeric(container, SITL_TELEMETRY_LON_KEYS)
+            if alt is None:
+                alt = _read_first_numeric(container, SITL_TELEMETRY_ALT_KEYS)
+            if lat is not None and lon is not None and alt is not None:
+                break
+
+        if lat is None:
+            lat = 0.0
+        if lon is None:
+            lon = 0.0
+        if alt is None:
+            alt = 0.0
+
+        if abs(lat) > 90 or abs(lon) > 180:
+            scaled_lat = lat / SITL_TELEMETRY_COORD_SCALE
+            scaled_lon = lon / SITL_TELEMETRY_COORD_SCALE
+            if abs(scaled_lat) <= 90 and abs(scaled_lon) <= 180:
+                lat = scaled_lat
+                lon = scaled_lon
+
+        if abs(lat) > 90 and abs(lon) <= 90:
+            lat, lon = lon, lat
+
+        return lat, lon, alt
+
+    # Battery
+    batt = msg.get('battery') or {}
+    if isinstance(batt, dict):
+        battery_v = batt.get('voltage') or batt.get('volts') or 0
+        battery_remaining = batt.get('level') if (batt.get('level') is not None) else 100
+    else:
+        battery_v = batt or 0
+        battery_remaining = 100
+
+    # GPS
+    lat, lon, alt = _extract_sitl_location(msg)
+
+    # Attitude: nested 'attitude' may be radians (DroneKit style)
+    att = msg.get('attitude') or {}
+    if att:
+        roll = round(math.degrees(att.get('roll', 0) or 0), 2)
+        pitch = round(math.degrees(att.get('pitch', 0) or 0), 2)
+        yaw = round(math.degrees(att.get('yaw', 0) or 0), 2)
+    else:
+        roll = round(msg.get('roll', 0) or 0, 2)
+        pitch = round(msg.get('pitch', 0) or 0, 2)
+        yaw = round(msg.get('yaw', 0) or 0, 2)
+
+    # Speed
+    groundspeed = round(msg.get('groundspeed') or msg.get('ground_speed') or 0, 2)
+    airspeed = round(msg.get('airspeed') or 0, 2)
+
+    # Heading
+    heading = msg.get('heading') or msg.get('yaw') or 0
+
+    # Motor state / throttle
+    motor_state = msg.get('motor_state') or msg.get('motors') or {}
+    throttle = 0
+    try:
+        if isinstance(motor_state, dict) and motor_state.get('forward') is not None:
+            throttle = round(float(motor_state.get('forward')) * 100.0, 1)
+        else:
+            channels = msg.get('channels') or msg.get('rc_channels') or {}
+            ch3 = None
+            if isinstance(channels, dict):
+                ch3 = channels.get('3') or channels.get('throttle')
+            if ch3 is not None:
+                throttle = round(max(0, (int(ch3) - 1000) / 10.0), 1)
+    except Exception:
+        throttle = 0
+
+    armed = bool(msg.get('armed') or msg.get('is_armed'))
+    mode = (msg.get('mode') or {}).get('name') if isinstance(msg.get('mode'), dict) else (msg.get('mode') or msg.get('flight_mode') or '')
+    is_armable = bool(msg.get('is_armable') or msg.get('armable'))
+    ekf_ok = bool(msg.get('ekf_ok') or msg.get('ekfStatus') or msg.get('ekf_ok'))
+
+    return {
+        'roll': roll,
+        'pitch': pitch,
+        'yaw': yaw,
+        'lat': round(lat, 7),
+        'lon': round(lon, 7),
+        'sitl_lat': round(lat, 7),
+        'sitl_lon': round(lon, 7),
+        'alt': round(alt or 0, 2),
+        'battery': battery_v or 0,
+        'battery_remaining': battery_remaining,
+        'ground_speed': groundspeed,
+        'airspeed': airspeed,
+        'heading': heading,
+        'throttle': throttle,
+        'armed': armed,
+        'mode': mode,
+        'is_armable': is_armable,
+        'ekf_ok': ekf_ok,
+        'timestamp': current_time,
+        'server_latency_ms': telemetry_latency_ms,
+        'motors': motor_state,
+    }
+
+
+def receive_camera_http(cam_id, url):
+    """Receive MJPEG / raw JPEG stream over HTTP and update latest frame."""
+    buf = b""
+    while True:
+        try:
+            print(f"Connecting to camera HTTP stream: {url}")
+            resp = requests.get(url, stream=True, timeout=10)
+            for chunk in resp.iter_content(chunk_size=4096):
+                if not chunk:
+                    continue
+                buf += chunk
+                start = buf.find(b"\xff\xd8")
+                end = buf.find(b"\xff\xd9")
+                if start != -1 and end != -1 and end > start:
+                    jpg = buf[start:end+2]
+                    buf = buf[end+2:]
+                    frame = cv2.imdecode(np.frombuffer(jpg, np.uint8), cv2.IMREAD_COLOR)
+                    if frame is not None:
+                        receive_time = time.time()
+                        # No server timestamp available for plain HTTP MJPEG
+                        _set_latest_video_frame(cam_id, frame, None, receive_time)
+        except Exception as e:
+            print(f"Camera HTTP {url} error: {e} — retrying in 2s")
+            time.sleep(2)
+
+
 async def receive_video(cam_id, port):
     """Generic video receiver for a camera."""
     while True:
@@ -1624,55 +1828,46 @@ async def receive_video(cam_id, port):
 async def receive_telemetry():
     """Connect to telemetry WebSocket and update mavlink_data in real-time."""
     global mavlink_data, telemetry_latency_ms, last_mav_time
+    params_fetch_counter = 0
     while True:
         try:
-            async with websockets.connect(
-                f'ws://{SERVER_IP}:{TELEMETRY_PORT}',
-                ping_interval=TELEMETRY_PING_INTERVAL_SEC,
-                ping_timeout=TELEMETRY_PING_TIMEOUT_SEC
-            ) as ws:
-                print("Connected to telemetry server (WebSocket).")
-                while True:
+            resp = await asyncio.to_thread(requests.get, SITL_STATUS_URL, timeout=1)
+            if resp.status_code == 200:
+                telemetry_msg = resp.json()
+                current_time = time.time()
+                if isinstance(telemetry_msg, dict):
+                    server_time = telemetry_msg.get('server_time', telemetry_msg.get('timestamp', current_time))
                     try:
-                        # Wait for incoming telemetry without an artificial short timeout.
-                        # Rely on the WebSocket ping/pong (configured via
-                        # `ping_interval` / `ping_timeout`) to detect dead peers
-                        # and close the connection when necessary.
-                        data = await ws.recv()
-                    except websockets.exceptions.ConnectionClosed:
-                        print("Telemetry WebSocket closed, reconnecting...")
-                        break
-                    except Exception as e:
-                        print(f"Telemetry recv error: {e}, reconnecting...")
-                        break
+                        telemetry_latency_ms = (current_time - float(server_time)) * 1000
+                    except Exception:
+                        telemetry_latency_ms = 0
+                    mapped = get_sitl_telemetry_dict(telemetry_msg, current_time, telemetry_latency_ms)
                     try:
-                        telemetry_msg = json.loads(data)
-                        current_time = time.time()
-                        # server may send either 'server_time' or 'timestamp'
-                        server_time = telemetry_msg.get('server_time', telemetry_msg.get('timestamp', current_time))
-                        try:
-                            telemetry_latency_ms = (current_time - float(server_time)) * 1000
-                        except Exception:
-                            telemetry_latency_ms = 0
+                        print(f"SITL mapped telemetry: lat={mapped.get('lat')} lon={mapped.get('lon')} yaw={mapped.get('yaw')}")
+                    except Exception:
+                        pass
+                    mavlink_data.update(mapped)
+                last_mav_time = current_time
+                broadcast_telemetry()
 
-                        # Merge incoming telemetry into the existing dict instead
-                        # of replacing the object. This preserves any code that
-                        # holds references to `mavlink_data` and avoids races.
-                        if isinstance(telemetry_msg, dict):
-                            mavlink_data.update(telemetry_msg)
-                        last_mav_time = current_time
-                        # Notify SSE subscribers immediately when telemetry updates
-                        try:
-                            broadcast_telemetry()
-                        except Exception:
-                            pass
-                    except json.JSONDecodeError:
-                        print(f"Failed to parse telemetry JSON: {data}")
-        except (ConnectionRefusedError, OSError):
-            print(f"Telemetry connect failed, reconnecting in {TELEMETRY_RECONNECT_DELAY_SEC:.0f} seconds...")
-        except Exception:
-            print(f"Telemetry reconnecting in {TELEMETRY_RECONNECT_DELAY_SEC:.0f} seconds...")
-        await asyncio.sleep(TELEMETRY_RECONNECT_DELAY_SEC)
+            params_fetch_counter += 1
+            if params_fetch_counter >= 50:
+                params_fetch_counter = 0
+                try:
+                    resp_params = await asyncio.to_thread(
+                        requests.get, SITL_PARAMS_URL, timeout=2
+                    )
+                    params_json = resp_params.json()
+                    if isinstance(params_json, dict):
+                        vehicle_params.update(params_json)
+                except Exception:
+                    pass
+
+        except Exception as e:
+            print(f"SITL telemetry error: {e}")
+
+        sleep_s = max(0.05, SITL_POLL_INTERVAL_MS / 1000.0)
+        await asyncio.sleep(sleep_s)
 
 
 async def receive_fiducials():
@@ -1701,6 +1896,8 @@ async def receive_fiducials():
 def receive_mavlink():
     """Legacy UDP receiver for backward compatibility."""
     global mavlink_data, last_mav_time
+    print('SITL_MODE: legacy UDP telemetry receiver disabled.')
+    return
     
     while True:
         try:
@@ -1976,6 +2173,7 @@ def _build_snapshot_response(frame_entry):
 def index():
     update_connection_status()
     user_settings = get_settings_for_request()
+    effective_test_mode = False
     return render_template(
         'index.html',
         main_online=is_main_online(),
@@ -1986,7 +2184,9 @@ def index():
         map_html=generate_map_html(
             mavlink_data['lat'],
             mavlink_data['lon'],
-            mavlink_data['yaw']
+            mavlink_data['yaw'],
+            test_mode=effective_test_mode,
+            sitl_mode=True
         ),
         status_update_interval_ms=user_settings.get('status_update_interval_ms', STATUS_UPDATE_INTERVAL_MS),
         camera_function_tabs=user_settings.get('camera_function_tabs', DEFAULT_CAMERA_FUNCTION_TABS),
@@ -2052,6 +2252,58 @@ def _telemetry_sse_generator(q):
         return
 
 
+async def telemetry_ws_handler(websocket, *_):
+    with telemetry_ws_clients_lock:
+        telemetry_ws_clients.add(websocket)
+    try:
+        await websocket.wait_closed()
+    finally:
+        with telemetry_ws_clients_lock:
+            telemetry_ws_clients.discard(websocket)
+
+
+async def run_telemetry_ws_server():
+    global telemetry_ws_loop
+    telemetry_ws_loop = asyncio.get_running_loop()
+    async with websockets.serve(telemetry_ws_handler, TELEMETRY_WS_RELAY_HOST, TELEMETRY_WS_RELAY_PORT):
+        print(f'Telemetry WS relay listening on ws://localhost:{TELEMETRY_WS_RELAY_PORT}')
+        await asyncio.Future()
+
+
+def _broadcast_telemetry_ws(payload):
+    if telemetry_ws_loop is None:
+        return
+
+    try:
+        message = json.dumps(payload)
+    except Exception:
+        return
+
+    async def _send_to_clients():
+        with telemetry_ws_clients_lock:
+            clients = list(telemetry_ws_clients)
+
+        if not clients:
+            return
+
+        stale_clients = []
+        for ws in clients:
+            try:
+                await ws.send(message)
+            except Exception:
+                stale_clients.append(ws)
+
+        if stale_clients:
+            with telemetry_ws_clients_lock:
+                for ws in stale_clients:
+                    telemetry_ws_clients.discard(ws)
+
+    try:
+        asyncio.run_coroutine_threadsafe(_send_to_clients(), telemetry_ws_loop)
+    except Exception:
+        pass
+
+
 @app.route('/telemetry/stream')
 def telemetry_stream():
     """SSE endpoint that streams live telemetry updates to browsers."""
@@ -2078,7 +2330,7 @@ def telemetry_stream():
 
 
 def broadcast_telemetry():
-    """Push current telemetry snapshot to all SSE subscribers (non-blocking)."""
+    """Push current telemetry snapshot to all telemetry subscribers (SSE + WS)."""
     payload = mavlink_data.copy()
     payload['client_latency_ms'] = telemetry_latency_ms
     # include a timestamp for ordering on client
@@ -2100,6 +2352,8 @@ def broadcast_telemetry():
         except Exception:
             # if queue is full, drop the update for that subscriber
             pass
+
+    _broadcast_telemetry_ws(payload)
 
 
 @app.route('/api/mavlink_messages')
@@ -2228,22 +2482,35 @@ def api_commands():
 
 
 def _forward_command_ws_message(msg, *, require_link=False, fail_message='Failed to send command'):
-    if not command_ws:
-        if require_link:
-            return False, 'Command link unavailable', 503
-        print('[Flask] Warning: command_ws is None, cannot forward to server')
-        return True, None, None
-
     try:
-        asyncio.run_coroutine_threadsafe(
-            command_ws.send(json.dumps(msg)),
-            command_loop
-        )
+        base = 'http://localhost:5001'
+        payload = None
+
+        t = msg.get('type')
+        if t == 'arm':
+            armed = bool(msg.get('armed'))
+            payload = {'command': 'arm' if armed else 'disarm'}
+        elif t == 'mode':
+            payload = {'command': 'mode', 'mode': msg.get('mode')}
+        elif t in ('toggle', 'pulse'):
+            payload = {'command': msg.get('id'), 'value': msg.get('value')}
+        elif t == 'guided_goto':
+            payload = {'command': 'guided_goto', 'lat': msg.get('lat'), 'lon': msg.get('lon')}
+            if 'alt' in msg and msg.get('alt') is not None:
+                payload['altitude'] = msg.get('alt')
+        else:
+            payload = msg.copy()
+
+        resp = requests.post(f"{base}/command", json=payload, timeout=3)
+        if resp.status_code >= 400:
+            if require_link:
+                return False, f'SITL command failed ({resp.status_code})', resp.status_code
+            print(f'[Flask] SITL command returned {resp.status_code}: {resp.text}')
         return True, None, None
     except Exception as e:
-        print(f'Failed to forward command to server: {e}')
+        print(f'[Flask] Failed to forward command to SITL HTTP API: {e}')
         if require_link:
-            return False, fail_message, 500
+            return False, 'Failed to send command to SITL', 500
         return True, None, None
 
 
@@ -2468,7 +2735,9 @@ def map_embed():
     html = generate_map_html(
         mavlink_data['lat'],
         mavlink_data['lon'],
-        mavlink_data['yaw']
+        mavlink_data['yaw'],
+        test_mode=False,
+        sitl_mode=True
     )
     return Response(html, mimetype='text/html')
 
@@ -2477,19 +2746,25 @@ def map_embed():
 if __name__ == '__main__':
     configure_http_request_logging()
 
-    # Create a dedicated event loop for the command WebSocket
-    import threading
-    command_loop = asyncio.new_event_loop()
-    def run_command_loop():
-        asyncio.set_event_loop(command_loop)
-        command_loop.run_until_complete(receive_commands())
-    Thread(target=run_command_loop, daemon=True).start()
+    try:
+        print(f"SITL_MODE is enabled — checking {SITL_STATUS_URL} ...")
+        r = requests.get(SITL_STATUS_URL, timeout=2)
+        try:
+            j = r.json()
+        except Exception:
+            j = None
+        print(f"SITL status HTTP {r.status_code}, sample: {str(j)[:200]}")
+    except Exception as e:
+        print(f"SITL connectivity check failed: {e}")
 
-    Thread(target=lambda: asyncio.run(receive_video(0, CAM0_PORT)), daemon=True).start()
-    Thread(target=lambda: asyncio.run(receive_video(1, CAM1_PORT)), daemon=True).start()
-    Thread(target=lambda: asyncio.run(receive_video(2, CAM_HQ_PORT)), daemon=True).start()
+    import threading
+
+    Thread(target=lambda: asyncio.run(run_telemetry_ws_server()), daemon=True).start()
+    Thread(target=lambda: receive_camera_http(0, f'http://{SERVER_IP}:{CAM0_PORT}'), daemon=True).start()
+    Thread(target=lambda: receive_camera_http(1, f'http://{SERVER_IP}:{CAM1_PORT}'), daemon=True).start()
+    Thread(target=lambda: receive_camera_http(2, f'http://{SERVER_IP}:{CAM_HQ_PORT}'), daemon=True).start()
     Thread(target=lambda: asyncio.run(receive_telemetry()), daemon=True).start()
-    Thread(target=lambda: asyncio.run(receive_fiducials()), daemon=True).start()
+    print('SITL_MODE: fiducial websocket disabled.')
     Thread(target=receive_mavlink, daemon=True).start()
     Thread(target=receive_mavlink_udp_messages, daemon=True).start()
     Thread(target=status_monitor, daemon=True).start()
