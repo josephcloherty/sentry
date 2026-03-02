@@ -136,7 +136,7 @@
         <div class="banner-right">
             <div class="main-status">
                 <span id="main-status-dot" class="status-dot {{ 'on' if main_online else 'off' }}"></span>
-                <span>System Status</span>
+                <span id="main-status-label">System Status: {{ app_mode | default('MAIN') }}</span>
             </div>
             <div id="guidedModeToolbar" class="guided-mode-toolbar" aria-label="Guided mode controls">
                 <span class="guided-mode-toolbar-label">Guided Mode</span>
@@ -424,8 +424,36 @@
                 <div class="mavlink-terminal-shell">
                     <div class="mavlink-terminal-meta">
                         <span id="mavlink-terminal-endpoint">UDP endpoint: --</span>
+                        <span id="mavlink-terminal-link">Link: --</span>
+                        <span id="mavlink-terminal-count">Messages: 0</span>
+                    </div>
+                    <div class="mavlink-terminal-hud" id="mavlink-terminal-hud">
+                        <span id="mavlink-hud-armed">ARM: --</span>
+                        <span id="mavlink-hud-mode">MODE: --</span>
+                        <span id="mavlink-hud-lat">LAT: --</span>
+                        <span id="mavlink-hud-lon">LON: --</span>
+                        <span id="mavlink-hud-alt">ALT: --</span>
+                        <span id="mavlink-hud-gs">GS: --</span>
+                        <span id="mavlink-hud-as">AS: --</span>
+                        <span id="mavlink-hud-hdg">HDG: --</span>
+                        <span id="mavlink-hud-thr">THR: --</span>
+                        <span id="mavlink-hud-bat">BAT: --</span>
                     </div>
                     <pre id="mavlink-terminal-output" class="mavlink-terminal-output">Waiting for pilot messages (PreArm, EKF, GPS)...</pre>
+                    <div class="mavlink-terminal-command-row">
+                        <form id="mavlink-terminal-command-form" class="mavlink-terminal-command-form" autocomplete="off">
+                            <input
+                                id="mavlink-terminal-command-input"
+                                class="mavlink-terminal-command-input"
+                                type="text"
+                                placeholder="Type command (arm, disarm, mode GUIDED, takeoff 10, goto lat lon alt, cmdlong ... )"
+                                spellcheck="false"
+                                aria-label="MAVLink terminal command"
+                            />
+                            <button id="mavlink-terminal-command-send" class="mavlink-terminal-command-send" type="submit">Send</button>
+                        </form>
+                        <span id="mavlink-terminal-command-status" class="mavlink-terminal-command-status"></span>
+                    </div>
                 </div>
             </div>
             <div class="desc">Mission Planner-style pilot messages (PreArm, EKF, GPS, arm state)</div>
@@ -518,6 +546,10 @@
         const MAVLINK_TERMINAL_ENDPOINT = '/api/mavlink_messages';
         const MAVLINK_TERMINAL_POLL_MS = 500;
         const MAVLINK_TERMINAL_SCROLL_BOTTOM_THRESHOLD_PX = 24;
+        const MAVLINK_TERMINAL_COMMAND_ENDPOINT = '/api/mavlink_terminal_command';
+        const MAVLINK_TERMINAL_COMMAND_TIMEOUT_MS = 5000;
+        const MAVLINK_TERMINAL_COMMAND_MAX_LENGTH = 240;
+        const HEADER_ONLY_EXPAND_CARD_IDS = new Set(['mavlink_terminal', 'commands']);
         const MAP_RAIL_COMMAND_ID = 'drop_gps_pin';
         const MAP_GUIDED_MODE_LABEL = 'Guided Mode';
         const MINIMAP_ENLARGE_ACTIVE_CLASS = 'is-large';
@@ -547,6 +579,8 @@
         const HQ_TARGET_TRACKING_STATUS_ENDPOINT = '/api/hq_target_tracking_status';
         const HQ_TARGET_TRACKING_STATUS_POLL_MS = 1500;
         const HQ_CV_DEFAULT_MODE = '';
+        const APP_MODE_FALLBACK = 'MAIN';
+        const APP_MODE_ALLOWED = new Set(['MAIN', 'TEST', 'SITL']);
 
         let userSettings = mergeSettings(DEFAULT_USER_SETTINGS, SERVER_USER_SETTINGS || {});
         let cameraFunctionTabs = userSettings.camera_function_tabs || DEFAULT_CAMERA_FUNCTION_TABS;
@@ -573,6 +607,7 @@
         // ===== GLOBAL DOM ELEMENTS =====
         const bannerSlot = document.getElementById('banner-slot');
         const bannerRight = document.querySelector('#banner .banner-right');
+        const mainStatusLabel = document.getElementById('main-status-label');
         const loginModal = document.getElementById('loginModal');
         const loginForm = document.getElementById('loginForm');
         const loginError = document.getElementById('loginError');
@@ -647,6 +682,12 @@
             if (!dot) return;
             dot.classList.remove('on', 'off');
             dot.classList.add(isOnline ? 'on' : 'off');
+        }
+
+        function normalizeAppMode(modeValue) {
+            const normalized = String(modeValue || '').trim().toUpperCase();
+            if (APP_MODE_ALLOWED.has(normalized)) return normalized;
+            return APP_MODE_FALLBACK;
         }
 
         function updateLatencyValue(elementId, value, applyClass = false) {
@@ -1243,6 +1284,10 @@
                     updateStatusDot('hq-status-dot', status.hq_online);
                     updateStatusDot('map-status-dot', status.map_online);
                     updateStatusDot('mavlink-terminal-status-dot', status.mavlink_terminal_online);
+                    if (mainStatusLabel) {
+                        const appMode = normalizeAppMode(status.app_mode);
+                        mainStatusLabel.textContent = `System Status: ${appMode}`;
+                    }
                 })
                 .catch(err => console.error('Failed to fetch status:', err));
         }
@@ -1250,11 +1295,23 @@
         function renderMavlinkTerminal(data) {
             const outputEl = document.getElementById('mavlink-terminal-output');
             const endpointEl = document.getElementById('mavlink-terminal-endpoint');
+            const linkEl = document.getElementById('mavlink-terminal-link');
+            const countEl = document.getElementById('mavlink-terminal-count');
             if (!outputEl) return;
 
             if (endpointEl) {
                 const endpointText = data?.endpoint || '--';
                 endpointEl.textContent = `UDP endpoint: ${endpointText}`;
+            }
+
+            if (linkEl) {
+                const online = Boolean(data?.online);
+                linkEl.textContent = `Link: ${online ? 'ONLINE' : 'OFFLINE'}`;
+            }
+
+            if (countEl) {
+                const messageCount = Number.isFinite(Number(data?.count)) ? Number(data.count) : (Array.isArray(data?.messages) ? data.messages.length : 0);
+                countEl.textContent = `Messages: ${messageCount}`;
             }
 
             const isNearBottom = (outputEl.scrollTop + outputEl.clientHeight) >= (outputEl.scrollHeight - MAVLINK_TERMINAL_SCROLL_BOTTOM_THRESHOLD_PX);
@@ -1275,12 +1332,181 @@
             }
         }
 
+        function setMavlinkTerminalCommandStatus(text, isError = false) {
+            const statusEl = document.getElementById('mavlink-terminal-command-status');
+            if (!statusEl) return;
+            statusEl.textContent = text || '';
+            statusEl.classList.toggle('is-error', Boolean(isError));
+            statusEl.classList.toggle('is-success', Boolean(text) && !isError);
+        }
+
+        async function sendMavlinkTerminalCommand(e) {
+            if (e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+
+            const inputEl = document.getElementById('mavlink-terminal-command-input');
+            const sendBtnEl = document.getElementById('mavlink-terminal-command-send');
+            if (!inputEl || !sendBtnEl) return;
+
+            const commandText = String(inputEl.value || '').trim();
+            if (!commandText) {
+                setMavlinkTerminalCommandStatus('Enter a command', true);
+                return;
+            }
+
+            if (commandText.length > MAVLINK_TERMINAL_COMMAND_MAX_LENGTH) {
+                setMavlinkTerminalCommandStatus(`Max ${MAVLINK_TERMINAL_COMMAND_MAX_LENGTH} characters`, true);
+                return;
+            }
+
+            const prevButtonText = sendBtnEl.textContent;
+            sendBtnEl.disabled = true;
+            sendBtnEl.textContent = 'Sending...';
+            setMavlinkTerminalCommandStatus('Sending...');
+
+            try {
+                const response = await fetchWithTimeout(
+                    MAVLINK_TERMINAL_COMMAND_ENDPOINT,
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ text: commandText }),
+                    },
+                    MAVLINK_TERMINAL_COMMAND_TIMEOUT_MS,
+                );
+
+                let payload = null;
+                try {
+                    payload = await response.json();
+                } catch (_) {
+                    payload = null;
+                }
+
+                if (!response.ok || !payload?.success) {
+                    const message = payload?.message || `Command failed (${response.status})`;
+                    throw new Error(message);
+                }
+
+                const successMessage = payload?.message || 'Command sent';
+                setMavlinkTerminalCommandStatus(successMessage, false);
+                inputEl.value = '';
+                refreshMavlinkTerminal();
+            } catch (err) {
+                setMavlinkTerminalCommandStatus(err?.message || 'Failed to send command', true);
+            } finally {
+                sendBtnEl.disabled = false;
+                sendBtnEl.textContent = prevButtonText;
+                inputEl.focus();
+            }
+        }
+
+        function setupMavlinkTerminalCommandInput() {
+            const formEl = document.getElementById('mavlink-terminal-command-form');
+            const inputEl = document.getElementById('mavlink-terminal-command-input');
+
+            if (!formEl || !inputEl) return;
+
+            inputEl.maxLength = MAVLINK_TERMINAL_COMMAND_MAX_LENGTH;
+            formEl.addEventListener('submit', sendMavlinkTerminalCommand);
+            setMavlinkTerminalCommandStatus('');
+        }
+
+        function setMavlinkHudValue(id, label, value) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            const safeValue = (value === null || value === undefined || value === '') ? '--' : String(value);
+            el.textContent = `${label}: ${safeValue}`;
+        }
+
+        function toFixedOrDash(value, digits = 2) {
+            const num = Number(value);
+            if (!Number.isFinite(num)) return '--';
+            return num.toFixed(digits);
+        }
+
+        function extractLatestArmModeFromMessages(messages) {
+            let mode = null;
+            let armed = null;
+
+            if (!Array.isArray(messages)) {
+                return { mode, armed };
+            }
+
+            for (let i = messages.length - 1; i >= 0; i -= 1) {
+                const msg = messages[i];
+                if (!msg || msg.type !== 'HEARTBEAT') continue;
+
+                if (mode === null && typeof msg?.payload?.mode === 'string') {
+                    mode = msg.payload.mode;
+                }
+                if (armed === null && typeof msg?.payload?.armed === 'boolean') {
+                    armed = msg.payload.armed;
+                }
+
+                if (mode !== null && armed !== null) break;
+            }
+
+            return { mode, armed };
+        }
+
+        function renderMavlinkTelemetryHud(mavlinkData, telemetryData) {
+            const inferred = extractLatestArmModeFromMessages(mavlinkData?.messages || []);
+
+            const armedValue = (typeof telemetryData?.armed === 'boolean')
+                ? (telemetryData.armed ? 'ARMED' : 'DISARMED')
+                : (typeof inferred.armed === 'boolean' ? (inferred.armed ? 'ARMED' : 'DISARMED') : '--');
+
+            const modeValue = (typeof telemetryData?.mode === 'string' && telemetryData.mode)
+                ? telemetryData.mode
+                : (inferred.mode || '--');
+
+            setMavlinkHudValue('mavlink-hud-armed', 'ARM', armedValue);
+            setMavlinkHudValue('mavlink-hud-mode', 'MODE', modeValue);
+            setMavlinkHudValue('mavlink-hud-lat', 'LAT', toFixedOrDash(telemetryData?.lat, 7));
+            setMavlinkHudValue('mavlink-hud-lon', 'LON', toFixedOrDash(telemetryData?.lon, 7));
+            setMavlinkHudValue('mavlink-hud-alt', 'ALT', `${toFixedOrDash(telemetryData?.alt, 1)}m`);
+            setMavlinkHudValue('mavlink-hud-gs', 'GS', `${toFixedOrDash(telemetryData?.ground_speed, 1)}m/s`);
+            setMavlinkHudValue('mavlink-hud-as', 'AS', `${toFixedOrDash(telemetryData?.airspeed, 1)}m/s`);
+            setMavlinkHudValue('mavlink-hud-hdg', 'HDG', `${toFixedOrDash(telemetryData?.heading, 0)}°`);
+            setMavlinkHudValue('mavlink-hud-thr', 'THR', `${toFixedOrDash(telemetryData?.throttle, 0)}%`);
+
+            const batteryV = toFixedOrDash(telemetryData?.battery, 2);
+            const batteryPct = toFixedOrDash(telemetryData?.battery_remaining, 0);
+            setMavlinkHudValue('mavlink-hud-bat', 'BAT', `${batteryV}V ${batteryPct}%`);
+        }
+
         async function refreshMavlinkTerminal() {
             try {
-                const response = await fetchWithTimeout(MAVLINK_TERMINAL_ENDPOINT, { cache: 'no-store' }, LATENCY_SNAPSHOT_TIMEOUT_MS);
-                if (!response.ok) return;
-                const data = await response.json();
-                renderMavlinkTerminal(data);
+                const [mavlinkResult, telemetryResult] = await Promise.allSettled([
+                    fetchWithTimeout(MAVLINK_TERMINAL_ENDPOINT, { cache: 'no-store' }, LATENCY_SNAPSHOT_TIMEOUT_MS),
+                    fetchWithTimeout('/telemetry', { cache: 'no-store' }, LATENCY_SNAPSHOT_TIMEOUT_MS),
+                ]);
+
+                if (mavlinkResult.status !== 'fulfilled') {
+                    updateStatusDot('mavlink-terminal-status-dot', false);
+                    return;
+                }
+
+                const mavResponse = mavlinkResult.value;
+                if (!mavResponse.ok) {
+                    updateStatusDot('mavlink-terminal-status-dot', false);
+                    return;
+                }
+
+                const mavData = await mavResponse.json();
+                let telemetryData = null;
+
+                if (telemetryResult.status === 'fulfilled') {
+                    const telemetryResponse = telemetryResult.value;
+                    if (telemetryResponse.ok) {
+                        telemetryData = await telemetryResponse.json();
+                    }
+                }
+
+                renderMavlinkTelemetryHud(mavData, telemetryData || {});
+                renderMavlinkTerminal(mavData);
             } catch (err) {
                 updateStatusDot('mavlink-terminal-status-dot', false);
             }
@@ -1815,6 +2041,12 @@
                 label: 'Loiter',
                 type: 'toggle',
                 icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5a7 7 0 1 1-6.2 3.8" fill="none" stroke="currentColor" stroke-width="2"></path><path d="M5 5v4h4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>'
+            },
+            {
+                id: 'landing_mode',
+                label: 'Landing Mode',
+                type: 'toggle',
+                icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path><path d="M8.5 9.5 12 13l3.5-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M4 18h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path></svg>'
             }
         ];
 
@@ -1823,7 +2055,8 @@
             'auto_rth',
             'drop_gps_pin',
             'emergency',
-            'loiter'
+            'loiter',
+            'landing_mode'
         ];
 
         let commandState = {};
@@ -1847,7 +2080,7 @@
             btn.addEventListener('click', async (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                await sendCommand(def);
+                await sendCommand(def, { source: 'function_rail' });
             });
             return btn;
         }
@@ -2369,9 +2602,10 @@
             }
         }
 
-        async function sendCommand(def) {
+        async function sendCommand(def, options = {}) {
             const isPulse = def.type === 'pulse';
             const nextValue = isPulse ? true : !Boolean(commandState[def.id]);
+            const source = (typeof options?.source === 'string' && options.source) ? options.source : 'command_suite';
 
             if (def.id === 'drop_gps_pin') {
                 callMapMethod('dropGpsPin');
@@ -2395,7 +2629,7 @@
                 const res = await fetch('/api/command', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ id: def.id, value: nextValue, pulse: isPulse })
+                    body: JSON.stringify({ id: def.id, value: nextValue, pulse: isPulse, source })
                 });
                 const data = await res.json();
                 if (data.success && data.commands) {
@@ -2444,7 +2678,10 @@
 
             document.querySelectorAll('[data-card]').forEach(card => {
                 const header = card.querySelector('[data-header]');
-                card.addEventListener('click', () => {
+                if (!header) return;
+
+                const openCardExpanded = (e) => {
+                    if (e.target.closest('[data-minimize]')) return;
                     if (!card.classList.contains('expanded')) {
                         clearExpanded();
                         card.classList.add('expanded');
@@ -2463,7 +2700,14 @@
                         updateGuidedToolbarVisibility();
                         updateHqStreamSelectionState();
                     }
-                });
+                };
+
+                const cardId = card.getAttribute('data-card-id');
+                if (HEADER_ONLY_EXPAND_CARD_IDS.has(cardId)) {
+                    header.addEventListener('click', openCardExpanded);
+                } else {
+                    card.addEventListener('click', openCardExpanded);
+                }
             });
 
             document.querySelector('#banner img').addEventListener('click', e => {
@@ -2640,6 +2884,7 @@
 
             refreshMavlinkTerminal();
             startMavlinkTerminalPolling();
+            setupMavlinkTerminalCommandInput();
             
             updateStatusDots();
             startStatusPolling();

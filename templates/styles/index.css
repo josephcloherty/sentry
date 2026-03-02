@@ -83,6 +83,24 @@ body {
     --mav-terminal-text: #7ce38b;
     --mav-terminal-meta-text: #93a4bf;
     --mav-terminal-font-size: 11px;
+    --mav-terminal-meta-font-size: 10px;
+    --mav-terminal-hud-bg: rgba(15, 23, 42, 0.55);
+    --mav-terminal-hud-text: #cfe2ff;
+    --mav-terminal-hud-font-size: 10px;
+    --mav-terminal-hud-gap: 6px;
+    --mav-terminal-hud-padding: 8px 10px;
+    --mav-terminal-grid-span: 2;
+    --mav-terminal-grid-span-mobile: 1;
+    --mav-terminal-hud-columns: repeat(5, minmax(0, 1fr));
+    --mav-terminal-hud-columns-tablet: repeat(3, minmax(0, 1fr));
+    --mav-terminal-min-height: 260px;
+    --mav-terminal-max-height: 260px;
+    --mav-terminal-command-gap: 8px;
+    --mav-terminal-command-padding: 8px 10px;
+    --mav-terminal-command-input-bg: var(--mav-terminal-hud-bg);
+    --mav-terminal-command-input-text: var(--mav-terminal-hud-text);
+    --mav-terminal-command-status-success: var(--mav-terminal-text);
+    --mav-terminal-command-status-error: var(--arm-control-error);
 }
 
 /* Emergency mode - red glow effect */
@@ -827,8 +845,12 @@ body.emergency-mode::before {
     border-radius: 12px;
     overflow: hidden;
     box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
-    cursor: pointer;
+    cursor: default;
     position: relative;
+}
+
+.card:not([data-card-id="mavlink_terminal"]) {
+    cursor: pointer;
 }
 
 .card.is-hidden {
@@ -843,6 +865,7 @@ body.emergency-mode::before {
     border-bottom: 1px solid #e6eef9;
     font-size: 16px;
     font-weight: 600;
+    cursor: pointer;
 }
 
 .card-header h2 {
@@ -879,10 +902,24 @@ body.emergency-mode::before {
     aspect-ratio: 4/3;
 }
 
+.mavlink-terminal-card {
+    grid-column: span var(--mav-terminal-grid-span);
+}
+
 .media.mavlink-terminal-content {
     background: var(--mav-terminal-bg);
-    aspect-ratio: 4/3;
+    aspect-ratio: auto;
     padding: 0;
+    width: 100%;
+    min-height: var(--mav-terminal-min-height);
+    max-height: var(--mav-terminal-max-height);
+    align-items: stretch;
+    justify-content: stretch;
+}
+
+.card.expanded .media.mavlink-terminal-content {
+    height: min(calc(100vh - 140px), var(--mav-terminal-max-height));
+    max-height: var(--mav-terminal-max-height);
 }
 
 .mavlink-terminal-shell {
@@ -896,10 +933,43 @@ body.emergency-mode::before {
 .mavlink-terminal-meta {
     padding: 8px 10px;
     color: var(--mav-terminal-meta-text);
-    font-size: 10px;
+    font-size: var(--mav-terminal-meta-font-size);
     border-bottom: 1px solid rgba(148, 163, 184, 0.2);
     background: rgba(15, 23, 42, 0.7);
     font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    width: 100%;
+    gap: 8px 12px;
+}
+
+.mavlink-terminal-meta span {
+    flex: 1 1 180px;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mavlink-terminal-hud {
+    display: grid;
+    grid-template-columns: var(--mav-terminal-hud-columns);
+    gap: var(--mav-terminal-hud-gap);
+    padding: var(--mav-terminal-hud-padding);
+    border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+    background: var(--mav-terminal-hud-bg);
+    color: var(--mav-terminal-hud-text);
+    font-size: var(--mav-terminal-hud-font-size);
+    font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
+    width: 100%;
+}
+
+.mavlink-terminal-hud span {
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .mavlink-terminal-output {
@@ -913,6 +983,85 @@ body.emergency-mode::before {
     flex: 1 1 auto;
     font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
     scrollbar-width: thin;
+    min-height: 0;
+}
+
+.mavlink-terminal-command-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--mav-terminal-command-gap);
+    padding: var(--mav-terminal-command-padding);
+    border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+    background: var(--mav-terminal-hud-bg);
+    margin-top: auto;
+}
+
+.mavlink-terminal-command-form {
+    display: flex;
+    align-items: center;
+    gap: var(--mav-terminal-command-gap);
+    flex: 1 1 360px;
+    margin: 0;
+}
+
+.mavlink-terminal-command-input {
+    flex: 1 1 auto;
+    min-width: 220px;
+    height: 32px;
+    border: 1px solid var(--mav-terminal-border);
+    border-radius: 8px;
+    background: var(--mav-terminal-command-input-bg);
+    color: var(--mav-terminal-command-input-text);
+    font-size: var(--mav-terminal-font-size);
+    font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
+    padding: 0 10px;
+    outline: none;
+}
+
+.mavlink-terminal-command-input::placeholder {
+    color: var(--mav-terminal-meta-text);
+}
+
+.mavlink-terminal-command-input:focus {
+    border-color: var(--mav-terminal-text);
+}
+
+.mavlink-terminal-command-send {
+    height: 32px;
+    min-width: 72px;
+    border: 1px solid var(--mav-terminal-border);
+    border-radius: 8px;
+    background: var(--camera-tab-bg);
+    color: var(--camera-tab-color);
+    font-size: 12px;
+    font-weight: 700;
+    padding: 0 12px;
+    cursor: pointer;
+}
+
+.mavlink-terminal-command-send:disabled {
+    opacity: 0.55;
+    cursor: default;
+}
+
+.mavlink-terminal-command-status {
+    flex: 1 1 240px;
+    min-height: 16px;
+    color: var(--mav-terminal-meta-text);
+    font-size: var(--mav-terminal-meta-font-size);
+    font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mavlink-terminal-command-status.is-success {
+    color: var(--mav-terminal-command-status-success);
+}
+
+.mavlink-terminal-command-status.is-error {
+    color: var(--mav-terminal-command-status-error);
 }
 
 .media img {
@@ -1446,7 +1595,8 @@ body.emergency-mode::before {
 /* Use flex layout for map and latency cards so header stays visible
     while inner media/content sizing can be controlled per-card. */
 .card[data-card-id="map"],
-.card[data-card-id="latency"] {
+.card[data-card-id="latency"],
+.card[data-card-id="mavlink_terminal"] {
     display: flex;
     flex-direction: column;
 }
@@ -1462,8 +1612,21 @@ body.emergency-mode::before {
     max-height: none;
 }
 
+.card[data-card-id="mavlink_terminal"] .mavlink-terminal-content {
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.card[data-card-id="mavlink_terminal"] .mavlink-terminal-shell {
+    min-height: 0;
+}
+
+.card[data-card-id="mavlink_terminal"] .desc {
+    display: none;
+}
+
 .card[data-card-id="mavlink_terminal"]:not(.expanded) .mavlink-terminal-content {
-    max-height: 260px;
+    max-height: none;
     overflow: hidden;
 }
 
@@ -1653,10 +1816,18 @@ body.expanded #banner .banner-right > *:not(.main-status):not(#logoutBtn):not(#b
 
 @media (max-width: 900px) {
     .grid { grid-template-columns: repeat(2, minmax(220px, 1fr)); }
+
+    .mavlink-terminal-hud {
+        grid-template-columns: var(--mav-terminal-hud-columns-tablet);
+    }
 }
 
 @media (max-width: 640px) {
     .grid { grid-template-columns: 1fr; }
+
+    .mavlink-terminal-card {
+        grid-column: span var(--mav-terminal-grid-span-mobile);
+    }
 }
 
 /* ===== LATENCY CARD STYLES ===== */

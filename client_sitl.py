@@ -37,8 +37,14 @@ except Exception:
     process_fiducial_frame = None
 
 # ===== Configuration =====
-STATUS_UPDATE_INTERVAL_MS = 2000
-SITL_POLL_INTERVAL_MS = 200
+APP_RUNTIME_MODE = 'SITL'
+STATUS_UPDATE_INTERVAL_MS = 100
+SITL_POLL_INTERVAL_MS = 100
+SITL_TELEMETRY_STREAM_ENABLED = True
+SITL_TELEMETRY_STREAM_URL = 'http://localhost:5001/telemetry/stream'
+SITL_TELEMETRY_STREAM_CONNECT_TIMEOUT_SEC = 2.0
+SITL_TELEMETRY_STREAM_READ_TIMEOUT_SEC = 30.0
+SITL_PARAMS_REFRESH_SEC = 10.0
 STATUS_TIMEOUT = 3.0
 LATENCY_SAMPLE_SIZE = 200
 TELEMETRY_RECONNECT_DELAY_SEC = 2.0
@@ -49,6 +55,8 @@ FIDUCIAL_RECONNECT_DELAY_SEC = 2.0
 COMMAND_RECONNECT_DELAY_SEC = 2.0
 TELEMETRY_WS_RELAY_HOST = '0.0.0.0'
 TELEMETRY_WS_RELAY_PORT = 8764
+TELEMETRY_WS_RELAY_RESTART_DELAY_SEC = 1.0
+TELEMETRY_WS_RELAY_ERROR_LOG_COOLDOWN_SEC = 3.0
 FIDUCIAL_OVERLAY_ENABLED = True
 FIDUCIAL_MIN_CONFIDENCE = 0.2
 FIDUCIAL_STALE_TIMEOUT_SEC = 2.0
@@ -142,7 +150,15 @@ MAVLINK_MONITOR_RECONNECT_DELAY_SEC = 2.0
 MAVLINK_MONITOR_RECV_TIMEOUT_SEC = 1.0
 MAVLINK_MONITOR_SOURCE_SYSTEM = 255
 MAVLINK_MONITOR_SOURCE_COMPONENT = 0
-MAVLINK_MONITOR_ALLOWED_MESSAGE_TYPES = {'STATUSTEXT'}
+MAVLINK_MONITOR_ALLOWED_MESSAGE_TYPES = {
+    'STATUSTEXT',
+    'COMMAND_ACK',
+    'HEARTBEAT',
+}
+MAVLINK_MONITOR_CONSOLE_STYLE_LINES = True
+MAVLINK_MONITOR_INCLUDE_TIMESTAMPS = False
+MAVLINK_MONITOR_HEARTBEAT_LOG_CHANGES_ONLY = True
+MAVLINK_MONITOR_COMMAND_ACK_INCLUDE_PROGRESS = True
 MAVLINK_MONITOR_STATUSTEXT_SEVERITY_LABELS = {
     0: 'EMERGENCY',
     1: 'ALERT',
@@ -171,6 +187,13 @@ FLIGHT_MODE_IDS = {mode['id'] for mode in FLIGHT_MODE_OPTIONS}
 SITL_MODE = True
 SITL_STATUS_URL = 'http://localhost:5001/status'
 SITL_PARAMS_URL = 'http://localhost:5001/params'
+SITL_MAVLINK_MESSAGES_PROXY_ENABLED = True
+SITL_MAVLINK_MESSAGES_URL = 'http://localhost:5001/mavlink_messages'
+SITL_MAVLINK_MESSAGES_TIMEOUT_SEC = 1.0
+SITL_COMMAND_URL = 'http://localhost:5001/command'
+SITL_COMMAND_TIMEOUT_SEC = 3.0
+MAVLINK_TERMINAL_COMMAND_MAX_LENGTH = 240
+MAVLINK_TERMINAL_COMMAND_MIN_INTERVAL_SEC = 0.10
 SITL_TELEMETRY_COORD_SCALE = 1e7
 SITL_TELEMETRY_LAT_KEYS = ('lat', 'latitude')
 SITL_TELEMETRY_LON_KEYS = ('lon', 'lng', 'longitude')
@@ -228,6 +251,23 @@ DEFAULT_SETTINGS = {
 ALLOWED_TILE_IDS = {'cam0', 'cam1', 'hq', 'map', 'latency', 'mavlink_terminal', 'commands'}
 ALLOWED_COMMAND_IDS = {
     'go_dark', 'auto_rth', 'drop_gps_pin', 'emergency', 'loiter', 'landing_mode'
+}
+SENTRY_COMMAND_TERMINAL_TEXT_BY_ID = {
+    'auto_rth': 'rtl',
+    'emergency': 'land',
+    'loiter': 'loiter',
+    'landing_mode': 'land',
+}
+SENTRY_COMMAND_TERMINAL_SEND_ON_TRUE_ONLY = {
+    'auto_rth',
+    'emergency',
+    'loiter',
+    'landing_mode',
+}
+FUNCTION_RAIL_NO_FORWARD_COMMAND_IDS = {
+    'emergency',
+    'go_dark',
+    'drop_gps_pin',
 }
 
 # ===== Global State =====
@@ -359,12 +399,15 @@ telemetry_subscribers_lock = Lock()
 telemetry_ws_clients = set()
 telemetry_ws_clients_lock = Lock()
 telemetry_ws_loop = None
+telemetry_ws_last_error_log_ts = 0.0
 
 # MAVLink message monitor state (raw decoded messages from Pixhawk UDP endpoint)
 mavlink_message_log = deque(maxlen=MAVLINK_MONITOR_MESSAGE_BUFFER_SIZE)
 mavlink_message_lock = Lock()
 mavlink_monitor_online = False
 last_mavlink_message_time = 0
+mavlink_last_mode_name = None
+mavlink_last_armed_state = None
 
 # Command state (mirrors server-side boolean flags)
 command_state = {
@@ -377,6 +420,7 @@ command_state = {
 }
 command_ws = None  # Persistent WebSocket to server for commands
 command_loop = None
+last_terminal_command_time = 0.0
 
 # Session + settings state
 session_tokens = {}
@@ -1826,42 +1870,99 @@ async def receive_video(cam_id, port):
 
 
 async def receive_telemetry():
-    """Connect to telemetry WebSocket and update mavlink_data in real-time."""
+    """Receive SITL telemetry with packet-driven stream first, polling fallback."""
     global mavlink_data, telemetry_latency_ms, last_mav_time
-    params_fetch_counter = 0
+
+    last_params_fetch_ts = 0.0
+
+    def _refresh_params_if_due(force=False):
+        nonlocal last_params_fetch_ts
+        now = time.time()
+        if (not force) and (now - last_params_fetch_ts) < SITL_PARAMS_REFRESH_SEC:
+            return
+        try:
+            resp_params = requests.get(SITL_PARAMS_URL, timeout=2)
+            params_json = resp_params.json()
+            if isinstance(params_json, dict):
+                vehicle_params.update(params_json)
+                last_params_fetch_ts = now
+        except Exception:
+            pass
+
+    def _apply_payload(payload):
+        global telemetry_latency_ms, last_mav_time
+        current_time = time.time()
+        if not isinstance(payload, dict):
+            return
+
+        server_time = payload.get('server_time', payload.get('timestamp', current_time))
+        try:
+            telemetry_latency_ms = (current_time - float(server_time)) * 1000
+        except Exception:
+            telemetry_latency_ms = 0
+
+        has_direct_coords = (
+            ('lat' in payload and 'lon' in payload) or
+            ('sitl_lat' in payload and 'sitl_lon' in payload)
+        )
+
+        if has_direct_coords:
+            mapped = payload.copy()
+            if 'lat' not in mapped and 'sitl_lat' in mapped:
+                mapped['lat'] = mapped.get('sitl_lat')
+            if 'lon' not in mapped and 'sitl_lon' in mapped:
+                mapped['lon'] = mapped.get('sitl_lon')
+            mapped['timestamp'] = current_time
+            mapped['server_latency_ms'] = telemetry_latency_ms
+        else:
+            mapped = get_sitl_telemetry_dict(payload, current_time, telemetry_latency_ms)
+
+        mavlink_data.update(mapped)
+        last_mav_time = current_time
+        broadcast_telemetry()
+
+    def _consume_stream_once():
+        _refresh_params_if_due(force=True)
+        with requests.get(
+            SITL_TELEMETRY_STREAM_URL,
+            stream=True,
+            timeout=(SITL_TELEMETRY_STREAM_CONNECT_TIMEOUT_SEC, SITL_TELEMETRY_STREAM_READ_TIMEOUT_SEC)
+        ) as resp:
+            resp.raise_for_status()
+            print(f"Connected to SITL telemetry stream: {SITL_TELEMETRY_STREAM_URL}")
+
+            for raw_line in resp.iter_lines(decode_unicode=True):
+                if raw_line is None:
+                    continue
+                line = raw_line.strip()
+                if not line or line.startswith(':'):
+                    continue
+                if not line.startswith('data:'):
+                    continue
+
+                payload_raw = line[5:].strip()
+                if not payload_raw:
+                    continue
+
+                try:
+                    payload = json.loads(payload_raw)
+                except Exception:
+                    continue
+
+                _apply_payload(payload)
+                _refresh_params_if_due(force=False)
+
     while True:
         try:
+            if SITL_TELEMETRY_STREAM_ENABLED:
+                await asyncio.to_thread(_consume_stream_once)
+                continue
+
             resp = await asyncio.to_thread(requests.get, SITL_STATUS_URL, timeout=1)
             if resp.status_code == 200:
                 telemetry_msg = resp.json()
-                current_time = time.time()
-                if isinstance(telemetry_msg, dict):
-                    server_time = telemetry_msg.get('server_time', telemetry_msg.get('timestamp', current_time))
-                    try:
-                        telemetry_latency_ms = (current_time - float(server_time)) * 1000
-                    except Exception:
-                        telemetry_latency_ms = 0
-                    mapped = get_sitl_telemetry_dict(telemetry_msg, current_time, telemetry_latency_ms)
-                    try:
-                        print(f"SITL mapped telemetry: lat={mapped.get('lat')} lon={mapped.get('lon')} yaw={mapped.get('yaw')}")
-                    except Exception:
-                        pass
-                    mavlink_data.update(mapped)
-                last_mav_time = current_time
-                broadcast_telemetry()
-
-            params_fetch_counter += 1
-            if params_fetch_counter >= 50:
-                params_fetch_counter = 0
-                try:
-                    resp_params = await asyncio.to_thread(
-                        requests.get, SITL_PARAMS_URL, timeout=2
-                    )
-                    params_json = resp_params.json()
-                    if isinstance(params_json, dict):
-                        vehicle_params.update(params_json)
-                except Exception:
-                    pass
+                _apply_payload(telemetry_msg)
+            await asyncio.to_thread(_refresh_params_if_due, False)
 
         except Exception as e:
             print(f"SITL telemetry error: {e}")
@@ -1921,21 +2022,58 @@ def receive_mavlink():
 
 
 def _format_mavlink_message(msg):
+    global mavlink_last_mode_name, mavlink_last_armed_state
+
     msg_type = 'UNKNOWN'
     message_dict = {}
 
     try:
         msg_type = str(msg.get_type())
     except Exception:
-        return None
+        return []
 
     if msg_type not in MAVLINK_MONITOR_ALLOWED_MESSAGE_TYPES:
-        return None
+        return []
 
     try:
         message_dict = msg.to_dict() or {}
     except Exception:
         message_dict = {}
+
+    def _clean_enum_name(enum_name, prefix):
+        cleaned = str(enum_name or '').strip()
+        if cleaned.startswith(prefix):
+            return cleaned[len(prefix):]
+        return cleaned or 'UNKNOWN'
+
+    def _enum_label(enum_group, value, prefix, fallback_prefix):
+        try:
+            enum_value = int(value)
+        except Exception:
+            return f'{fallback_prefix}_{value}'
+
+        try:
+            if mavutil is not None:
+                enum_group_map = getattr(getattr(mavutil, 'mavlink', None), 'enums', {}).get(enum_group, {})
+                enum_entry = enum_group_map.get(enum_value)
+                if enum_entry is not None:
+                    return _clean_enum_name(getattr(enum_entry, 'name', ''), prefix)
+        except Exception:
+            pass
+
+        return f'{fallback_prefix}_{enum_value}'
+
+    def _build_line(line_text, payload):
+        timestamp = time.time()
+        line = str(line_text)
+        if MAVLINK_MONITOR_INCLUDE_TIMESTAMPS:
+            line = f"[{time.strftime('%H:%M:%S', time.localtime(timestamp))}] {line}"
+        return {
+            'timestamp': timestamp,
+            'type': msg_type,
+            'line': line,
+            'payload': payload,
+        }
 
     if msg_type == 'STATUSTEXT':
         severity = int(message_dict.get('severity', 6))
@@ -1946,22 +2084,84 @@ def _format_mavlink_message(msg):
             raw_text = raw_text.decode('utf-8', errors='replace')
         text = str(raw_text).replace('\x00', '').strip()
         if not text:
-            return None
+            return []
 
-        timestamp = time.time()
-        line = f"[{time.strftime('%H:%M:%S', time.localtime(timestamp))}] {severity_label}: {text}"
-        return {
-            'timestamp': timestamp,
-            'type': msg_type,
-            'line': line,
-            'payload': {
-                'severity': severity,
-                'severity_label': severity_label,
-                'text': text,
-            },
-        }
+        if MAVLINK_MONITOR_CONSOLE_STYLE_LINES:
+            line = text if text.startswith('AP:') else f'AP: {text}'
+        else:
+            line = f'{severity_label}: {text}'
 
-    return None
+        return [_build_line(line, {
+            'severity': severity,
+            'severity_label': severity_label,
+            'text': text,
+        })]
+
+    if msg_type == 'COMMAND_ACK':
+        command = int(message_dict.get('command', -1))
+        result = int(message_dict.get('result', -1))
+        progress = message_dict.get('progress')
+
+        command_name = _enum_label('MAV_CMD', command, 'MAV_CMD_', 'CMD')
+        result_name = _enum_label('MAV_RESULT', result, 'MAV_RESULT_', 'RESULT')
+
+        line = f'Got COMMAND_ACK: {command_name}: {result_name}'
+
+        try:
+            progress_value = int(progress)
+            if MAVLINK_MONITOR_COMMAND_ACK_INCLUDE_PROGRESS and 0 <= progress_value <= 100:
+                line = f'{line} ({progress_value}%)'
+        except Exception:
+            pass
+
+        return [_build_line(line, {
+            'command': command,
+            'command_name': command_name,
+            'result': result,
+            'result_name': result_name,
+            'progress': progress,
+        })]
+
+    if msg_type == 'HEARTBEAT':
+        entries = []
+        base_mode = int(message_dict.get('base_mode', 0) or 0)
+        custom_mode = int(message_dict.get('custom_mode', 0) or 0)
+
+        armed_flag = 128
+        try:
+            armed_flag = int(getattr(getattr(mavutil, 'mavlink', None), 'MAV_MODE_FLAG_SAFETY_ARMED', 128))
+        except Exception:
+            armed_flag = 128
+
+        armed = bool(base_mode & armed_flag)
+
+        mode_name = ''
+        try:
+            mode_name = str(mavutil.mode_string_v10(msg)).strip() if mavutil is not None else ''
+        except Exception:
+            mode_name = ''
+        if not mode_name:
+            mode_name = f'CUSTOM_{custom_mode}'
+
+        mode_changed = (mavlink_last_mode_name != mode_name)
+        armed_changed = (mavlink_last_armed_state != armed)
+
+        if (not MAVLINK_MONITOR_HEARTBEAT_LOG_CHANGES_ONLY) or mode_changed:
+            entries.append(_build_line(f'Mode {mode_name}', {
+                'mode': mode_name,
+                'custom_mode': custom_mode,
+            }))
+
+        if (not MAVLINK_MONITOR_HEARTBEAT_LOG_CHANGES_ONLY) or armed_changed:
+            entries.append(_build_line('ARMED' if armed else 'DISARMED', {
+                'armed': armed,
+            }))
+
+        mavlink_last_mode_name = mode_name
+        mavlink_last_armed_state = armed
+        return entries
+
+    return []
 
 
 def _append_mavlink_message_entry(entry):
@@ -2012,8 +2212,8 @@ def receive_mavlink_udp_messages():
                 if msg_type in ('BAD_DATA',):
                     continue
 
-                entry = _format_mavlink_message(msg)
-                if entry is not None:
+                entries = _format_mavlink_message(msg)
+                for entry in entries:
                     _append_mavlink_message_entry(entry)
         except Exception:
             mavlink_monitor_online = False
@@ -2176,6 +2376,7 @@ def index():
     effective_test_mode = False
     return render_template(
         'index.html',
+        app_mode=APP_RUNTIME_MODE,
         main_online=is_main_online(),
         cam0_online=cam0_online,
         cam1_online=cam1_online,
@@ -2223,6 +2424,7 @@ def telemetry():
 def api_status():
     update_connection_status()
     return jsonify({
+        'app_mode': APP_RUNTIME_MODE,
         'main_online': is_main_online(),
         'cam0_online': cam0_online,
         'cam1_online': cam1_online,
@@ -2268,6 +2470,25 @@ async def run_telemetry_ws_server():
     async with websockets.serve(telemetry_ws_handler, TELEMETRY_WS_RELAY_HOST, TELEMETRY_WS_RELAY_PORT):
         print(f'Telemetry WS relay listening on ws://localhost:{TELEMETRY_WS_RELAY_PORT}')
         await asyncio.Future()
+
+
+def run_telemetry_ws_server_forever():
+    global telemetry_ws_loop, telemetry_ws_last_error_log_ts
+
+    while True:
+        try:
+            asyncio.run(run_telemetry_ws_server())
+        except Exception as e:
+            now = time.time()
+            if (now - telemetry_ws_last_error_log_ts) >= TELEMETRY_WS_RELAY_ERROR_LOG_COOLDOWN_SEC:
+                print(f'Telemetry WS relay crashed: {e} (restarting)')
+                telemetry_ws_last_error_log_ts = now
+        finally:
+            telemetry_ws_loop = None
+            with telemetry_ws_clients_lock:
+                telemetry_ws_clients.clear()
+
+        time.sleep(TELEMETRY_WS_RELAY_RESTART_DELAY_SEC)
 
 
 def _broadcast_telemetry_ws(payload):
@@ -2358,6 +2579,24 @@ def broadcast_telemetry():
 
 @app.route('/api/mavlink_messages')
 def api_mavlink_messages():
+    if SITL_MODE and SITL_MAVLINK_MESSAGES_PROXY_ENABLED:
+        try:
+            response = requests.get(
+                SITL_MAVLINK_MESSAGES_URL,
+                timeout=SITL_MAVLINK_MESSAGES_TIMEOUT_SEC,
+            )
+            if response.ok:
+                payload = response.json()
+                if isinstance(payload, dict):
+                    payload.setdefault('server_time', time.time())
+                    payload.setdefault('endpoint', SITL_MAVLINK_MESSAGES_URL)
+                    payload.setdefault('messages', [])
+                    payload.setdefault('count', len(payload.get('messages', [])))
+                    payload.setdefault('online', False)
+                    return jsonify(payload)
+        except Exception:
+            pass
+
     with mavlink_message_lock:
         messages = list(mavlink_message_log)
     return jsonify({
@@ -2481,37 +2720,134 @@ def api_commands():
     return jsonify(command_state)
 
 
-def _forward_command_ws_message(msg, *, require_link=False, fail_message='Failed to send command'):
+def _post_sitl_command(payload, *, require_link=False, fail_message='Failed to send command'):
     try:
-        base = 'http://localhost:5001'
-        payload = None
+        response = requests.post(SITL_COMMAND_URL, json=payload, timeout=SITL_COMMAND_TIMEOUT_SEC)
 
-        t = msg.get('type')
-        if t == 'arm':
-            armed = bool(msg.get('armed'))
-            payload = {'command': 'arm' if armed else 'disarm'}
-        elif t == 'mode':
-            payload = {'command': 'mode', 'mode': msg.get('mode')}
-        elif t in ('toggle', 'pulse'):
-            payload = {'command': msg.get('id'), 'value': msg.get('value')}
-        elif t == 'guided_goto':
-            payload = {'command': 'guided_goto', 'lat': msg.get('lat'), 'lon': msg.get('lon')}
-            if 'alt' in msg and msg.get('alt') is not None:
-                payload['altitude'] = msg.get('alt')
-        else:
-            payload = msg.copy()
+        response_payload = None
+        try:
+            response_payload = response.json()
+        except Exception:
+            response_payload = None
 
-        resp = requests.post(f"{base}/command", json=payload, timeout=3)
-        if resp.status_code >= 400:
+        if response.status_code >= 400:
+            error_message = None
+            if isinstance(response_payload, dict):
+                error_message = response_payload.get('error') or response_payload.get('message')
+
             if require_link:
-                return False, f'SITL command failed ({resp.status_code})', resp.status_code
-            print(f'[Flask] SITL command returned {resp.status_code}: {resp.text}')
-        return True, None, None
+                return False, error_message or f'SITL command failed ({response.status_code})', response.status_code, response_payload
+
+            print(f'[Flask] SITL command returned {response.status_code}: {response.text}')
+
+        return True, None, None, response_payload
     except Exception as e:
         print(f'[Flask] Failed to forward command to SITL HTTP API: {e}')
         if require_link:
-            return False, 'Failed to send command to SITL', 500
-        return True, None, None
+            return False, fail_message, 500, None
+        return True, None, None, None
+
+
+def _forward_command_ws_message(msg, *, require_link=False, fail_message='Failed to send command'):
+    payload = None
+
+    t = msg.get('type')
+    if t == 'arm':
+        armed = bool(msg.get('armed'))
+        payload = {'command': 'arm' if armed else 'disarm'}
+    elif t == 'mode':
+        payload = {'command': 'mode', 'mode': msg.get('mode')}
+    elif t in ('toggle', 'pulse'):
+        command_id = str(msg.get('id', '')).strip()
+        command_value = bool(msg.get('value'))
+        command_source = str(msg.get('source', '')).strip().lower()
+
+        if command_source == 'function_rail' and command_id in FUNCTION_RAIL_NO_FORWARD_COMMAND_IDS:
+            return True, None, None
+
+        terminal_text = SENTRY_COMMAND_TERMINAL_TEXT_BY_ID.get(command_id)
+
+        if terminal_text:
+            if (
+                t == 'toggle'
+                and command_id in SENTRY_COMMAND_TERMINAL_SEND_ON_TRUE_ONLY
+                and not command_value
+            ):
+                return True, None, None
+
+            payload = {'command': 'terminal', 'text': terminal_text}
+        else:
+            payload = {'command': command_id, 'value': msg.get('value')}
+    elif t == 'guided_goto':
+        payload = {'command': 'guided_goto', 'lat': msg.get('lat'), 'lon': msg.get('lon')}
+        if 'alt' in msg and msg.get('alt') is not None:
+            payload['altitude'] = msg.get('alt')
+    elif t == 'terminal':
+        payload = {'command': 'terminal', 'text': msg.get('text')}
+    else:
+        payload = msg.copy()
+
+    ok, error_message, status_code, _ = _post_sitl_command(
+        payload,
+        require_link=require_link,
+        fail_message=fail_message,
+    )
+    return ok, error_message, status_code
+
+
+@app.route('/api/mavlink_terminal_command', methods=['POST'])
+def api_mavlink_terminal_command():
+    """Forward MAVLink terminal text commands to SITL command endpoint."""
+    global last_terminal_command_time
+
+    data = request.json or {}
+    text = data.get('text')
+
+    if not isinstance(text, str):
+        return jsonify({'success': False, 'message': 'Command text is required'}), 400
+
+    command_text = text.strip()
+    if not command_text:
+        return jsonify({'success': False, 'message': 'Command text is empty'}), 400
+
+    if len(command_text) > MAVLINK_TERMINAL_COMMAND_MAX_LENGTH:
+        return jsonify({
+            'success': False,
+            'message': f'Command too long (max {MAVLINK_TERMINAL_COMMAND_MAX_LENGTH} chars)'
+        }), 400
+
+    now = time.time()
+    if (now - last_terminal_command_time) < MAVLINK_TERMINAL_COMMAND_MIN_INTERVAL_SEC:
+        return jsonify({'success': False, 'message': 'Command rate-limited'}), 429
+
+    payload = {
+        'command': 'terminal',
+        'text': command_text,
+    }
+    ok, error_message, status_code, response_payload = _post_sitl_command(
+        payload,
+        require_link=True,
+        fail_message='Failed to send MAVLink terminal command',
+    )
+    if not ok:
+        return jsonify({'success': False, 'message': error_message}), status_code
+
+    last_terminal_command_time = now
+
+    response_message = 'Command sent'
+    if isinstance(response_payload, dict):
+        for key in ('status', 'message', 'result'):
+            value = response_payload.get(key)
+            if isinstance(value, str) and value.strip():
+                response_message = value.strip()
+                break
+
+    return jsonify({
+        'success': True,
+        'command': command_text,
+        'message': response_message,
+        'response': response_payload if isinstance(response_payload, dict) else None,
+    })
 
 
 @app.route('/api/command', methods=['POST'])
@@ -2521,6 +2857,7 @@ def api_command_toggle():
     cmd_id = data.get('id')
     value = data.get('value')
     is_pulse = data.get('pulse', False)
+    source = str(data.get('source', '')).strip().lower()
     
     if is_pulse:
         print(f"[Flask] Received pulse command: '{cmd_id}'")
@@ -2534,7 +2871,7 @@ def api_command_toggle():
     if not is_pulse:
         command_state[cmd_id] = bool(value)
     
-    msg = {'type': 'pulse' if is_pulse else 'toggle', 'id': cmd_id, 'value': bool(value)}
+    msg = {'type': 'pulse' if is_pulse else 'toggle', 'id': cmd_id, 'value': bool(value), 'source': source}
     print(f"[Flask] Forwarding to server: {msg}")
     _forward_command_ws_message(msg, require_link=False)
     return jsonify({'success': True, 'commands': command_state})
@@ -2759,7 +3096,7 @@ if __name__ == '__main__':
 
     import threading
 
-    Thread(target=lambda: asyncio.run(run_telemetry_ws_server()), daemon=True).start()
+    Thread(target=run_telemetry_ws_server_forever, daemon=True).start()
     Thread(target=lambda: receive_camera_http(0, f'http://{SERVER_IP}:{CAM0_PORT}'), daemon=True).start()
     Thread(target=lambda: receive_camera_http(1, f'http://{SERVER_IP}:{CAM1_PORT}'), daemon=True).start()
     Thread(target=lambda: receive_camera_http(2, f'http://{SERVER_IP}:{CAM_HQ_PORT}'), daemon=True).start()

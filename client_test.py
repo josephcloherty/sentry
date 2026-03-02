@@ -37,6 +37,7 @@ except Exception:
     process_fiducial_frame = None
 
 # ===== Configuration =====
+APP_RUNTIME_MODE = 'TEST'
 STATUS_UPDATE_INTERVAL_MS = 2000
 SITL_POLL_INTERVAL_MS = 200
 STATUS_TIMEOUT = 3.0
@@ -140,6 +141,9 @@ MAVLINK_MONITOR_RECONNECT_DELAY_SEC = 2.0
 MAVLINK_MONITOR_RECV_TIMEOUT_SEC = 1.0
 MAVLINK_MONITOR_SOURCE_SYSTEM = 255
 MAVLINK_MONITOR_SOURCE_COMPONENT = 0
+MAVLINK_MESSAGES_PROXY_ENABLED = True
+MAVLINK_MESSAGES_PROXY_URL = 'http://localhost:5001/mavlink_messages'
+MAVLINK_MESSAGES_PROXY_TIMEOUT_SEC = 1.0
 MAVLINK_MONITOR_ALLOWED_MESSAGE_TYPES = {'STATUSTEXT'}
 MAVLINK_MONITOR_STATUSTEXT_SEVERITY_LABELS = {
     0: 'EMERGENCY',
@@ -1995,6 +1999,7 @@ def index():
     effective_test_mode = bool(user_settings.get('test_mode')) or TEST_MODE
     return render_template(
         'index.html',
+        app_mode=APP_RUNTIME_MODE,
         main_online=is_main_online(),
         cam0_online=cam0_online,
         cam1_online=cam1_online,
@@ -2041,6 +2046,7 @@ def telemetry():
 def api_status():
     update_connection_status()
     return jsonify({
+        'app_mode': APP_RUNTIME_MODE,
         'main_online': is_main_online(),
         'cam0_online': cam0_online,
         'cam1_online': cam1_online,
@@ -2122,6 +2128,24 @@ def broadcast_telemetry():
 
 @app.route('/api/mavlink_messages')
 def api_mavlink_messages():
+    if MAVLINK_MESSAGES_PROXY_ENABLED:
+        try:
+            response = requests.get(
+                MAVLINK_MESSAGES_PROXY_URL,
+                timeout=MAVLINK_MESSAGES_PROXY_TIMEOUT_SEC,
+            )
+            if response.ok:
+                payload = response.json()
+                if isinstance(payload, dict):
+                    payload.setdefault('server_time', time.time())
+                    payload.setdefault('endpoint', MAVLINK_MESSAGES_PROXY_URL)
+                    payload.setdefault('messages', [])
+                    payload.setdefault('count', len(payload.get('messages', [])))
+                    payload.setdefault('online', False)
+                    return jsonify(payload)
+        except Exception:
+            pass
+
     with mavlink_message_lock:
         messages = list(mavlink_message_log)
     return jsonify({
