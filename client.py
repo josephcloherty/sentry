@@ -132,6 +132,14 @@ GUIDED_GOTO_LON_MIN = -180.0
 GUIDED_GOTO_LON_MAX = 180.0
 GUIDED_GOTO_MIN_ALT_M = 1.0
 GUIDED_GOTO_MAX_ALT_M = 500.0
+GUIDED_MODE_PARAM_NAME = 'Q_GUIDED_MODE'
+GUIDED_MODE_FIXED_WING = 'fixed_wing'
+GUIDED_MODE_VTOL = 'vtol'
+GUIDED_MODE_DEFAULT = GUIDED_MODE_VTOL
+GUIDED_MODE_TO_PARAM_VALUE = {
+    GUIDED_MODE_FIXED_WING: 0.0,
+    GUIDED_MODE_VTOL: 1.0,
+}
 HTTP_REQUEST_LOG_FILENAME = 'client_log'
 HTTP_REQUEST_LOG_ENCODING = 'utf-8'
 HTTP_REQUEST_LOG_LEVEL = logging.INFO
@@ -181,9 +189,9 @@ VALID_PASSWORD = 'sentry'
 # Camera function tabs (shown on right side of camera cards)
 # Each entry must match a command id in templates/index.html COMMAND_DEFS
 DEFAULT_CAMERA_FUNCTION_TABS = {
-    'cam0': ['go_dark', 'drop_gps_pin', 'emergency'],
-    'cam1': ['go_dark', 'loiter', 'emergency'],
-    'hq': ['loiter', 'drop_gps_pin', 'emergency']
+    'cam0': ['guided_mode_switch', 'go_dark', 'drop_gps_pin', 'emergency'],
+    'cam1': ['guided_mode_switch', 'go_dark', 'loiter', 'emergency'],
+    'hq': ['guided_mode_switch', 'loiter', 'drop_gps_pin', 'emergency']
 }
 
 # Home screen tile ordering
@@ -208,7 +216,7 @@ DEFAULT_SETTINGS = {
 
 ALLOWED_TILE_IDS = {'cam0', 'cam1', 'hq', 'map', 'latency', 'mavlink_terminal', 'commands'}
 ALLOWED_COMMAND_IDS = {
-    'go_dark', 'auto_rth', 'drop_gps_pin', 'emergency', 'loiter', 'landing_mode'
+    'guided_mode_switch', 'go_dark', 'auto_rth', 'drop_gps_pin', 'emergency', 'loiter', 'landing_mode'
 }
 
 # ===== Global State =====
@@ -353,6 +361,7 @@ command_state = {
 }
 command_ws = None  # Persistent WebSocket to server for commands
 command_loop = None
+guided_mode_selected = GUIDED_MODE_DEFAULT
 
 # Session + settings state
 session_tokens = {}
@@ -2336,6 +2345,47 @@ def api_flight_mode():
     return jsonify({'success': True, 'mode': mode})
 
 
+@app.route('/api/guided_mode', methods=['GET', 'POST'])
+def api_guided_mode():
+    """Get/set guided command mode and corresponding Q_GUIDED_MODE parameter."""
+    global guided_mode_selected
+    if request.method == 'GET':
+        return jsonify({
+            'success': True,
+            'guided_mode': guided_mode_selected,
+            'q_guided_mode': GUIDED_MODE_TO_PARAM_VALUE[guided_mode_selected],
+            'param_name': GUIDED_MODE_PARAM_NAME,
+        })
+
+    data = request.json or {}
+    guided_mode = str(data.get('guided_mode', '')).strip().lower()
+    if guided_mode not in GUIDED_MODE_TO_PARAM_VALUE:
+        return jsonify({'success': False, 'message': 'Invalid guided mode'}), 400
+
+    msg = {
+        'type': 'guided_mode',
+        'guided_mode': guided_mode,
+        'q_guided_mode': GUIDED_MODE_TO_PARAM_VALUE[guided_mode],
+        'param_name': GUIDED_MODE_PARAM_NAME,
+    }
+    ok, error_message, status_code = _forward_command_ws_message(
+        msg,
+        require_link=True,
+        fail_message='Failed to set guided mode parameter'
+    )
+    if not ok:
+        return jsonify({'success': False, 'message': error_message}), status_code
+
+    guided_mode_selected = guided_mode
+
+    return jsonify({
+        'success': True,
+        'guided_mode': guided_mode,
+        'q_guided_mode': GUIDED_MODE_TO_PARAM_VALUE[guided_mode],
+        'param_name': GUIDED_MODE_PARAM_NAME,
+    })
+
+
 @app.route('/api/guided_goto', methods=['POST'])
 def api_guided_goto():
     """Forward a guided goto request (lat/lon[/alt]) to the server command socket."""
@@ -2360,10 +2410,15 @@ def api_guided_goto():
             return jsonify({'success': False, 'message': 'Invalid altitude'}), 400
         alt = max(GUIDED_GOTO_MIN_ALT_M, min(GUIDED_GOTO_MAX_ALT_M, alt))
 
+    guided_mode = str(data.get('guided_mode', GUIDED_MODE_DEFAULT)).strip().lower()
+    if guided_mode not in GUIDED_MODE_TO_PARAM_VALUE:
+        return jsonify({'success': False, 'message': 'Invalid guided mode'}), 400
+
     msg = {
         'type': 'guided_goto',
         'lat': lat,
         'lon': lon,
+        'guided_mode': guided_mode,
     }
     if alt is not None:
         msg['alt'] = alt
@@ -2376,7 +2431,7 @@ def api_guided_goto():
     if not ok:
         return jsonify({'success': False, 'message': error_message}), status_code
 
-    return jsonify({'success': True, 'lat': lat, 'lon': lon, 'alt': alt})
+    return jsonify({'success': True, 'lat': lat, 'lon': lon, 'alt': alt, 'guided_mode': guided_mode})
 
 
 @app.route('/api/snapshot_cam0')

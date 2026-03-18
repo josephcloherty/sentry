@@ -47,6 +47,17 @@ body {
     --camera-tab-active-color: #ffffff;
     --camera-tab-shadow: 0 6px 18px rgba(30, 64, 175, 0.25);
 
+    /* HQ fixed-angle rail variables */
+    --hq-angle-rail-gap: 10px;
+    --hq-angle-rail-bottom: 24px;
+    --hq-angle-btn-min-width: 88px;
+    --hq-angle-btn-height: 38px;
+    --hq-angle-btn-bg: var(--camera-tab-bg);
+    --hq-angle-btn-color: var(--camera-tab-color);
+    --hq-angle-btn-active-bg: var(--camera-tab-active-bg);
+    --hq-angle-btn-active-color: var(--camera-tab-active-color);
+    --hq-angle-btn-shadow: var(--camera-tab-shadow);
+
     /* Settings drag-and-drop variables */
     --settings-drag-bg: #f8fafc;
     --settings-drag-border: #e2e8f0;
@@ -72,6 +83,8 @@ body {
     --guided-toolbar-text: #ffffff;
     --guided-alt-bg: rgba(255, 255, 255, 0.95);
     --guided-alt-text: #1e3c72;
+    --minimap-bar-width: 72px;
+    --minimap-guided-alt-input-width: 56px;
 
     /* Latency card sizing variables */
     --latency-collapsed-group-max-height: 108px;
@@ -1151,6 +1164,55 @@ body.emergency-mode::before {
     display: inline-flex;
 }
 
+.hq-angle-rail {
+    display: none;
+}
+
+.card[data-card-id="hq"].expanded .hq-angle-rail {
+    display: inline-flex;
+    position: fixed;
+    left: 50%;
+    bottom: var(--hq-angle-rail-bottom);
+    transform: translateX(-50%);
+    align-items: center;
+    gap: var(--hq-angle-rail-gap);
+    z-index: 2900;
+    pointer-events: auto;
+}
+
+.hq-angle-btn {
+    min-width: var(--hq-angle-btn-min-width);
+    height: var(--hq-angle-btn-height);
+    border: none;
+    border-radius: 8px;
+    background: var(--hq-angle-btn-bg);
+    color: var(--hq-angle-btn-color);
+    box-shadow: var(--hq-angle-btn-shadow);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+    padding: 0 12px;
+    cursor: pointer;
+    transition: background 0.2s ease, color 0.2s ease, transform 0.15s ease, opacity 0.2s ease;
+}
+
+.hq-angle-btn:hover,
+.hq-angle-btn:focus-visible {
+    transform: translateY(-1px);
+}
+
+.hq-angle-btn.is-active {
+    background: var(--hq-angle-btn-active-bg);
+    color: var(--hq-angle-btn-active-color);
+}
+
+.hq-angle-btn.is-disabled,
+.hq-angle-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    transform: none;
+}
+
 /* ===== CAMERA FUNCTION TABS ===== */
 .camera-function-rail {
     /* kept hidden by default; when card is expanded it will be positioned
@@ -1736,13 +1798,14 @@ body.emergency-mode::before {
     right: 0;
     top: 0;
     bottom: 0;
-    width: 40px;
+    width: var(--minimap-bar-width);
     background: #2563eb;
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
     gap: 10px;
+    padding-top: 10px;
     color: #fff;
     cursor: default;
     z-index: 20;
@@ -1775,6 +1838,41 @@ body.emergency-mode::before {
 .minimap-control-btn svg {
     width: 16px;
     height: 16px;
+}
+
+.minimap-guided-alt {
+    display: none;
+    width: calc(var(--minimap-bar-width) - 10px);
+    margin-top: 6px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.25);
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    flex-direction: column;
+}
+
+.minimap-guided-alt.is-active {
+    display: inline-flex;
+}
+
+.minimap-guided-alt label {
+    font-size: 10px;
+    font-weight: 700;
+    color: #ffffff;
+    line-height: 1;
+}
+
+.minimap-guided-alt input {
+    width: var(--minimap-guided-alt-input-width);
+    border-radius: 6px;
+    border: 1px solid #cbd5e1;
+    padding: 3px 6px;
+    background: var(--guided-alt-bg);
+    color: var(--guided-alt-text);
+    font-size: 11px;
+    font-weight: 600;
+    text-align: center;
 }
 
 .minimap .minimap-content {

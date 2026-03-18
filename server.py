@@ -74,6 +74,14 @@ GUIDED_GOTO_TYPE_MASK = (
     mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_IGNORE |
     mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE
 )
+GUIDED_MODE_PARAM_NAME = 'Q_GUIDED_MODE'
+GUIDED_MODE_FIXED_WING = 'fixed_wing'
+GUIDED_MODE_VTOL = 'vtol'
+GUIDED_MODE_DEFAULT = GUIDED_MODE_VTOL
+GUIDED_MODE_TO_PARAM_VALUE = {
+    GUIDED_MODE_FIXED_WING: 0.0,
+    GUIDED_MODE_VTOL: 1.0,
+}
 
 # ===== Global State =====
 mavlink_data = {
@@ -95,6 +103,7 @@ command_state = {
     'landing_mode': False,
 }
 command_clients = set()
+guided_mode_selected = GUIDED_MODE_DEFAULT
 
 # ===== MAVLink & Socket Setup =====
 print("Connecting to MAVLink...")
@@ -427,7 +436,35 @@ def set_guided_mode():
         return False
 
 
-def send_guided_goto(lat, lon, alt=None):
+def set_q_guided_mode(param_value):
+    """Set Q_GUIDED_MODE on the vehicle via MAVLink PARAM_SET."""
+    try:
+        value = float(param_value)
+    except Exception:
+        return False, 'Invalid Q_GUIDED_MODE value'
+
+    try:
+        mav.mav.param_set_send(
+            mav.target_system,
+            mav.target_component,
+            GUIDED_MODE_PARAM_NAME.encode('ascii'),
+            float(value),
+            mavutil.mavlink.MAV_PARAM_TYPE_REAL32
+        )
+        print(f"[GUIDED] Set {GUIDED_MODE_PARAM_NAME}={value}")
+        return True, f'{GUIDED_MODE_PARAM_NAME} set to {value}'
+    except Exception as e:
+        return False, f'Failed to set {GUIDED_MODE_PARAM_NAME}: {e}'
+
+
+def _normalize_guided_mode_name(guided_mode):
+    normalized = str(guided_mode or '').strip().lower()
+    if normalized in GUIDED_MODE_TO_PARAM_VALUE:
+        return normalized
+    return GUIDED_MODE_DEFAULT
+
+
+def send_guided_goto(lat, lon, alt=None, guided_mode=None):
     """Send a MAVLink guided goto command to a global lat/lon target."""
     try:
         lat = float(lat)
@@ -445,6 +482,8 @@ def send_guided_goto(lat, lon, alt=None):
     except Exception:
         return False, 'Invalid altitude'
     alt_val = max(GUIDED_GOTO_MIN_ALT_M, min(GUIDED_GOTO_MAX_ALT_M, alt_val))
+
+    guided_mode_name = _normalize_guided_mode_name(guided_mode)
 
     mode_ok = set_guided_mode()
 
@@ -465,35 +504,59 @@ def send_guided_goto(lat, lon, alt=None):
     except Exception:
         pass
 
-    try:
-        mav.mav.set_position_target_global_int_send(
-            0,
-            mav.target_system,
-            mav.target_component,
-            mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
-            GUIDED_GOTO_TYPE_MASK,
-            int(lat * 1e7),
-            int(lon * 1e7),
-            alt_val,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0
-        )
-        print(
-            "[GUIDED] Sent MAVLink SET_POSITION_TARGET_GLOBAL_INT "
-            f"via {MAVLINK_CONNECTION_STRING} -> lat={lat:.6f}, lon={lon:.6f}, alt={alt_val:.1f}m"
-        )
-    except Exception as e:
-        return False, f'Failed to send position target: {e}'
+    if guided_mode_name == GUIDED_MODE_FIXED_WING:
+        try:
+            mav.mav.command_int_send(
+                mav.target_system,
+                mav.target_component,
+                mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,
+                mavutil.mavlink.MAV_CMD_DO_REPOSITION,
+                0,
+                0,
+                -1,
+                0,
+                0,
+                float('nan'),
+                int(lat * 1e7),
+                int(lon * 1e7),
+                alt_val
+            )
+            print(
+                "[GUIDED] Sent MAVLink COMMAND_INT/MAV_CMD_DO_REPOSITION "
+                f"via {MAVLINK_CONNECTION_STRING} -> lat={lat:.6f}, lon={lon:.6f}, alt={alt_val:.1f}m"
+            )
+        except Exception as e:
+            return False, f'Failed to send fixed-wing guided target: {e}'
+    else:
+        try:
+            mav.mav.set_position_target_global_int_send(
+                0,
+                mav.target_system,
+                mav.target_component,
+                mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
+                GUIDED_GOTO_TYPE_MASK,
+                int(lat * 1e7),
+                int(lon * 1e7),
+                alt_val,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0
+            )
+            print(
+                "[GUIDED] Sent MAVLink SET_POSITION_TARGET_GLOBAL_INT "
+                f"via {MAVLINK_CONNECTION_STRING} -> lat={lat:.6f}, lon={lon:.6f}, alt={alt_val:.1f}m"
+            )
+        except Exception as e:
+            return False, f'Failed to send VTOL guided target: {e}'
 
     if not mode_ok:
         return True, 'Guided goto sent (mode switch unconfirmed)'
-    return True, 'Guided goto sent'
+    return True, f'Guided goto sent ({guided_mode_name})'
 
 
 # ===== Video Streaming =====
@@ -641,21 +704,43 @@ async def command_handler(ws):
                 continue
 
             msg_type = msg.get('type')
+            if msg_type == 'guided_mode':
+                requested_mode = _normalize_guided_mode_name(msg.get('guided_mode'))
+                requested_q_guided_mode = msg.get('q_guided_mode', GUIDED_MODE_TO_PARAM_VALUE[requested_mode])
+                ok, message = set_q_guided_mode(requested_q_guided_mode)
+                if ok:
+                    global guided_mode_selected
+                    guided_mode_selected = requested_mode
+                try:
+                    await ws.send(json.dumps({
+                        'type': 'guided_mode_ack',
+                        'success': bool(ok),
+                        'guided_mode': requested_mode,
+                        'q_guided_mode': requested_q_guided_mode,
+                        'message': message,
+                    }))
+                except Exception:
+                    pass
+                continue
+
             if msg_type == 'guided_goto':
+                guided_mode_name = _normalize_guided_mode_name(msg.get('guided_mode') or guided_mode_selected)
                 print(
                     "[GUIDED] Received guided_goto request from client: "
-                    f"lat={msg.get('lat')}, lon={msg.get('lon')}, alt={msg.get('alt')}"
+                    f"lat={msg.get('lat')}, lon={msg.get('lon')}, alt={msg.get('alt')}, mode={guided_mode_name}"
                 )
                 ok, message = send_guided_goto(
                     msg.get('lat'),
                     msg.get('lon'),
-                    msg.get('alt')
+                    msg.get('alt'),
+                    guided_mode_name,
                 )
                 try:
                     await ws.send(json.dumps({
                         'type': 'guided_goto_ack',
                         'success': bool(ok),
                         'message': message,
+                        'guided_mode': guided_mode_name,
                         'lat': msg.get('lat'),
                         'lon': msg.get('lon')
                     }))

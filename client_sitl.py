@@ -32,9 +32,13 @@ from functions.compass import draw_compass
 from functions.throttle import draw_throttle_widget
 
 try:
-    from fiducial_tracker import process_fiducial_frame
+    from fiducial_tracker import process_fiducial_frame, detect_all_apriltags
 except Exception:
-    process_fiducial_frame = None
+    try:
+        from fiducial_tracker import process_fiducial_frame
+    except Exception:
+        process_fiducial_frame = None
+    detect_all_apriltags = None
 
 # ===== Configuration =====
 APP_RUNTIME_MODE = 'SITL'
@@ -63,7 +67,7 @@ FIDUCIAL_STALE_TIMEOUT_SEC = 2.0
 FIDUCIAL_TEXT_SCALE = 0.5
 FIDUCIAL_TEXT_THICKNESS = 1
 FIDUCIAL_LINE_THICKNESS = 2
-FIDUCIAL_COLOR = (0, 0, 255)
+FIDUCIAL_COLOR = (100, 100, 255)
 FIDUCIAL_APPLY_FRAME_SCALING = True
 FIDUCIAL_CLAMP_TO_FRAME = True
 HQ_CV_MODE_UNSELECTED = ''
@@ -116,7 +120,7 @@ HQ_TT_IOU = 0.2
 HQ_TT_IMAGE_SIZE = 800
 HQ_TT_PERSIST = True
 HQ_TT_DEVICE = 'auto'
-HQ_TT_INFER_MIN_INTERVAL_SEC = 0.12
+HQ_TT_INFER_MIN_INTERVAL_SEC = 0.03
 HQ_TT_PERSON_ONLY = False
 HQ_TT_LOCK_ON_CONF = 0.50
 HQ_TT_STICK_MIN_CONF = 0.15
@@ -141,6 +145,14 @@ GUIDED_GOTO_LON_MIN = -180.0
 GUIDED_GOTO_LON_MAX = 180.0
 GUIDED_GOTO_MIN_ALT_M = 1.0
 GUIDED_GOTO_MAX_ALT_M = 500.0
+GUIDED_MODE_PARAM_NAME = 'Q_GUIDED_MODE'
+GUIDED_MODE_FIXED_WING = 'fixed_wing'
+GUIDED_MODE_VTOL = 'vtol'
+GUIDED_MODE_DEFAULT = GUIDED_MODE_VTOL
+GUIDED_MODE_TO_PARAM_VALUE = {
+    GUIDED_MODE_FIXED_WING: 0.0,
+    GUIDED_MODE_VTOL: 1.0,
+}
 HTTP_REQUEST_LOG_FILENAME = 'client_log'
 HTTP_REQUEST_LOG_ENCODING = 'utf-8'
 HTTP_REQUEST_LOG_LEVEL = logging.INFO
@@ -192,6 +204,9 @@ SITL_MAVLINK_MESSAGES_URL = 'http://localhost:5001/mavlink_messages'
 SITL_MAVLINK_MESSAGES_TIMEOUT_SEC = 1.0
 SITL_COMMAND_URL = 'http://localhost:5001/command'
 SITL_COMMAND_TIMEOUT_SEC = 3.0
+SITL_RETURN_HOME_COMMAND = 'return_to_home'
+SITL_RETURN_HOME_TRIGGER_COMMAND_IDS = {'auto_rth'}
+SITL_RETURN_HOME_TRIGGER_MODES = {'RTL'}
 MAVLINK_TERMINAL_COMMAND_MAX_LENGTH = 240
 MAVLINK_TERMINAL_COMMAND_MIN_INTERVAL_SEC = 0.10
 SITL_TELEMETRY_COORD_SCALE = 1e7
@@ -215,6 +230,80 @@ TELEMETRY_PORT = None
 COMMAND_PORT = 8763
 FIDUCIAL_PORT = 8770
 FIDUCIAL_OVERLAY_ENABLED = False
+
+# ── Gimbal control via persistent RC overrides (SITL bridge terminal) ──────
+# Uses bridge terminal commands: `rc <channel> <pwm>` (channels 6/7 by default).
+GIMBAL_CONTROL_ENABLED    = False
+GIMBAL_PITCH_CHANNEL      = 6      # RC channel number for gimbal pitch
+GIMBAL_YAW_CHANNEL        = 7      # RC channel number for gimbal yaw
+GIMBAL_NEUTRAL_PWM        = 1500   # Centre position (µs)
+GIMBAL_MIN_PWM            = 1000
+GIMBAL_MAX_PWM            = 2000
+
+# RC ↔ angle mapping (user-provided)
+# rc6: 1000=-90°, 1500=0°, 2000=90°
+# rc7: 1000=-180°, 1500=0°, 2000=180°
+GIMBAL_PITCH_MIN_DEG      = -90.0
+GIMBAL_PITCH_MAX_DEG      = 90.0
+GIMBAL_YAW_MIN_DEG        = -180.0
+GIMBAL_YAW_MAX_DEG        = 180.0
+
+# Camera angular estimation for centering AprilTag
+GIMBAL_ESTIMATE_CAMERA_HFOV_DEG = 105.0
+GIMBAL_ESTIMATE_CAMERA_VFOV_DEG = 52.0
+GIMBAL_ESTIMATE_ERROR_TO_ANGLE_SCALE = 2.0
+GIMBAL_ESTIMATE_YAW_SIGN   = -1.0  # flip sign if yaw correction is reversed
+GIMBAL_ESTIMATE_PITCH_SIGN = -1.0  # flip sign if pitch correction is reversed
+GIMBAL_USE_TELEMETRY_ANGLE_FEEDBACK = False 
+GIMBAL_ERROR_DEADBAND      = 0.01  # Normalized image error deadband
+GIMBAL_MIN_STEP_DEG_PER_UPDATE = 0.5
+GIMBAL_MAX_STEP_DEG_PER_UPDATE = 10.0
+GIMBAL_NEAR_TARGET_THRESHOLD_SCALE = 1.4
+GIMBAL_NEAR_TARGET_ERROR_TO_ANGLE_SCALE = 0.45
+GIMBAL_NEAR_TARGET_MIN_STEP_DEG_PER_UPDATE = 0.0
+GIMBAL_NEAR_TARGET_MAX_STEP_DEG_PER_UPDATE = 1.2
+GIMBAL_NEAR_TARGET_MAX_PWM_STEP_PER_COMMAND = 12
+GIMBAL_NEAR_TARGET_DISABLE_PROGRESS_GUARD = True
+
+GIMBAL_PROGRESS_GUARD_ENABLED = True 
+GIMBAL_PROGRESS_GUARD_ERR_DELTA = 0.02
+GIMBAL_PROGRESS_GUARD_FLIP_COOLDOWN_SEC = 0.5
+GIMBAL_PROGRESS_GUARD_MIN_CMD_DEG = 1.2
+
+GIMBAL_CONTROL_RATE_HZ    = 1     # Auto-tracking update rate (Hz)
+GIMBAL_LOCK_HOLD_FRAMES   = 1      # Frames of lost lock before returning to neutral
+GIMBAL_SMOOTHING_ALPHA    = 1.00   # EMA smoothing coefficient (0=frozen, 1=no filter)
+GIMBAL_DEADBAND_PWM       = 20      # PWM change (µs) below which no update is sent
+GIMBAL_MANUAL_INHIBIT_SEC = 8.0    # Seconds the auto-loop backs off after a manual command
+FIDUCIAL_SEND_RATE_HZ     = 60     # Local AprilTag detection update rate (Hz)
+GIMBAL_LOCKED_RESEND_RATE_HZ = 1  # Force RC resend while locked to keep tight tracking
+GIMBAL_LANDING_RESEND_RATE_HZ = 1 # Send RC commands at this rate while landing mode is active
+GIMBAL_RC_COMMAND_INTERVAL_ACTIVE_SEC = 3.0  # Minimum delay while NOT centered (0 = no delay)
+GIMBAL_RC_COMMAND_INTERVAL_SEC = 5.0  # Minimum delay between outbound RC commands while centered
+GIMBAL_MAX_PWM_STEP_PER_COMMAND = 50  # Max PWM delta per command per axis
+
+# Landing fiducial overlay status color
+
+# HQ camera fixed-angle presets (degrees)
+HQ_CAMERA_FIXED_ANGLE_PRESETS = {
+    'left': {'pitch_deg': 80.0, 'yaw_deg': -90.0},
+    'forward': {'pitch_deg': 90.0, 'yaw_deg': 0.0},
+    'down': {'pitch_deg': 0.0, 'yaw_deg': 0.0},
+    'backward': {'pitch_deg': 85.0, 'yaw_deg': 180.0},
+    'right': {'pitch_deg': 80.0, 'yaw_deg': 90.0},
+}
+HQ_CAMERA_FIXED_ANGLE_HEARTBEAT_HZ = 2.0
+
+# Search behavior when no AprilTag is detected
+GIMBAL_SEARCH_SWEEP_ENABLED = True
+GIMBAL_SEARCH_SWEEP_PERIOD_SEC = 4.0        # Full left→right→left sweep period
+GIMBAL_SEARCH_SWEEP_START_FRAMES = 3        # Start sweep after this many unlocked frames
+GIMBAL_SEARCH_POINT_DOWN_DEG = 0.0          # "Point down" pitch setpoint
+GIMBAL_SEARCH_SWEEP_YAW_ENABLED = False
+GIMBAL_SEARCH_SWEEP_YAW_MIN_DEG = -35.0
+GIMBAL_SEARCH_SWEEP_YAW_MAX_DEG = 35.0
+# ────────────────────────────────────────────────────────────────────────────
+
 MAVLINK_MONITOR_UDP_ENDPOINT = 'udpin:0.0.0.0:14550'
 VALID_USERNAME = 'argus'
 VALID_PASSWORD = 'sentry'
@@ -222,9 +311,9 @@ VALID_PASSWORD = 'sentry'
 # Camera function tabs (shown on right side of camera cards)
 # Each entry must match a command id in templates/index.html COMMAND_DEFS
 DEFAULT_CAMERA_FUNCTION_TABS = {
-    'cam0': ['go_dark', 'drop_gps_pin', 'emergency'],
-    'cam1': ['go_dark', 'loiter', 'emergency'],
-    'hq': ['loiter', 'drop_gps_pin', 'emergency']
+    'cam0': ['guided_mode_switch', 'go_dark', 'drop_gps_pin', 'emergency'],
+    'cam1': ['guided_mode_switch', 'go_dark', 'loiter', 'emergency'],
+    'hq': ['guided_mode_switch', 'loiter', 'drop_gps_pin', 'emergency']
 }
 
 # Home screen tile ordering
@@ -250,10 +339,9 @@ DEFAULT_SETTINGS = {
 
 ALLOWED_TILE_IDS = {'cam0', 'cam1', 'hq', 'map', 'latency', 'mavlink_terminal', 'commands'}
 ALLOWED_COMMAND_IDS = {
-    'go_dark', 'auto_rth', 'drop_gps_pin', 'emergency', 'loiter', 'landing_mode'
+    'guided_mode_switch', 'go_dark', 'auto_rth', 'drop_gps_pin', 'emergency', 'loiter', 'landing_mode'
 }
 SENTRY_COMMAND_TERMINAL_TEXT_BY_ID = {
-    'auto_rth': 'rtl',
     'emergency': 'land',
     'loiter': 'loiter',
     'landing_mode': 'land',
@@ -409,6 +497,32 @@ last_mavlink_message_time = 0
 mavlink_last_mode_name = None
 mavlink_last_armed_state = None
 
+gimbal_commanded_angles = {
+    'pitch_deg': 0.0,
+    'yaw_deg': 0.0,
+}
+gimbal_commanded_angles_lock = Lock()
+
+hq_fixed_angle_state = {
+    'active': False,
+    'angle_id': None,
+    'pitch_pwm': int(GIMBAL_NEUTRAL_PWM),
+    'yaw_pwm': int(GIMBAL_NEUTRAL_PWM),
+    'generation': 0,
+}
+hq_fixed_angle_state_lock = Lock()
+
+# Shared live pymavlink connection – set by receive_mavlink_udp_messages once
+# SITL starts sending packets.  Used to send RC overrides and shell commands
+# directly to SITL without going through the bridge HTTP API.
+_mavlink_direct_conn = None
+_mavlink_direct_conn_lock = Lock()
+
+# Gimbal manual-override inhibit: set to a future timestamp when the user sends
+# a manual 'gimbal' command so the auto-tracking loop doesn't overwrite it.
+_gimbal_inhibit_until = 0.0
+_gimbal_inhibit_lock  = Lock()
+
 # Command state (mirrors server-side boolean flags)
 command_state = {
     'go_dark': False,
@@ -420,6 +534,7 @@ command_state = {
 }
 command_ws = None  # Persistent WebSocket to server for commands
 command_loop = None
+guided_mode_selected = GUIDED_MODE_DEFAULT
 last_terminal_command_time = 0.0
 
 # Session + settings state
@@ -621,6 +736,124 @@ def draw_fiducial_overlay_from_result(frame, result):
     return True
 
 
+def draw_fiducial_overlay_from_payload(frame, payload):
+    """Draw fiducial corners/marker from a serialized payload dict.
+
+    This mirrors `draw_fiducial_overlay` but accepts the payload produced
+    by the local fiducial loop or the server websocket. It always draws
+    regardless of `FIDUCIAL_OVERLAY_ENABLED` so callers can force an overlay.
+    """
+    if not payload or not isinstance(payload, dict):
+        return False
+
+    try:
+        confidence = float(payload.get('confidence', 0.0))
+    except Exception:
+        confidence = 0.0
+    if confidence < FIDUCIAL_MIN_CONFIDENCE:
+        return False
+
+    h, w = frame.shape[:2]
+    corners = payload.get('corners')
+    cx = cy = None
+
+    if isinstance(corners, list) and len(corners) >= 4:
+        try:
+            pts = np.array(corners, dtype=np.float32)
+            if FIDUCIAL_APPLY_FRAME_SCALING:
+                try:
+                    sw = float(payload.get('frame_width', w))
+                    sh = float(payload.get('frame_height', h))
+                    if sw > 0 and sh > 0:
+                        scale_x = w / sw
+                        scale_y = h / sh
+                        pts[:, 0] *= scale_x
+                        pts[:, 1] *= scale_y
+                except Exception:
+                    pass
+            if FIDUCIAL_CLAMP_TO_FRAME:
+                pts[:, 0] = np.clip(pts[:, 0], 0, w - 1)
+                pts[:, 1] = np.clip(pts[:, 1], 0, h - 1)
+            pts = pts.astype(np.int32)
+            cv2.polylines(frame, [pts], True, FIDUCIAL_COLOR, FIDUCIAL_LINE_THICKNESS)
+            cx = int(np.mean(pts[:, 0]))
+            cy = int(np.mean(pts[:, 1]))
+        except Exception:
+            cx = cy = None
+
+    if cx is None or cy is None:
+        try:
+            error_x = float(payload.get('error_x', 0))
+            error_y = float(payload.get('error_y', 0))
+            cx = int((w / 2) + error_x * (w / 2))
+            cy = int((h / 2) + error_y * (h / 2))
+            if FIDUCIAL_CLAMP_TO_FRAME:
+                cx = int(np.clip(cx, 0, w - 1))
+                cy = int(np.clip(cy, 0, h - 1))
+        except Exception:
+            return False
+
+    cv2.drawMarker(frame, (cx, cy), FIDUCIAL_COLOR, markerType=cv2.MARKER_CROSS, markerSize=14, thickness=FIDUCIAL_LINE_THICKNESS)
+    fid_id = payload.get('fiducial_id')
+    label = f"FID {fid_id}" if fid_id is not None else "FID"
+    text = f"{label}  conf {confidence:.2f}"
+    cv2.putText(frame, text, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, FIDUCIAL_TEXT_SCALE, FIDUCIAL_COLOR, FIDUCIAL_TEXT_THICKNESS)
+    return True
+
+
+def draw_all_fiducials(frame, payload):
+    """Draw all detections from payload['detections'] if present.
+
+    Each detection should include 'corners' and optionally 'decision_margin' or 'confidence'.
+    """
+    if not payload or not isinstance(payload, dict):
+        return False
+    dets = payload.get('detections') or []
+    if not dets:
+        return False
+
+    h, w = frame.shape[:2]
+    for d in dets:
+        try:
+            corners = d.get('corners')
+            if isinstance(corners, list) and len(corners) >= 4:
+                pts = np.array(corners, dtype=np.float32)
+                if FIDUCIAL_APPLY_FRAME_SCALING:
+                    try:
+                        sw = float(payload.get('frame_width', w))
+                        sh = float(payload.get('frame_height', h))
+                        if sw > 0 and sh > 0:
+                            scale_x = w / sw
+                            scale_y = h / sh
+                            pts[:, 0] *= scale_x
+                            pts[:, 1] *= scale_y
+                    except Exception:
+                        pass
+                if FIDUCIAL_CLAMP_TO_FRAME:
+                    pts[:, 0] = np.clip(pts[:, 0], 0, w - 1)
+                    pts[:, 1] = np.clip(pts[:, 1], 0, h - 1)
+                pts_i = pts.astype(np.int32)
+                cv2.polylines(frame, [pts_i], True, (0, 200, 200), 2)
+                # draw centroid
+                cx = int(np.mean(pts_i[:, 0]))
+                cy = int(np.mean(pts_i[:, 1]))
+                cv2.drawMarker(frame, (cx, cy), (0, 200, 200), markerType=cv2.MARKER_TILTED_CROSS, markerSize=10, thickness=2)
+                # label with tag id / margin
+                tag_id = d.get('tag_id')
+                margin = d.get('decision_margin') or d.get('confidence')
+                label = f"ID:{tag_id}" if tag_id is not None else "tag"
+                if margin is not None:
+                    try:
+                        m = float(margin)
+                        label += f' {m:.2f}'
+                    except Exception:
+                        pass
+                cv2.putText(frame, label, (max(0, cx - 20), max(20, cy - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0,200,200), 1)
+        except Exception:
+            continue
+    return True
+
+
 def get_request_token():
     header_token = request.headers.get('X-Session-Token')
     cookie_token = request.cookies.get('sentry_token')
@@ -712,6 +945,8 @@ def set_hq_cv_mode(mode):
         return False
     with hq_cv_mode_lock:
         hq_cv_mode = mode
+    if mode == HQ_CV_MODE_LANDING:
+        clear_hq_fixed_angle_hold()
     if mode != HQ_CV_MODE_TARGET_TRACKING:
         with hq_tt_state_lock:
             hq_tt_selected_track_id = None
@@ -735,6 +970,30 @@ def clear_hq_target_selection():
         hq_tt_selected_track_id = None
         hq_tt_selected_last_box = None
         hq_tt_selected_missed_frames = 0
+
+
+def set_hq_fixed_angle_hold(angle_id, pitch_pwm, yaw_pwm):
+    with hq_fixed_angle_state_lock:
+        hq_fixed_angle_state['generation'] = int(hq_fixed_angle_state.get('generation', 0)) + 1
+        hq_fixed_angle_state['active'] = True
+        hq_fixed_angle_state['angle_id'] = str(angle_id)
+        hq_fixed_angle_state['pitch_pwm'] = int(pitch_pwm)
+        hq_fixed_angle_state['yaw_pwm'] = int(yaw_pwm)
+        return int(hq_fixed_angle_state['generation'])
+
+
+def clear_hq_fixed_angle_hold():
+    with hq_fixed_angle_state_lock:
+        hq_fixed_angle_state['generation'] = int(hq_fixed_angle_state.get('generation', 0)) + 1
+        hq_fixed_angle_state['active'] = False
+        hq_fixed_angle_state['angle_id'] = None
+        hq_fixed_angle_state['pitch_pwm'] = int(GIMBAL_NEUTRAL_PWM)
+        hq_fixed_angle_state['yaw_pwm'] = int(GIMBAL_NEUTRAL_PWM)
+
+
+def get_hq_fixed_angle_hold():
+    with hq_fixed_angle_state_lock:
+        return dict(hq_fixed_angle_state)
 
 
 def _hq_tt_box_iou(box_a, box_b):
@@ -1431,10 +1690,30 @@ def _hq_tt_extract_detections(result):
 
 
 def apply_hq_cv_landing_mode(frame):
-    drawn = bool(draw_fiducial_overlay(frame))
+    locked = False
+    with fiducial_lock:
+        payload = deepcopy(fiducial_state) if isinstance(fiducial_state, dict) else None
 
-    if drawn:
-        _hq_tt_draw_status(frame, 'Landing Mode: LOCKED', HQ_LANDING_STATUS_TEXT_COLOR)
+    if payload:
+        timestamp = payload.get('timestamp', 0)
+        if not timestamp or (time.time() - float(timestamp)) <= FIDUCIAL_STALE_TIMEOUT_SEC:
+            if payload.get('locked'):
+                try:
+                    confidence = float(payload.get('confidence', 0.0))
+                except Exception:
+                    confidence = 0.0
+                if confidence >= FIDUCIAL_MIN_CONFIDENCE:
+                    locked = True
+
+    if locked:
+        try:
+            if payload:
+                draw_fiducial_overlay_from_payload(frame, payload)
+            else:
+                draw_fiducial_overlay(frame)
+        except Exception:
+            pass
+        _hq_tt_draw_status(frame, 'Landing Mode: FIDUCIAL LOCK', HQ_LANDING_STATUS_TEXT_COLOR)
     else:
         _hq_tt_draw_status(frame, 'Landing Mode: SEARCHING', HQ_LANDING_STATUS_TEXT_COLOR)
 
@@ -1983,6 +2262,11 @@ async def receive_fiducials():
                     try:
                         payload = json.loads(message)
                         if isinstance(payload, dict):
+                            payload.pop('tracked_error_x', None)
+                            payload.pop('tracked_error_y', None)
+                            payload.pop('tracked_area', None)
+                            payload.pop('tracked_age', None)
+                            payload['tracked_locked'] = False
                             with fiducial_lock:
                                 fiducial_state = payload
                     except json.JSONDecodeError:
@@ -2172,8 +2456,12 @@ def _append_mavlink_message_entry(entry):
 
 
 def receive_mavlink_udp_messages():
-    """Receive decoded MAVLink messages from the configured Pixhawk UDP endpoint."""
-    global mavlink_monitor_online, last_mavlink_message_time
+    """Receive decoded MAVLink messages from the configured Pixhawk UDP endpoint.
+
+    Also stores the live connection in _mavlink_direct_conn so the gimbal loop
+    and terminal handler can send commands directly to SITL.
+    """
+    global mavlink_monitor_online, last_mavlink_message_time, _mavlink_direct_conn
 
     if not MAVLINK_MONITOR_ENABLED:
         return
@@ -2190,6 +2478,12 @@ def receive_mavlink_udp_messages():
                 source_system=MAVLINK_MONITOR_SOURCE_SYSTEM,
                 source_component=MAVLINK_MONITOR_SOURCE_COMPONENT,
             )
+            # Share this connection for outbound commands as soon as it is open.
+            # target_system/component are filled automatically when the first
+            # HEARTBEAT arrives.
+            with _mavlink_direct_conn_lock:
+                _mavlink_direct_conn = mav
+            print(f'[MAVLink] UDP monitor bound on {MAVLINK_MONITOR_UDP_ENDPOINT} – shared for TX')
 
             while True:
                 msg = mav.recv_match(blocking=True, timeout=MAVLINK_MONITOR_RECV_TIMEOUT_SEC)
@@ -2217,6 +2511,9 @@ def receive_mavlink_udp_messages():
                     _append_mavlink_message_entry(entry)
         except Exception:
             mavlink_monitor_online = False
+            with _mavlink_direct_conn_lock:
+                if _mavlink_direct_conn is mav:
+                    _mavlink_direct_conn = None
             time.sleep(MAVLINK_MONITOR_RECONNECT_DELAY_SEC)
         finally:
             try:
@@ -2525,6 +2822,362 @@ def _broadcast_telemetry_ws(payload):
         pass
 
 
+# ===== Local fiducial processor (SITL) =====
+def _serialize_fiducial_result_local(result, frame_width=None, frame_height=None):
+    payload = {
+        'locked': bool(getattr(result, 'locked', False)),
+        'error_x': float(getattr(result, 'error_x', 0.0)),
+        'error_y': float(getattr(result, 'error_y', 0.0)),
+        'area': float(getattr(result, 'area', 0.0)),
+        'confidence': float(getattr(result, 'confidence', 0.0)),
+        'fiducial_id': getattr(result, 'fiducial_id', None),
+        'timestamp': time.time()
+    }
+    if frame_width is not None and frame_height is not None:
+        try:
+            payload['frame_width'] = int(frame_width)
+            payload['frame_height'] = int(frame_height)
+        except Exception:
+            pass
+    corners = getattr(result, 'corners', None)
+    if corners is not None:
+        try:
+            payload['corners'] = np.array(corners).astype(int).tolist()
+        except Exception:
+            pass
+    return payload
+
+
+def run_local_fiducial_loop():
+    """Process local HQ frames with live AprilTag detections only.
+
+    This path intentionally avoids tracking/smoothing and publishes only
+    current-frame detections.
+    """
+    global fiducial_state
+
+    if detect_all_apriltags is None:
+        print('Local fiducial detector not available (detect_all_apriltags is None)')
+        return
+
+    SAMPLE_INTERVAL = 1.0 / max(1, int(FIDUCIAL_SEND_RATE_HZ))
+    while True:
+        try:
+            entry = frame_hq
+            if not entry or not isinstance(entry, dict):
+                time.sleep(SAMPLE_INTERVAL)
+                continue
+
+            frame = entry.get('frame')
+            if frame is None:
+                time.sleep(SAMPLE_INTERVAL)
+                continue
+
+            frame_h, frame_w = frame.shape[:2]
+
+            def _det_to_live_payload(det):
+                if not isinstance(det, dict):
+                    return None
+                corners = det.get('corners')
+                if not isinstance(corners, (list, tuple)) or len(corners) < 4:
+                    return None
+                try:
+                    pts = np.array(corners, dtype=np.float32).reshape(-1, 2)
+                except Exception:
+                    return None
+                if pts.shape[0] < 4:
+                    return None
+
+                try:
+                    confidence = float(det.get('confidence')) if det.get('confidence') is not None else None
+                except Exception:
+                    confidence = None
+                if confidence is None:
+                    try:
+                        decision_margin = float(det.get('decision_margin', 0.0) or 0.0)
+                        confidence = float(min(0.99, max(0.0, 0.6 + decision_margin / 20.0)))
+                    except Exception:
+                        confidence = 0.0
+
+                center_x = float(np.mean(pts[:, 0]))
+                center_y = float(np.mean(pts[:, 1]))
+                error_x = float(det.get('error_x', ((center_x / max(1.0, float(frame_w))) - 0.5) * 2.0))
+                error_y = float(det.get('error_y', ((center_y / max(1.0, float(frame_h))) - 0.5) * 2.0))
+
+                area = det.get('area')
+                try:
+                    area = float(area) if area is not None else None
+                except Exception:
+                    area = None
+                if area is None:
+                    try:
+                        area = float(abs(cv2.contourArea(pts.astype(np.float32))))
+                    except Exception:
+                        area = 0.0
+
+                return {
+                    'tag_id': det.get('tag_id'),
+                    'fiducial_id': det.get('tag_id'),
+                    'corners': pts.astype(int).tolist(),
+                    'error_x': float(error_x),
+                    'error_y': float(error_y),
+                    'area': float(area),
+                    'confidence': float(confidence),
+                    'decision_margin': det.get('decision_margin'),
+                }
+
+            payload = {
+                'locked': False,
+                'timestamp': time.time(),
+                'confidence': 0.0,
+                'frame_width': int(frame_w),
+                'frame_height': int(frame_h),
+                'detections': [],
+                'tracked_locked': False,
+            }
+
+            live_detections = []
+            if detect_all_apriltags is not None:
+                try:
+                    all_dets = detect_all_apriltags(frame) or []
+                    for det in all_dets:
+                        normalized = _det_to_live_payload(det)
+                        if normalized is not None:
+                            live_detections.append(normalized)
+                except Exception as e:
+                    print(f'Warning: detect_all_apriltags failed: {e}')
+
+            if live_detections:
+                primary = max(live_detections, key=lambda d: (float(d.get('confidence', 0.0)), float(d.get('area', 0.0))))
+                payload['detections'] = [primary]
+                payload['primary_detection'] = primary
+                payload['fiducial_id'] = primary.get('tag_id')
+                payload['error_x'] = float(primary.get('error_x', 0.0))
+                payload['error_y'] = float(primary.get('error_y', 0.0))
+                payload['area'] = float(primary.get('area', 0.0))
+                payload['confidence'] = float(primary.get('confidence', 0.0))
+                payload['corners'] = primary.get('corners')
+                payload['locked'] = bool(payload['confidence'] >= FIDUCIAL_MIN_CONFIDENCE)
+            else:
+                payload['detections'] = []
+                payload['primary_detection'] = None
+                payload['fiducial_id'] = None
+                payload['error_x'] = 0.0
+                payload['error_y'] = 0.0
+                payload['area'] = 0.0
+                payload['confidence'] = 0.0
+                payload['corners'] = None
+                payload['locked'] = False
+                payload['tracked_locked'] = False
+
+            with fiducial_lock:
+                fiducial_state = payload
+
+        except Exception as e:
+            print(f'Local fiducial loop error: {e}')
+
+        time.sleep(SAMPLE_INTERVAL)
+
+
+# ── Gimbal control ─────────────────────────────────────────────────────────────
+
+def _mavlink_rc_override_direct(channels_dict):
+    """Send RC_CHANNELS_OVERRIDE directly to SITL via the shared UDP connection.
+
+    Returns True if the MAVLink packet was sent successfully.
+    channels_dict maps channel number (str/int) → PWM (1000-2000); 0 = release.
+    """
+    if mavutil is None:
+        return False
+    try:
+        with _mavlink_direct_conn_lock:
+            conn = _mavlink_direct_conn
+        if conn is None:
+            return False
+        ch = [0] * 18
+        for key, pwm in channels_dict.items():
+            idx = int(key) - 1
+            if 0 <= idx < 18 and pwm is not None and int(pwm) != 0:
+                ch[idx] = int(max(1000, min(2000, int(pwm))))
+        tsys  = conn.target_system    or 1
+        tcomp = conn.target_component or 1
+        try:
+            conn.mav.rc_channels_override_send(
+                tsys, tcomp,
+                ch[0], ch[1], ch[2], ch[3], ch[4], ch[5], ch[6], ch[7],
+                ch[8], ch[9], ch[10], ch[11], ch[12], ch[13], ch[14], ch[15],
+                ch[16], ch[17],
+            )
+        except TypeError:
+            # Older pymavlink – 8-channel variant only
+            conn.mav.rc_channels_override_send(
+                tsys, tcomp,
+                ch[0], ch[1], ch[2], ch[3], ch[4], ch[5], ch[6], ch[7],
+            )
+        return True
+    except Exception as e:
+        print(f'[Gimbal] rc_channels_override_send error: {e}')
+        return False
+
+
+def _mavlink_shell_command_direct(text):
+    """Send a shell command verbatim to the ArduPilot SITL terminal via SERIAL_CONTROL.
+
+    Equivalent to typing the command in the SITL console window.
+    Returns True if sent, False if the direct connection is not yet available.
+    """
+    if mavutil is None:
+        return False
+    try:
+        with _mavlink_direct_conn_lock:
+            conn = _mavlink_direct_conn
+        if conn is None:
+            return False
+        if not text.endswith('\n'):
+            text += '\n'
+        raw = text.encode('utf-8')
+        MAX_CHUNK = 70
+        tsys  = conn.target_system    or 1
+        tcomp = conn.target_component or 1
+        for i in range(0, len(raw), MAX_CHUNK):
+            chunk = raw[i:i + MAX_CHUNK]
+            padded = list(chunk) + [0] * (MAX_CHUNK - len(chunk))
+            conn.mav.serial_control_send(
+                device=mavutil.mavlink.SERIAL_CONTROL_DEV_SHELL,
+                flags=mavutil.mavlink.SERIAL_CONTROL_FLAG_RESPOND,
+                timeout=0,
+                baudrate=0,
+                count=len(chunk),
+                data=padded,
+            )
+            if len(raw) > MAX_CHUNK:
+                time.sleep(0.03)
+        return True
+    except Exception as e:
+        print(f'[Terminal] serial_control_send error: {e}')
+        return False
+
+
+def _send_gimbal_persistent_rc_override(pitch_pwm, yaw_pwm):
+    """Set gimbal using persistent SITL terminal RC commands.
+
+    This routes through the bridge terminal parser so ArduPilot receives:
+      rc <pitch_channel> <pwm>
+      rc <yaw_channel> <pwm>
+    The bridge keeps these overrides persistent using its heartbeat thread.
+    """
+    try:
+        channels = {
+            str(int(GIMBAL_PITCH_CHANNEL)): int(pitch_pwm),
+            str(int(GIMBAL_YAW_CHANNEL)): int(yaw_pwm),
+        }
+
+        # Fast path: direct MAVLink send from client (single packet for both axes).
+        if _mavlink_rc_override_direct(channels):
+            return
+
+        # Fallback path: bridge HTTP command with persistent override enabled.
+        _post_sitl_command({
+            'command': 'rc_override',
+            'channels': channels,
+            'persistent': True,
+        })
+    except Exception as e:
+        print(f'[Gimbal] persistent RC send error: {e}')
+
+
+def _send_gimbal_bridge_persistent_rc_override(pitch_pwm, yaw_pwm):
+    """Send persistent gimbal RC override through SITL bridge HTTP API.
+
+    This path is intentionally bridge-only so heartbeat refresh behavior remains
+    deterministic for fixed-angle presets.
+    """
+    try:
+        channels = {
+            str(int(GIMBAL_PITCH_CHANNEL)): int(pitch_pwm),
+            str(int(GIMBAL_YAW_CHANNEL)): int(yaw_pwm),
+        }
+        _post_sitl_command({
+            'command': 'rc_override',
+            'channels': channels,
+            'persistent': True,
+        })
+    except Exception as e:
+        print(f'[Gimbal] bridge persistent RC send error: {e}')
+
+
+def run_hq_fixed_angle_heartbeat_loop():
+    """Keep fixed-angle HQ gimbal presets alive via persistent RC heartbeat."""
+    heartbeat_hz = max(0.2, float(HQ_CAMERA_FIXED_ANGLE_HEARTBEAT_HZ))
+    interval = 1.0 / heartbeat_hz
+
+    while True:
+        try:
+            time.sleep(interval)
+
+            if get_hq_cv_mode() == HQ_CV_MODE_LANDING:
+                continue
+
+            with hq_fixed_angle_state_lock:
+                if not hq_fixed_angle_state.get('active'):
+                    continue
+                pitch_pwm = int(hq_fixed_angle_state.get('pitch_pwm', GIMBAL_NEUTRAL_PWM))
+                yaw_pwm = int(hq_fixed_angle_state.get('yaw_pwm', GIMBAL_NEUTRAL_PWM))
+            _send_gimbal_bridge_persistent_rc_override(pitch_pwm, yaw_pwm)
+        except Exception as e:
+            print(f'[Gimbal] fixed-angle heartbeat loop error: {e}')
+
+
+def _clamp(value, min_value, max_value):
+    return max(min_value, min(max_value, value))
+
+
+def _gimbal_angle_to_pwm_pitch(angle_deg):
+    span = float(GIMBAL_PITCH_MAX_DEG - GIMBAL_PITCH_MIN_DEG)
+    if span <= 0:
+        return int(GIMBAL_NEUTRAL_PWM)
+    angle = _clamp(float(angle_deg), float(GIMBAL_PITCH_MIN_DEG), float(GIMBAL_PITCH_MAX_DEG))
+    ratio = (angle - float(GIMBAL_PITCH_MIN_DEG)) / span
+    pwm = int(round(float(GIMBAL_MIN_PWM) + ratio * float(GIMBAL_MAX_PWM - GIMBAL_MIN_PWM)))
+    return int(_clamp(pwm, int(GIMBAL_MIN_PWM), int(GIMBAL_MAX_PWM)))
+
+
+def _gimbal_angle_to_pwm_yaw(angle_deg):
+    span = float(GIMBAL_YAW_MAX_DEG - GIMBAL_YAW_MIN_DEG)
+    if span <= 0:
+        return int(GIMBAL_NEUTRAL_PWM)
+    angle = _clamp(float(angle_deg), float(GIMBAL_YAW_MIN_DEG), float(GIMBAL_YAW_MAX_DEG))
+    ratio = (angle - float(GIMBAL_YAW_MIN_DEG)) / span
+    pwm = int(round(float(GIMBAL_MIN_PWM) + ratio * float(GIMBAL_MAX_PWM - GIMBAL_MIN_PWM)))
+    return int(_clamp(pwm, int(GIMBAL_MIN_PWM), int(GIMBAL_MAX_PWM)))
+
+
+def _gimbal_pwm_to_angle_pitch(pwm):
+    span_pwm = float(GIMBAL_MAX_PWM - GIMBAL_MIN_PWM)
+    if span_pwm <= 0:
+        return 0.0
+    p = _clamp(float(pwm), float(GIMBAL_MIN_PWM), float(GIMBAL_MAX_PWM))
+    ratio = (p - float(GIMBAL_MIN_PWM)) / span_pwm
+    angle = float(GIMBAL_PITCH_MIN_DEG) + ratio * float(GIMBAL_PITCH_MAX_DEG - GIMBAL_PITCH_MIN_DEG)
+    return float(_clamp(angle, float(GIMBAL_PITCH_MIN_DEG), float(GIMBAL_PITCH_MAX_DEG)))
+
+
+def _gimbal_pwm_to_angle_yaw(pwm):
+    span_pwm = float(GIMBAL_MAX_PWM - GIMBAL_MIN_PWM)
+    if span_pwm <= 0:
+        return 0.0
+    p = _clamp(float(pwm), float(GIMBAL_MIN_PWM), float(GIMBAL_MAX_PWM))
+    ratio = (p - float(GIMBAL_MIN_PWM)) / span_pwm
+    angle = float(GIMBAL_YAW_MIN_DEG) + ratio * float(GIMBAL_YAW_MAX_DEG - GIMBAL_YAW_MIN_DEG)
+    return float(_clamp(angle, float(GIMBAL_YAW_MIN_DEG), float(GIMBAL_YAW_MAX_DEG)))
+
+
+def run_gimbal_control_loop():
+    """Compatibility stub: autonomous target-seeking gimbal control removed."""
+    print('[Gimbal] Auto target-seeking loop is disabled; manual control only.')
+    return
+
+
 @app.route('/telemetry/stream')
 def telemetry_stream():
     """SSE endpoint that streams live telemetry updates to browsers."""
@@ -2756,7 +3409,11 @@ def _forward_command_ws_message(msg, *, require_link=False, fail_message='Failed
         armed = bool(msg.get('armed'))
         payload = {'command': 'arm' if armed else 'disarm'}
     elif t == 'mode':
-        payload = {'command': 'mode', 'mode': msg.get('mode')}
+        mode_name = str(msg.get('mode') or '').strip().upper()
+        if mode_name in SITL_RETURN_HOME_TRIGGER_MODES:
+            payload = {'command': SITL_RETURN_HOME_COMMAND}
+        else:
+            payload = {'command': 'mode', 'mode': msg.get('mode')}
     elif t in ('toggle', 'pulse'):
         command_id = str(msg.get('id', '')).strip()
         command_value = bool(msg.get('value'))
@@ -2765,23 +3422,39 @@ def _forward_command_ws_message(msg, *, require_link=False, fail_message='Failed
         if command_source == 'function_rail' and command_id in FUNCTION_RAIL_NO_FORWARD_COMMAND_IDS:
             return True, None, None
 
-        terminal_text = SENTRY_COMMAND_TERMINAL_TEXT_BY_ID.get(command_id)
-
-        if terminal_text:
-            if (
-                t == 'toggle'
-                and command_id in SENTRY_COMMAND_TERMINAL_SEND_ON_TRUE_ONLY
-                and not command_value
-            ):
+        if command_id in SITL_RETURN_HOME_TRIGGER_COMMAND_IDS:
+            if t == 'pulse' or command_value:
+                payload = {'command': SITL_RETURN_HOME_COMMAND}
+            else:
                 return True, None, None
-
-            payload = {'command': 'terminal', 'text': terminal_text}
         else:
-            payload = {'command': command_id, 'value': msg.get('value')}
+            terminal_text = SENTRY_COMMAND_TERMINAL_TEXT_BY_ID.get(command_id)
+
+            if terminal_text:
+                if (
+                    t == 'toggle'
+                    and command_id in SENTRY_COMMAND_TERMINAL_SEND_ON_TRUE_ONLY
+                    and not command_value
+                ):
+                    return True, None, None
+
+                payload = {'command': 'terminal', 'text': terminal_text}
+            else:
+                payload = {'command': command_id, 'value': msg.get('value')}
+
     elif t == 'guided_goto':
         payload = {'command': 'guided_goto', 'lat': msg.get('lat'), 'lon': msg.get('lon')}
         if 'alt' in msg and msg.get('alt') is not None:
             payload['altitude'] = msg.get('alt')
+        if 'guided_mode' in msg and msg.get('guided_mode') is not None:
+            payload['guided_mode'] = msg.get('guided_mode')
+    elif t == 'guided_mode':
+        q_guided_mode = msg.get('q_guided_mode')
+        try:
+            q_guided_mode = int(float(q_guided_mode))
+        except Exception:
+            q_guided_mode = int(GUIDED_MODE_TO_PARAM_VALUE[GUIDED_MODE_DEFAULT])
+        payload = {'command': 'terminal', 'text': f'param set {GUIDED_MODE_PARAM_NAME} {q_guided_mode}'}
     elif t == 'terminal':
         payload = {'command': 'terminal', 'text': msg.get('text')}
     else:
@@ -2820,19 +3493,29 @@ def api_mavlink_terminal_command():
     if (now - last_terminal_command_time) < MAVLINK_TERMINAL_COMMAND_MIN_INTERVAL_SEC:
         return jsonify({'success': False, 'message': 'Command rate-limited'}), 429
 
-    payload = {
-        'command': 'terminal',
-        'text': command_text,
-    }
+    last_terminal_command_time = now
+
+    # If the command touches RC/gimbal channels, inhibit the auto-tracking loop
+    # so it doesn't overwrite the manual position.  The command itself is passed
+    # through verbatim to the bridge terminal dispatcher below.
+    lower_cmd = command_text.lower()
+    if lower_cmd.startswith('rc '):
+        clear_hq_fixed_angle_hold()
+        global _gimbal_inhibit_until
+        with _gimbal_inhibit_lock:
+            _gimbal_inhibit_until = time.time() + GIMBAL_MANUAL_INHIBIT_SEC
+        print(f'[Terminal] Gimbal loop inhibited {GIMBAL_MANUAL_INHIBIT_SEC}s (rc command)')
+
+    print(f'[Terminal] Forwarding to bridge: {command_text!r}')
+    payload = {'command': 'terminal', 'text': command_text}
     ok, error_message, status_code, response_payload = _post_sitl_command(
         payload,
         require_link=True,
         fail_message='Failed to send MAVLink terminal command',
     )
     if not ok:
+        print(f'[Terminal] Bridge rejected command: {error_message}')
         return jsonify({'success': False, 'message': error_message}), status_code
-
-    last_terminal_command_time = now
 
     response_message = 'Command sent'
     if isinstance(response_payload, dict):
@@ -2916,6 +3599,47 @@ def api_flight_mode():
     return jsonify({'success': True, 'mode': mode})
 
 
+@app.route('/api/guided_mode', methods=['GET', 'POST'])
+def api_guided_mode():
+    """Get/set guided command mode and corresponding Q_GUIDED_MODE parameter."""
+    global guided_mode_selected
+    if request.method == 'GET':
+        return jsonify({
+            'success': True,
+            'guided_mode': guided_mode_selected,
+            'q_guided_mode': GUIDED_MODE_TO_PARAM_VALUE[guided_mode_selected],
+            'param_name': GUIDED_MODE_PARAM_NAME,
+        })
+
+    data = request.json or {}
+    guided_mode = str(data.get('guided_mode', '')).strip().lower()
+    if guided_mode not in GUIDED_MODE_TO_PARAM_VALUE:
+        return jsonify({'success': False, 'message': 'Invalid guided mode'}), 400
+
+    msg = {
+        'type': 'guided_mode',
+        'guided_mode': guided_mode,
+        'q_guided_mode': GUIDED_MODE_TO_PARAM_VALUE[guided_mode],
+        'param_name': GUIDED_MODE_PARAM_NAME,
+    }
+    ok, error_message, status_code = _forward_command_ws_message(
+        msg,
+        require_link=True,
+        fail_message='Failed to set guided mode parameter'
+    )
+    if not ok:
+        return jsonify({'success': False, 'message': error_message}), status_code
+
+    guided_mode_selected = guided_mode
+
+    return jsonify({
+        'success': True,
+        'guided_mode': guided_mode,
+        'q_guided_mode': GUIDED_MODE_TO_PARAM_VALUE[guided_mode],
+        'param_name': GUIDED_MODE_PARAM_NAME,
+    })
+
+
 @app.route('/api/guided_goto', methods=['POST'])
 def api_guided_goto():
     """Forward a guided goto request (lat/lon[/alt]) to the server command socket."""
@@ -2940,10 +3664,15 @@ def api_guided_goto():
             return jsonify({'success': False, 'message': 'Invalid altitude'}), 400
         alt = max(GUIDED_GOTO_MIN_ALT_M, min(GUIDED_GOTO_MAX_ALT_M, alt))
 
+    guided_mode = str(data.get('guided_mode', GUIDED_MODE_DEFAULT)).strip().lower()
+    if guided_mode not in GUIDED_MODE_TO_PARAM_VALUE:
+        return jsonify({'success': False, 'message': 'Invalid guided mode'}), 400
+
     msg = {
         'type': 'guided_goto',
         'lat': lat,
         'lon': lon,
+        'guided_mode': guided_mode,
     }
     if alt is not None:
         msg['alt'] = alt
@@ -2956,7 +3685,7 @@ def api_guided_goto():
     if not ok:
         return jsonify({'success': False, 'message': error_message}), status_code
 
-    return jsonify({'success': True, 'lat': lat, 'lon': lon, 'alt': alt})
+    return jsonify({'success': True, 'lat': lat, 'lon': lon, 'alt': alt, 'guided_mode': guided_mode})
 
 
 @app.route('/api/snapshot_cam0')
@@ -2989,6 +3718,51 @@ def api_hq_cv_mode():
 
     set_hq_cv_mode(mode)
     return jsonify({'success': True, 'mode': get_hq_cv_mode()})
+
+
+@app.route('/api/hq_camera_angle', methods=['POST'])
+def api_hq_camera_angle():
+    data = request.json or {}
+    angle_id = str(data.get('angle_id', '')).strip().lower()
+    preset = HQ_CAMERA_FIXED_ANGLE_PRESETS.get(angle_id)
+    if not preset:
+        return jsonify({'success': False, 'message': 'Unknown angle preset'}), 400
+
+    if get_hq_cv_mode() == HQ_CV_MODE_LANDING:
+        return jsonify({'success': False, 'message': 'Angle presets are disabled in Landing mode'}), 409
+
+    pitch_deg = float(_clamp(
+        float(preset.get('pitch_deg', 0.0) or 0.0),
+        float(GIMBAL_PITCH_MIN_DEG),
+        float(GIMBAL_PITCH_MAX_DEG),
+    ))
+    yaw_deg = float(_clamp(
+        float(preset.get('yaw_deg', 0.0) or 0.0),
+        float(GIMBAL_YAW_MIN_DEG),
+        float(GIMBAL_YAW_MAX_DEG),
+    ))
+
+    pitch_pwm = _gimbal_angle_to_pwm_pitch(pitch_deg)
+    yaw_pwm = _gimbal_angle_to_pwm_yaw(yaw_deg)
+    generation = set_hq_fixed_angle_hold(angle_id, pitch_pwm, yaw_pwm)
+    _send_gimbal_bridge_persistent_rc_override(pitch_pwm, yaw_pwm)
+
+    with gimbal_commanded_angles_lock:
+        gimbal_commanded_angles['pitch_deg'] = float(pitch_deg)
+        gimbal_commanded_angles['yaw_deg'] = float(yaw_deg)
+
+    global _gimbal_inhibit_until
+    with _gimbal_inhibit_lock:
+        _gimbal_inhibit_until = time.time() + GIMBAL_MANUAL_INHIBIT_SEC
+
+    return jsonify({
+        'success': True,
+        'angle_id': angle_id,
+        'pitch_deg': float(pitch_deg),
+        'yaw_deg': float(yaw_deg),
+        'generation': int(generation),
+        'heartbeat_hz': float(max(0.2, float(HQ_CAMERA_FIXED_ANGLE_HEARTBEAT_HZ))),
+    })
 
 
 @app.route('/api/hq_target_selection', methods=['GET', 'POST'])
@@ -3101,7 +3875,9 @@ if __name__ == '__main__':
     Thread(target=lambda: receive_camera_http(1, f'http://{SERVER_IP}:{CAM1_PORT}'), daemon=True).start()
     Thread(target=lambda: receive_camera_http(2, f'http://{SERVER_IP}:{CAM_HQ_PORT}'), daemon=True).start()
     Thread(target=lambda: asyncio.run(receive_telemetry()), daemon=True).start()
-    print('SITL_MODE: fiducial websocket disabled.')
+    # Start local fiducial processor (SITL): process HQ frames locally
+    Thread(target=run_local_fiducial_loop, daemon=True).start()
+    Thread(target=run_hq_fixed_angle_heartbeat_loop, daemon=True).start()
     Thread(target=receive_mavlink, daemon=True).start()
     Thread(target=receive_mavlink_udp_messages, daemon=True).start()
     Thread(target=status_monitor, daemon=True).start()

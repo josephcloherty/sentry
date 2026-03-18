@@ -207,6 +207,13 @@
             <div class="media">
                 <img id="stream_hq" src="{{ url_for('video_feed_hq') }}">
             </div>
+            <div class="hq-angle-rail" data-hq-angle-rail aria-label="High quality camera fixed angles">
+                <button type="button" class="hq-angle-btn" data-hq-angle-id="left">Left</button>
+                <button type="button" class="hq-angle-btn" data-hq-angle-id="forward">Forward</button>
+                <button type="button" class="hq-angle-btn" data-hq-angle-id="down">Down</button>
+                <button type="button" class="hq-angle-btn" data-hq-angle-id="backward">Backwards</button>
+                <button type="button" class="hq-angle-btn" data-hq-angle-id="right">Right</button>
+            </div>
             <div class="camera-function-rail" data-function-rail data-camera-id="hq" aria-label="High quality camera functions"></div>
             <div class="desc">High Quality camera for detailed imaging (Gimbal)</div>
         </div>
@@ -488,6 +495,10 @@
             <button type="button" id="minimapEnlargeBtn" class="minimap-control-btn" aria-label="Enlarge minimap" aria-pressed="false" title="Enlarge Minimap">
                 <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><polyline points="15 3 21 3 21 9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></polyline><polyline points="9 21 3 21 3 15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></polyline><line x1="21" y1="3" x2="14" y2="10" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line><line x1="3" y1="21" x2="10" y2="14" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line></svg>
             </button>
+            <div id="minimapGuidedAltitudeWrap" class="minimap-guided-alt" aria-hidden="true">
+                <label for="minimapGuidedAltitudeInput">Alt (m)</label>
+                <input type="number" id="minimapGuidedAltitudeInput" min="1" max="500" step="1" value="20" inputmode="decimal" aria-label="Guided altitude in meters">
+            </div>
         </div>
         <div class="minimap-content" id="minimap-content">
             <!-- iframe cloned here when available; no text per design -->
@@ -516,6 +527,8 @@
         const SETTINGS_TILE_INACTIVE_TITLE = 'Inactive';
         const SETTINGS_TILE_HINT_TEXT = 'Drag tiles between Active and Inactive. The Active order matches the home screen layout.';
         const SETTINGS_TILE_EMPTY_TEXT = 'Drop here';
+        const SETTINGS_COOKIE_NAME = 'sentry_user_settings';
+        const SETTINGS_COOKIE_MAX_AGE_SEC = 60 * 60 * 24 * 30;
         const TILE_DEFS = [
             { id: 'cam0', label: 'Pilot camera' },
             { id: 'cam1', label: 'Landing camera' },
@@ -542,6 +555,15 @@
             tile_order: DEFAULT_TILE_ORDER
         };
         const SERVER_USER_SETTINGS = JSON.parse(document.getElementById(USER_SETTINGS_DATA_ID)?.textContent || 'null');
+        const COOKIE_USER_SETTINGS = (() => {
+            try {
+                const match = document.cookie.match(new RegExp('(?:^|; )' + SETTINGS_COOKIE_NAME + '=([^;]*)'));
+                if (!match || !match[1]) return null;
+                return JSON.parse(decodeURIComponent(match[1]));
+            } catch (_) {
+                return null;
+            }
+        })();
         const LATENCY_SNAPSHOT_TIMEOUT_MS = 1500;
         const MAVLINK_TERMINAL_ENDPOINT = '/api/mavlink_messages';
         const MAVLINK_TERMINAL_POLL_MS = 500;
@@ -555,11 +577,16 @@
         const MINIMAP_ENLARGE_ACTIVE_CLASS = 'is-large';
         const MAP_GUIDED_MODE_MESSAGE_TYPE = 'sentry_guided_map_dblclick';
         const MAP_GUIDED_GOTO_ENDPOINT = '/api/guided_goto';
+        const MAP_GUIDED_MODE_ENDPOINT = '/api/guided_mode';
         const MAP_GUIDED_GOTO_TIMEOUT_MS = 5000;
         const MAP_GUIDED_DEFAULT_ALT_M = 20;
         const MAP_GUIDED_MIN_ALT_M = 1;
         const MAP_GUIDED_MAX_ALT_M = 500;
         const MAP_GUIDED_ALT_STEP_M = 1;
+        const MAP_GUIDED_MODE_FIXED_WING = 'fixed_wing';
+        const MAP_GUIDED_MODE_VTOL = 'vtol';
+        const MAP_GUIDED_MODE_DEFAULT = MAP_GUIDED_MODE_VTOL;
+        const GUIDED_MODE_RAIL_FUNCTION_ID = 'guided_mode_switch';
         const LATENCY_THRESHOLD_GOOD_MS = 100;
         const LATENCY_THRESHOLD_WARNING_MS = 300;
         const LATENCY_HEADER_FRAME_TS = 'X-Frame-Ts';
@@ -577,12 +604,17 @@
         const HQ_TARGET_SELECTION_ENDPOINT = '/api/hq_target_selection';
         const HQ_TARGET_TRACKING_MODEL_ENDPOINT = '/api/hq_target_tracking_model';
         const HQ_TARGET_TRACKING_STATUS_ENDPOINT = '/api/hq_target_tracking_status';
+        const HQ_CAMERA_ANGLE_ENDPOINT = '/api/hq_camera_angle';
+        const HQ_CAMERA_ANGLE_ENABLED_MODES = new Set(['none', 'target_tracking']);
         const HQ_TARGET_TRACKING_STATUS_POLL_MS = 1500;
         const HQ_CV_DEFAULT_MODE = '';
         const APP_MODE_FALLBACK = 'MAIN';
         const APP_MODE_ALLOWED = new Set(['MAIN', 'TEST', 'SITL']);
 
-        let userSettings = mergeSettings(DEFAULT_USER_SETTINGS, SERVER_USER_SETTINGS || {});
+        let userSettings = mergeSettings(
+            mergeSettings(DEFAULT_USER_SETTINGS, SERVER_USER_SETTINGS || {}),
+            COOKIE_USER_SETTINGS || {}
+        );
         let cameraFunctionTabs = userSettings.camera_function_tabs || DEFAULT_CAMERA_FUNCTION_TABS;
         let latencyUpdateIntervalMs = userSettings.latency_polling_rate_ms || DEFAULT_USER_SETTINGS.latency_polling_rate_ms;
         let statusUpdateIntervalMs = userSettings.status_update_interval_ms || DEFAULT_USER_SETTINGS.status_update_interval_ms;
@@ -593,12 +625,14 @@
         let hqTargetSelected = false;
         let hqTargetTrackId = null;
         let hqTrackingStatusText = '';
+        let hqActiveAnglePresetId = '';
         let hqTargetTrackingModelKey = 'best8np2';
         let hqTargetTrackingModelOptions = [
             { key: 'best8np2', label: 'best8np2' },
             { key: 'best_stg1', label: 'best_stg1' }
         ];
         let guidedModeEnabled = false;
+        let guidedCommandMode = MAP_GUIDED_MODE_DEFAULT;
         let guidedModeAltitudeM = MAP_GUIDED_DEFAULT_ALT_M;
         let minimapLarge = false;
         let armState = false;
@@ -626,10 +660,14 @@
         const minimapClearBtnEl = document.getElementById('minimapClearBtn');
         const minimapGuidedBtnEl = document.getElementById('minimapGuidedBtn');
         const minimapEnlargeBtnEl = document.getElementById('minimapEnlargeBtn');
+        const minimapGuidedAltitudeWrapEl = document.getElementById('minimapGuidedAltitudeWrap');
+        const minimapGuidedAltitudeInputEl = document.getElementById('minimapGuidedAltitudeInput');
         let armToggleBtnEls = [];
         let armStatusTextEls = [];
         let flightModeSelectEls = [];
         let flightModeStatusEls = [];
+        let guidedModeSelectEls = [];
+        let guidedModeStatusEls = [];
         
         // ===== GLOBAL STATE =====
         let latencyState = {
@@ -755,6 +793,13 @@
             return localStorage.getItem('sentryToken') || sessionStorage.getItem('sentryToken');
         }
 
+        function saveSettingsCookie(settings) {
+            try {
+                const serialized = encodeURIComponent(JSON.stringify(settings || {}));
+                document.cookie = `${SETTINGS_COOKIE_NAME}=${serialized}; max-age=${SETTINGS_COOKIE_MAX_AGE_SEC}; path=/; SameSite=Lax`;
+            } catch (_) {}
+        }
+
         function applyTileVisibility(visibleTiles) {
             document.querySelectorAll('[data-card]').forEach(card => {
                 const cardId = card.getAttribute('data-card-id');
@@ -798,6 +843,7 @@
             cameraFunctionTabs = userSettings.camera_function_tabs || DEFAULT_CAMERA_FUNCTION_TABS;
             latencyUpdateIntervalMs = userSettings.latency_polling_rate_ms || DEFAULT_USER_SETTINGS.latency_polling_rate_ms;
             statusUpdateIntervalMs = userSettings.status_update_interval_ms || DEFAULT_USER_SETTINGS.status_update_interval_ms;
+            saveSettingsCookie(userSettings);
             applyTileVisibility(userSettings.visible_tiles);
             applyTileOrder(userSettings.tile_order);
             renderCameraFunctionTabs();
@@ -947,6 +993,7 @@
             const allCommandIds = COMMAND_DEFS
                 .map(def => def.id)
                 .filter(id => !CAMERA_RAIL_BLOCKED_COMMAND_IDS.has(id));
+            allCommandIds.unshift(GUIDED_MODE_RAIL_FUNCTION_ID);
             const activeIds = (selectedIds || []).filter(id => allCommandIds.includes(id));
             const inactiveIds = allCommandIds.filter(id => !activeIds.includes(id));
 
@@ -954,11 +1001,19 @@
             inactiveList.innerHTML = '';
 
             activeIds.forEach(id => {
+                if (id === GUIDED_MODE_RAIL_FUNCTION_ID) {
+                    activeList.appendChild(buildSettingsDragItem({ id, label: 'Guided Type Switch' }));
+                    return;
+                }
                 const def = getCommandDef(id);
                 if (def) activeList.appendChild(buildSettingsDragItem(def));
             });
 
             inactiveIds.forEach(id => {
+                if (id === GUIDED_MODE_RAIL_FUNCTION_ID) {
+                    inactiveList.appendChild(buildSettingsDragItem({ id, label: 'Guided Type Switch' }));
+                    return;
+                }
                 const def = getCommandDef(id);
                 if (def) inactiveList.appendChild(buildSettingsDragItem(def));
             });
@@ -1560,6 +1615,10 @@
                 guidedAltitudeWrapEl.classList.toggle('is-active', guidedModeEnabled);
                 guidedAltitudeWrapEl.setAttribute('aria-hidden', guidedModeEnabled ? 'false' : 'true');
             }
+            if (minimapGuidedAltitudeWrapEl) {
+                minimapGuidedAltitudeWrapEl.classList.toggle('is-active', guidedModeEnabled);
+                minimapGuidedAltitudeWrapEl.setAttribute('aria-hidden', guidedModeEnabled ? 'false' : 'true');
+            }
             if (minimapGuidedBtnEl) {
                 minimapGuidedBtnEl.classList.toggle('is-active', guidedModeEnabled);
                 minimapGuidedBtnEl.setAttribute('aria-pressed', guidedModeEnabled ? 'true' : 'false');
@@ -1597,13 +1656,23 @@
             return Math.min(MAP_GUIDED_MAX_ALT_M, Math.max(MAP_GUIDED_MIN_ALT_M, value));
         }
 
-        function getGuidedAltitudeValue() {
-            const rawValue = Number(guidedAltitudeInputEl?.value ?? guidedModeAltitudeM);
-            guidedModeAltitudeM = clampGuidedAltitude(rawValue);
+        function syncGuidedAltitudeInputs() {
             if (guidedAltitudeInputEl) {
                 guidedAltitudeInputEl.value = String(guidedModeAltitudeM);
             }
+            if (minimapGuidedAltitudeInputEl) {
+                minimapGuidedAltitudeInputEl.value = String(guidedModeAltitudeM);
+            }
+        }
+
+        function setGuidedAltitudeValue(rawValue) {
+            guidedModeAltitudeM = clampGuidedAltitude(Number(rawValue));
+            syncGuidedAltitudeInputs();
             return guidedModeAltitudeM;
+        }
+
+        function getGuidedAltitudeValue() {
+            return setGuidedAltitudeValue(guidedModeAltitudeM);
         }
 
         function setMapGuidedMode(enabled) {
@@ -1621,6 +1690,7 @@
         async function sendGuidedGoto(lat, lon) {
             const guidedAlt = getGuidedAltitudeValue();
             const sentTsMs = Date.now();
+            const mode = guidedCommandMode || MAP_GUIDED_MODE_DEFAULT;
 
             // Show marker immediately so operator gets instant visual feedback.
             callMapMethod('addGuidedTargetMarker', lat, lon, guidedAlt, sentTsMs);
@@ -1632,7 +1702,7 @@
                     {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ lat, lon, alt: guidedAlt })
+                        body: JSON.stringify({ lat, lon, alt: guidedAlt, guided_mode: mode })
                     },
                     MAP_GUIDED_GOTO_TIMEOUT_MS
                 );
@@ -1896,6 +1966,39 @@
             return wrap;
         }
 
+        function buildGuidedModeControlTile() {
+            const label = document.createElement('label');
+            label.className = 'command-control-label';
+            label.textContent = 'Guided Type';
+
+            const select = document.createElement('select');
+            select.className = 'flight-mode-select';
+            select.setAttribute('aria-label', 'Guided mode type selector');
+            select.setAttribute('data-guided-mode-select', 'true');
+
+            const fwOpt = document.createElement('option');
+            fwOpt.value = MAP_GUIDED_MODE_FIXED_WING;
+            fwOpt.textContent = 'Fixed Wing';
+            select.appendChild(fwOpt);
+
+            const vtolOpt = document.createElement('option');
+            vtolOpt.value = MAP_GUIDED_MODE_VTOL;
+            vtolOpt.textContent = 'VTOL';
+            select.appendChild(vtolOpt);
+
+            const status = document.createElement('span');
+            status.className = 'command-control-status';
+            status.textContent = 'Guided Type: --';
+            status.setAttribute('data-guided-mode-status', 'true');
+
+            const wrap = document.createElement('div');
+            wrap.className = 'command-control-tile';
+            wrap.appendChild(label);
+            wrap.appendChild(select);
+            wrap.appendChild(status);
+            return wrap;
+        }
+
         async function setArmState(nextState) {
             if (!armToggleBtnEls.length) return;
             armToggleBtnEls.forEach(btn => { btn.disabled = true; });
@@ -1948,6 +2051,75 @@
             }
         }
 
+        function applyGuidedModeToUI() {
+            if (guidedCommandMode !== MAP_GUIDED_MODE_FIXED_WING && guidedCommandMode !== MAP_GUIDED_MODE_VTOL) {
+                guidedCommandMode = MAP_GUIDED_MODE_DEFAULT;
+            }
+            guidedModeSelectEls.forEach(selectEl => {
+                selectEl.value = guidedCommandMode;
+            });
+            const label = guidedCommandMode === MAP_GUIDED_MODE_FIXED_WING ? 'Fixed Wing' : 'VTOL';
+            setControlStatusText(guidedModeStatusEls, `Guided Type: ${label}`);
+
+            const railButtons = document.querySelectorAll('.rail-guided-mode-tab');
+            railButtons.forEach((btn) => {
+                const isFixedWing = guidedCommandMode === MAP_GUIDED_MODE_FIXED_WING;
+                btn.classList.toggle('is-active', isFixedWing);
+                btn.setAttribute('aria-pressed', isFixedWing ? 'true' : 'false');
+                const nextLabel = isFixedWing ? 'Cruise' : 'VTOL';
+                btn.setAttribute('aria-label', `Guided type: ${nextLabel}`);
+                btn.setAttribute('title', `Guided type: ${nextLabel}`);
+                const labelEl = btn.querySelector('.camera-tab-label');
+                if (labelEl) {
+                    labelEl.textContent = nextLabel;
+                }
+            });
+        }
+
+        async function loadGuidedModeSetting() {
+            try {
+                const res = await fetch(MAP_GUIDED_MODE_ENDPOINT, { cache: 'no-store' });
+                if (!res.ok) return;
+                const data = await res.json();
+                const mode = String(data?.guided_mode || '').trim().toLowerCase();
+                if (mode === MAP_GUIDED_MODE_FIXED_WING || mode === MAP_GUIDED_MODE_VTOL) {
+                    guidedCommandMode = mode;
+                }
+                applyGuidedModeToUI();
+            } catch (err) {
+                console.error('Failed to load guided mode setting:', err);
+            }
+        }
+
+        async function setGuidedModeSetting(nextMode) {
+            const mode = String(nextMode || '').trim().toLowerCase();
+            if (mode !== MAP_GUIDED_MODE_FIXED_WING && mode !== MAP_GUIDED_MODE_VTOL) return;
+
+            guidedModeSelectEls.forEach(selectEl => { selectEl.disabled = true; });
+            document.querySelectorAll('.rail-guided-mode-tab').forEach(btn => { btn.disabled = true; });
+            setControlStatusText(guidedModeStatusEls, `Guided Type: ${mode === MAP_GUIDED_MODE_FIXED_WING ? 'Fixed Wing' : 'VTOL'} (sending...)`);
+            try {
+                const res = await fetch(MAP_GUIDED_MODE_ENDPOINT, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ guided_mode: mode })
+                });
+                const data = await res.json();
+                if (res.ok && data?.success) {
+                    guidedCommandMode = mode;
+                } else {
+                    setControlStatusText(guidedModeStatusEls, data?.message || 'Guided Type: update failed', true);
+                }
+            } catch (err) {
+                setControlStatusText(guidedModeStatusEls, 'Guided Type: update failed', true);
+                console.error('Failed to set guided mode setting:', err);
+            } finally {
+                guidedModeSelectEls.forEach(selectEl => { selectEl.disabled = false; });
+                document.querySelectorAll('.rail-guided-mode-tab').forEach(btn => { btn.disabled = false; });
+                applyGuidedModeToUI();
+            }
+        }
+
         function setupArmModeControls() {
             if (!armToggleBtnEls.length || !flightModeSelectEls.length) return;
 
@@ -1986,6 +2158,18 @@
 
             applyArmStateToUI();
             applyFlightModeToUI();
+        }
+
+        function setupGuidedModeControls() {
+            if (!guidedModeSelectEls.length) return;
+            guidedModeSelectEls.forEach(selectEl => {
+                selectEl.addEventListener('change', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setGuidedModeSetting(selectEl.value);
+                });
+            });
+            applyGuidedModeToUI();
         }
 
         function applyMinimapUiState() {
@@ -2106,6 +2290,22 @@
             return btn;
         }
 
+        function buildGuidedModeRailButton() {
+            const guidedModeBtn = document.createElement('button');
+            guidedModeBtn.type = 'button';
+            guidedModeBtn.className = 'camera-function-tab rail-guided-mode-tab';
+            guidedModeBtn.innerHTML = '<span class="camera-tab-icon"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="m13 6 6 6-6 6"></path><path d="m11 18-6-6 6-6"></path></svg></span><span class="camera-tab-label">VTOL</span>';
+            guidedModeBtn.setAttribute('aria-label', 'Guided type: VTOL');
+            guidedModeBtn.setAttribute('aria-pressed', 'false');
+            guidedModeBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const nextMode = guidedCommandMode === MAP_GUIDED_MODE_VTOL ? MAP_GUIDED_MODE_FIXED_WING : MAP_GUIDED_MODE_VTOL;
+                setGuidedModeSetting(nextMode);
+            });
+            return guidedModeBtn;
+        }
+
         function renderCommandSuite() {
             const compactEl = document.getElementById('command-compact');
             const fullEl = document.getElementById('command-full');
@@ -2116,8 +2316,10 @@
 
             compactEl.appendChild(buildArmControlTile());
             compactEl.appendChild(buildModeControlTile());
+            compactEl.appendChild(buildGuidedModeControlTile());
             fullEl.appendChild(buildArmControlTile());
             fullEl.appendChild(buildModeControlTile());
+            fullEl.appendChild(buildGuidedModeControlTile());
 
             COMMAND_MINIMIZED_ORDER.forEach(id => {
                 const def = getCommandDef(id);
@@ -2132,16 +2334,23 @@
             armStatusTextEls = Array.from(document.querySelectorAll('[data-arm-status]'));
             flightModeSelectEls = Array.from(document.querySelectorAll('[data-flight-mode-select]'));
             flightModeStatusEls = Array.from(document.querySelectorAll('[data-flight-mode-status]'));
+            guidedModeSelectEls = Array.from(document.querySelectorAll('[data-guided-mode-select]'));
+            guidedModeStatusEls = Array.from(document.querySelectorAll('[data-guided-mode-status]'));
         }
 
         function renderCameraFunctionTabs() {
             document.querySelectorAll('[data-function-rail]').forEach(rail => {
                 const cameraId = rail.dataset.cameraId;
-                const selectedIds = ((cameraFunctionTabs && cameraFunctionTabs[cameraId]) || [])
+                const selectedIdsRaw = ((cameraFunctionTabs && cameraFunctionTabs[cameraId]) || []);
+                const selectedIds = selectedIdsRaw
                     .filter(id => !CAMERA_RAIL_BLOCKED_COMMAND_IDS.has(id));
                 rail.innerHTML = '';
 
                 selectedIds.forEach(id => {
+                    if (id === GUIDED_MODE_RAIL_FUNCTION_ID) {
+                        rail.appendChild(buildGuidedModeRailButton());
+                        return;
+                    }
                     const def = getCommandDef(id);
                     if (def) rail.appendChild(buildCameraFunctionButton(def));
                 });
@@ -2174,6 +2383,7 @@
             });
 
             applyHqTargetSelectionToUI();
+            applyGuidedModeToUI();
         }
 
         function renderMapFunctionRail() {
@@ -2194,7 +2404,10 @@
                 guidedAltitudeInputEl.value = String(guidedModeAltitudeM);
 
                 guidedAltitudeInputEl.addEventListener('change', () => {
-                    getGuidedAltitudeValue();
+                    setGuidedAltitudeValue(guidedAltitudeInputEl.value);
+                });
+                guidedAltitudeInputEl.addEventListener('input', () => {
+                    setGuidedAltitudeValue(guidedAltitudeInputEl.value);
                 });
             }
 
@@ -2207,6 +2420,24 @@
         }
 
         function setupMinimapControls() {
+            if (minimapGuidedAltitudeInputEl) {
+                minimapGuidedAltitudeInputEl.min = String(MAP_GUIDED_MIN_ALT_M);
+                minimapGuidedAltitudeInputEl.max = String(MAP_GUIDED_MAX_ALT_M);
+                minimapGuidedAltitudeInputEl.step = String(MAP_GUIDED_ALT_STEP_M);
+                minimapGuidedAltitudeInputEl.value = String(guidedModeAltitudeM);
+                minimapGuidedAltitudeInputEl.addEventListener('change', (e) => {
+                    e.stopPropagation();
+                    setGuidedAltitudeValue(minimapGuidedAltitudeInputEl.value);
+                });
+                minimapGuidedAltitudeInputEl.addEventListener('input', (e) => {
+                    e.stopPropagation();
+                    setGuidedAltitudeValue(minimapGuidedAltitudeInputEl.value);
+                });
+                minimapGuidedAltitudeInputEl.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                });
+            }
+
             minimapCenterBtnEl?.addEventListener('click', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -2241,10 +2472,60 @@
                 btn.classList.toggle('is-active', isActive);
                 btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
             });
+            applyHqAngleRailState();
             applyHqTargetSelectionToUI();
             updateHqStreamSelectionState();
             renderHqTargetTrackingModelSelector();
             renderHqTrackingStatusLine();
+        }
+
+        function applyHqAngleRailState() {
+            const enabled = HQ_CAMERA_ANGLE_ENABLED_MODES.has(hqCvMode);
+            const buttons = document.querySelectorAll('.hq-angle-btn[data-hq-angle-id]');
+            buttons.forEach((btn) => {
+                const presetId = String(btn.dataset.hqAngleId || '');
+                const isActive = Boolean(presetId) && presetId === hqActiveAnglePresetId;
+                btn.disabled = !enabled;
+                btn.classList.toggle('is-active', isActive);
+                btn.classList.toggle('is-disabled', !enabled);
+                btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+                if (!enabled) {
+                    btn.setAttribute('title', 'Disabled while Landing mode is active');
+                } else {
+                    btn.removeAttribute('title');
+                }
+            });
+        }
+
+        async function setHqCameraAnglePreset(presetId) {
+            if (!presetId || !HQ_CAMERA_ANGLE_ENABLED_MODES.has(hqCvMode)) return;
+            try {
+                const res = await fetch(HQ_CAMERA_ANGLE_ENDPOINT, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ angle_id: presetId })
+                });
+                if (!res.ok) return;
+                const data = await res.json();
+                if (!data?.success) return;
+                hqActiveAnglePresetId = typeof data?.angle_id === 'string' ? data.angle_id : presetId;
+                applyHqAngleRailState();
+            } catch (err) {
+                console.error('Failed to set HQ camera angle preset:', err);
+            }
+        }
+
+        function setupHqAngleRailControls() {
+            document.addEventListener('click', (e) => {
+                const btn = e.target?.closest?.('.hq-angle-btn[data-hq-angle-id]');
+                if (!btn) return;
+                e.preventDefault();
+                e.stopPropagation();
+                if (btn.disabled) return;
+                setHqCameraAnglePreset(String(btn.dataset.hqAngleId || ''));
+            }, true);
+
+            applyHqAngleRailState();
         }
 
         function renderHqTargetTrackingModelSelector() {
@@ -2857,6 +3138,7 @@
             setupGuidedModeToolbar();
             setupMinimapControls();
             setupHqCvModeSwitch();
+            setupHqAngleRailControls();
             setupHqTargetTrackingModelSelector();
             setupHqTargetSelectionInteraction();
             window.addEventListener('message', handleGuidedMapMessage);
@@ -2869,7 +3151,9 @@
             applySettingsToUI(userSettings);
             renderCommandSuite();
             setupArmModeControls();
+            setupGuidedModeControls();
             renderMapFunctionRail();
+            loadGuidedModeSetting();
             loadHqCvMode();
             loadHqTargetTrackingModel();
             loadHqTargetSelection();
