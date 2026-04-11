@@ -1,0 +1,511 @@
+import cv2
+import numpy as np
+import math
+import argparse
+import sys
+import os
+import threading
+import time
+
+# ===== Configuration (tunable) =====
+BOX_COLOR = (0, 0, 255)              # Red bounding box colour (BGR)
+BOX_THICKNESS = 2                    # Bounding box line thickness
+CLAHE_ENABLED_DEFAULT = True         # Apply CLAHE for better contrast at range
+CLAHE_CLIP_LIMIT = 3.0               # CLAHE clip limit
+CLAHE_TILE_GRID_SIZE = (8, 8)        # CLAHE tile grid size
+MULTISCALE_ENABLED_DEFAULT = True    # Run detection at multiple scales by default
+MULTISCALE_DEFAULT_SCALES = [1.0, 1.5, 2.0]  # Scales used when multiscale is on
+
+def calculate_offsets(frame, camera_matrix, dist_coeffs, tag_size_meters=0.15, scale=1.0, use_clahe=CLAHE_ENABLED_DEFAULT, tag_sizes=None, multiscale=MULTISCALE_ENABLED_DEFAULT, scales=None):
+    # Initialize the AprilTag 36h11 dictionary (standard for these markers)
+    dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
+    try:
+        params = cv2.aruco.DetectorParameters()
+    except Exception:
+        params = cv2.aruco.DetectorParameters_create()
+
+    # Tweak detector parameters for improved distant detection
+    params.adaptiveThreshWinSizeMin = 3
+    params.adaptiveThreshWinSizeMax = 101
+    params.adaptiveThreshWinSizeStep = 10
+    params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
+    params.polygonalApproxAccuracyRate = 0.03
+    params.minMarkerPerimeterRate = 0.001
+    params.minCornerDistanceRate = 0.01
+    params.perspectiveRemoveIgnoredMarginPerCell = 0.13
+    params.errorCorrectionRate = 0.6
+
+    detector = cv2.aruco.ArucoDetector(dictionary, params)
+
+    # Convert to grayscale and optional CLAHE
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    if use_clahe:
+        clahe = cv2.createCLAHE(clipLimit=CLAHE_CLIP_LIMIT, tileGridSize=CLAHE_TILE_GRID_SIZE)
+        gray = clahe.apply(gray)
+
+    # prepare scaled image
+    if scale != 1.0:
+        gray_up = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+    else:
+        gray_up = gray
+
+    # Multi-scale detection: run detector at multiple scales and pick the best per id
+    if multiscale and scales:
+        merged = {}
+        for s in scales:
+            if s == 1.0:
+                g = gray
+            else:
+                g = cv2.resize(gray, None, fx=s, fy=s, interpolation=cv2.INTER_LINEAR)
+
+            corners_s, ids_s, _ = detector.detectMarkers(g)
+            if ids_s is None:
+                continue
+
+            for i in range(len(ids_s)):
+                try:
+                    cid = int(ids_s[i][0])
+                    c = corners_s[i][0]
+                except Exception:
+                    continue
+
+                c_back = c / s
+                try:
+                    c_back_shaped = c_back.reshape((4, 1, 2))
+                except Exception:
+                    c_back_shaped = c_back.reshape((4, 2)).reshape((4, 1, 2))
+
+                flat = c_back.reshape((4, 2))
+                area = 0.5 * abs(np.dot(flat[:, 0], np.roll(flat[:, 1], 1)) - np.dot(flat[:, 1], np.roll(flat[:, 0], 1)))
+
+                prev = merged.get(cid)
+                if prev is None or area > prev['area']:
+                    merged[cid] = {'corners': c_back_shaped, 'area': area}
+
+        if len(merged) == 0:
+            corners_up, ids, rejected = [], None, None
+        else:
+            ids = np.array([[k] for k in merged.keys()])
+            corners_up = [merged[k]['corners'] for k in merged.keys()]
+            rejected = None
+    else:
+        corners_up, ids, rejected = detector.detectMarkers(gray_up)
+
+    yaw_offset_deg = 0.0
+    pitch_offset_deg = 0.0
+    distance_m = None
+    detected_id = None
+    paper_yaw_deg = None
+    paper_pitch_deg = None
+
+    if ids is not None and len(ids) > 0:
+        # Map corners back to original frame if needed
+        if scale != 1.0:
+            corners = [c / scale for c in corners_up]
+        else:
+            corners = corners_up
+
+        # Draw a red bounding box around each detected marker
+        for _i, _c in enumerate(corners):
+            try:
+                _pts = _c[0].astype(np.int32)
+                _x, _y, _bw, _bh = cv2.boundingRect(_pts)
+                cv2.rectangle(frame, (_x, _y), (_x + _bw, _y + _bh), BOX_COLOR, BOX_THICKNESS)
+            except Exception:
+                pass
+
+        height, width = frame.shape[:2]
+        u_c = width / 2.0
+        v_c = height / 2.0
+
+        closest_distance = None
+
+        for idx in range(len(ids)):
+            try:
+                c = corners[idx][0]
+            except Exception:
+                continue
+
+            tag_id = int(ids[idx][0])
+            tag_size = tag_size_meters
+            if tag_sizes and tag_id in tag_sizes:
+                tag_size = tag_sizes[tag_id]
+
+            half_size = tag_size / 2.0
+            obj_points = np.array([
+                [-half_size, half_size, 0],
+                [half_size, half_size, 0],
+                [half_size, -half_size, 0],
+                [-half_size, -half_size, 0]
+            ], dtype=np.float32)
+
+            success, rvec, tvec = cv2.solvePnP(obj_points, c, camera_matrix, dist_coeffs)
+            if not success:
+                continue
+
+            x, y, z = tvec.flatten()
+            d = float(np.linalg.norm(tvec))
+
+            yaw_offset_rad = math.atan2(x, z)
+            pitch_offset_rad = math.atan2(y, z)
+
+            yaw_deg = math.degrees(yaw_offset_rad)
+            pitch_deg = math.degrees(pitch_offset_rad)
+
+            axis_len = max(0.05, tag_size * 0.5)
+            if d < 3.0:
+                cv2.drawFrameAxes(frame, camera_matrix, dist_coeffs, rvec, tvec, axis_len)
+
+            u = int(np.mean(c[:, 0]))
+            v = int(np.mean(c[:, 1]))
+            cv2.putText(frame, f"ID:{tag_id}", (u - 40, v - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+            cv2.putText(frame, f"Yaw:{yaw_deg:.1f}deg", (u - 40, v - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+            cv2.putText(frame, f"Pitch:{pitch_deg:.1f}deg", (u - 40, v + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+            cv2.putText(frame, f"D:{d:.2f}m", (u - 40, v + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+
+            if closest_distance is None or d < closest_distance:
+                closest_distance = d
+                distance_m = d
+                detected_id = tag_id
+                yaw_offset_deg = yaw_deg
+                pitch_offset_deg = pitch_deg
+
+                try:
+                    fx = camera_matrix[0, 0]
+                    fy = camera_matrix[1, 1]
+                    fov_u = 2 * math.atan((width) / (2 * fx))
+                    fov_v = 2 * math.atan((height) / (2 * fy))
+                    paper_yaw_rad = ((u - u_c) / (2 * u_c)) * fov_u
+                    paper_pitch_rad = ((v - v_c) / (2 * v_c)) * fov_v
+                    paper_yaw_deg = math.degrees(paper_yaw_rad)
+                    paper_pitch_deg = math.degrees(paper_pitch_rad)
+                except Exception:
+                    paper_yaw_deg = None
+                    paper_pitch_deg = None
+
+        if distance_m is not None:
+            cv2.putText(frame, f"Closest ID:{detected_id} D:{distance_m:.2f}m Yaw:{yaw_offset_deg:.1f}", (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+            if paper_yaw_deg is not None and paper_pitch_deg is not None:
+                cv2.putText(frame, f"PaperYaw:{paper_yaw_deg:.1f}deg PaperPitch:{paper_pitch_deg:.1f}deg", (10, 60),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 0), 2)
+
+    return frame, yaw_offset_deg, pitch_offset_deg, distance_m, detected_id
+
+# --- Main Execution ---
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='AprilTag pose estimation. Source can be a camera index, file path, or YouTube URL.')
+    parser.add_argument('--source', '-s', default='0', help='Video source: camera index (0), file path, or YouTube URL')
+    parser.add_argument('--tag-size', type=float, default=0.15, help='Default tag size in meters (used for pose estimation)')
+    parser.add_argument('--scale', type=float, default=1.0, help='Upscale factor before detection (e.g. 2.0)')
+    parser.add_argument('--clahe', action='store_true', help='Enable CLAHE preprocessing')
+    parser.add_argument('--tag-sizes', type=str, default='', help='Per-tag-size map as "id:size,..." e.g. "1:0.03,2:0.15"')
+    parser.add_argument('--multiscale', action='store_true', help='Enable multi-scale detection')
+    parser.add_argument('--scales', type=str, default='', help='Comma separated scale factors for multiscale, e.g. "1.0,1.5,2.0"')
+    parser.add_argument('--frame-skip', type=int, default=1, help='Process detection every N frames to reduce CPU (default 1)')
+    parser.add_argument('--force-fps', type=float, default=0.0, help='Force playback FPS (overrides detected stream FPS)')
+    parser.add_argument('--debug', action='store_true', help='Print debug timing information')
+    args = parser.parse_args()
+
+    # WARNING: You MUST replace these with your camera's actual calibration values!
+    # These are dummy values for a generic 640x480 webcam.
+    focal_length = 600.0
+    center_x = 320.0
+    center_y = 240.0
+    camera_matrix = np.array([[focal_length, 0, center_x],
+                              [0, focal_length, center_y],
+                              [0, 0, 1]], dtype=np.float32)
+    dist_coeffs = np.zeros((4, 1))
+
+    def get_capture(source):
+        # If the source looks like a URL, try to resolve a stream URL (YouTube) via yt-dlp, fallback to pafy
+        if isinstance(source, str) and source.startswith('http'):
+            # Try yt-dlp first
+            try:
+                from yt_dlp import YoutubeDL
+                # Prefer a 480p (or lower) format to reduce bandwidth and ensure consistent size
+                ydl_opts = {'format': 'bestvideo[height<=480]+bestaudio/best[height<=480]', 'quiet': True}
+                with YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(source, download=False)
+                    stream_url = None
+                    if info is None:
+                        raise RuntimeError('yt-dlp failed to extract info')
+                    # If formats provided, select the best format with height<=480
+                    if 'formats' in info and info['formats']:
+                        candidate = None
+                        for fmt in info['formats']:
+                            h = fmt.get('height')
+                            url = fmt.get('url')
+                            if url and h is not None and h <= 480:
+                                # choose the one with highest height <=480
+                                if candidate is None or (fmt.get('height', 0) > candidate.get('height', 0)):
+                                    candidate = fmt
+                        if candidate and 'url' in candidate:
+                            stream_url = candidate['url']
+                    # fallback to top-level url if present
+                    if not stream_url and 'url' in info:
+                        stream_url = info['url']
+                    if stream_url:
+                        return cv2.VideoCapture(stream_url)
+            except Exception:
+                # try pafy as a fallback
+                try:
+                    import pafy
+                    # allow pafy to use internal backend if youtube-dl isn't available
+                    os.environ.setdefault('PAFY_BACKEND', 'internal')
+                    p = pafy.new(source)
+                    best = p.getbest(preftype="mp4")
+                    stream_url = best.url
+                    return cv2.VideoCapture(stream_url)
+                except Exception as e:
+                    raise RuntimeError(f"Failed to resolve YouTube stream URL: {e}. Ensure yt-dlp is installed in the environment.")
+
+        # Try interpreting as integer camera index
+        try:
+            idx = int(source)
+            return cv2.VideoCapture(idx)
+        except Exception:
+            # Fallback to file path or other URL
+            return cv2.VideoCapture(source)
+
+    # Use a threaded video reader that reconnects on failures to avoid blocking main thread
+    class VideoStream:
+        def __init__(self, source, reconnect=True, retry_delay=2.0):
+            self.source = source
+            self.reconnect = reconnect
+            self.retry_delay = retry_delay
+            self.cap = None
+            self.frame = None
+            self.fps = 30.0
+            self.stopped = False
+            self.lock = threading.Lock()
+            self.thread = threading.Thread(target=self._reader, daemon=True)
+            self.thread.start()
+            self._frame_index = 0
+
+        def _open(self):
+            try:
+                c = get_capture(self.source)
+                # attempt to read FPS from capture
+                try:
+                    fps = c.get(cv2.CAP_PROP_FPS)
+                    if fps is None or fps <= 0 or np.isnan(fps):
+                        fps = 30.0
+                except Exception:
+                    fps = 30.0
+                # clamp unrealistic fps values
+                try:
+                    fps = float(fps)
+                except Exception:
+                    fps = 30.0
+                fps = max(1.0, min(fps, 120.0))
+                self.fps = float(fps)
+                return c
+            except Exception:
+                return None
+
+        def _reader(self):
+            while not self.stopped:
+                if self.cap is None or not self.cap.isOpened():
+                    self.cap = self._open()
+                    if self.cap is None or not self.cap.isOpened():
+                        time.sleep(self.retry_delay)
+                        continue
+
+                ret, frm = self.cap.read()
+                if not ret:
+                    # Attempt to reopen once
+                    try:
+                        self.cap.release()
+                    except Exception:
+                        pass
+                    self.cap = None
+                    time.sleep(self.retry_delay)
+                    continue
+
+                # compute a reliable timestamp from frame index and known fps
+                with self.lock:
+                    self._frame_index += 1
+                    self.frame = frm
+                    try:
+                        self.frame_time = float(self._frame_index) / float(self.fps)
+                    except Exception:
+                        self.frame_time = None
+
+        def read(self):
+            with self.lock:
+                if self.frame is None:
+                    return None, None
+                f = self.frame.copy()
+                t = getattr(self, 'frame_time', None)
+                return f, t
+
+        def stop(self):
+            self.stopped = True
+            try:
+                if self.cap is not None:
+                    self.cap.release()
+            except Exception:
+                pass
+
+    vs = VideoStream(args.source)
+
+    # determine target frame interval from stream FPS (VideoStream sets fps after opening)
+    # wait a short moment for the reader to open and report fps
+    time.sleep(0.1)
+    try:
+        # Respect user override when provided
+        if args.force_fps and args.force_fps > 0:
+            stream_fps = float(args.force_fps)
+        else:
+            stream_fps = float(vs.fps)
+        if stream_fps <= 0 or np.isnan(stream_fps):
+            stream_fps = 30.0
+    except Exception:
+        stream_fps = 30.0
+    # clamp fps to sane range and compute interval
+    stream_fps = max(1.0, min(stream_fps, 120.0))
+    frame_interval = 1.0 / stream_fps
+    if args.debug:
+        print(f"DEBUG: stream_fps={stream_fps:.3f}, frame_interval={frame_interval:.6f}, force_fps={args.force_fps}")
+
+    # parse tag_sizes mapping if provided
+    tag_sizes = {}
+    if args.tag_sizes:
+        try:
+            pairs = [p.strip() for p in args.tag_sizes.split(',') if p.strip()]
+            for pair in pairs:
+                k, v = pair.split(':')
+                tag_sizes[int(k.strip())] = float(v.strip())
+        except Exception:
+            print('Failed to parse --tag-sizes, expected format "id:size,..."')
+
+    # parse scales list if provided
+    scales_list = None
+    if args.scales:
+        try:
+            scales_list = [float(s.strip()) for s in args.scales.split(',') if s.strip()]
+        except Exception:
+            print('Failed to parse --scales, expected format "s1,s2,..."')
+            scales_list = None
+    elif args.multiscale:
+        # default scales when multiscale requested but none provided
+        scales_list = MULTISCALE_DEFAULT_SCALES
+
+    frame_count = 0
+    processed_frame = None
+
+    # If source is a local file, use a simple blocking read loop driven by file FPS
+    if os.path.exists(args.source):
+        cap = get_capture(args.source)
+        if not cap or not cap.isOpened():
+            print(f"Failed to open local file: {args.source}")
+            sys.exit(1)
+
+        if args.force_fps and args.force_fps > 0:
+            play_fps = float(args.force_fps)
+        else:
+            play_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        play_fps = max(1.0, min(float(play_fps), 120.0))
+        play_interval = 1.0 / play_fps
+        if args.debug:
+            print(f"DEBUG local file playback fps={play_fps} interval={play_interval}")
+
+        try:
+            while True:
+                start = time.perf_counter()
+                ret, frame = cap.read()
+                if not ret:
+                    break
+
+                if args.frame_skip <= 1 or (frame_count % args.frame_skip) == 0:
+                    try:
+                        processed_frame, yaw, pitch, distance_m, detected_id = calculate_offsets(
+                            frame, camera_matrix, dist_coeffs,
+                            tag_size_meters=args.tag_size,
+                            scale=args.scale,
+                            use_clahe=args.clahe,
+                            tag_sizes=tag_sizes if tag_sizes else None,
+                            multiscale=args.multiscale,
+                            scales=scales_list)
+                    except Exception as e:
+                        print(f"Processing error: {e}")
+                        processed_frame = frame.copy()
+                else:
+                    if processed_frame is None:
+                        processed_frame = frame.copy()
+
+                frame_count += 1
+                cv2.imshow('AprilTag Targeting Feed', processed_frame)
+
+                elapsed = time.perf_counter() - start
+                to_wait = play_interval - elapsed
+                if to_wait > 0:
+                    time.sleep(to_wait)
+
+                if args.debug and (frame_count % 30 == 0):
+                    print(f"DEBUG local frame={frame_count} elapsed={elapsed:.4f} to_wait={max(0,to_wait):.4f}")
+
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+        finally:
+            try:
+                cap.release()
+            except Exception:
+                pass
+            cv2.destroyAllWindows()
+    else:
+        last_display = time.perf_counter()
+        playback_start_wall = None
+        playback_start_ts = None
+        while True:
+            frame, frame_ts = vs.read()
+            if frame is None:
+                time.sleep(0.02)
+                continue
+
+            if args.frame_skip <= 1 or (frame_count % args.frame_skip) == 0:
+                try:
+                    processed_frame, yaw, pitch, distance_m, detected_id = calculate_offsets(
+                        frame, camera_matrix, dist_coeffs,
+                        tag_size_meters=args.tag_size,
+                        scale=args.scale,
+                        use_clahe=args.clahe,
+                        tag_sizes=tag_sizes if tag_sizes else None,
+                        multiscale=args.multiscale,
+                        scales=scales_list)
+                except Exception as e:
+                    print(f"Processing error: {e}")
+                    processed_frame = frame.copy()
+            else:
+                if processed_frame is None:
+                    processed_frame = frame.copy()
+
+            frame_count += 1
+            cv2.imshow('AprilTag Targeting Feed', processed_frame)
+
+            if frame_ts is not None and args.force_fps == 0.0:
+                if playback_start_wall is None:
+                    playback_start_wall = time.perf_counter()
+                    playback_start_ts = frame_ts
+                desired = playback_start_wall + (frame_ts - playback_start_ts)
+                now = time.perf_counter()
+                to_wait = desired - now
+                if to_wait > 0:
+                    time.sleep(to_wait)
+            else:
+                next_display = last_display + frame_interval
+                to_wait = next_display - time.perf_counter()
+                if to_wait > 0:
+                    time.sleep(to_wait)
+                last_display = next_display
+
+            if args.debug and (frame_count % 30 == 0):
+                now_debug = time.perf_counter()
+                print(f"DEBUG stream frame={frame_count} frame_ts={frame_ts} last_display={last_display:.6f} now={now_debug:.6f} frame_interval={frame_interval:.6f}")
+
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+
+        vs.stop()
+        cv2.destroyAllWindows()
